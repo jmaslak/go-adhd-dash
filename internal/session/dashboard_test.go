@@ -320,7 +320,7 @@ func TestNextMeetingMatchesAgenda(t *testing.T) {
 func TestBusyControlKeys(t *testing.T) {
 	v := sampleView(0)
 	s, _, _ := buildDashboard(24, 80, v, 0, "AD000001")
-	if help := screenText(t, s, 24, 80)[23]; strings.Contains(help, "PF1 ") || !strings.Contains(help, "LU AD000001") {
+	if help := screenText(t, s, 24, 80)[23]; strings.Contains(help, "PF1=") || !strings.Contains(help, "LU AD000001") {
 		t.Errorf("without a control port, help row is %q; want no busy keys, and the LU name", help)
 	}
 
@@ -328,7 +328,7 @@ func TestBusyControlKeys(t *testing.T) {
 	v.Message = "Could not send to busy indicator: " + strings.Repeat("x", 100)
 	s, _, _ = buildDashboard(24, 80, v, 0, "AD000001")
 	rows := screenText(t, s, 24, 80)
-	if want := " PF1 Busy  PF2 Off  PF3 Exit  PF5 Auto  PF7 Up  PF8 Down  PF9 Cal  Enter Rfrsh"; rows[23] != want {
+	if want := " PF1=Busy PF2=Off PF3=Exit PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks Enter=Rfrsh"; rows[23] != want {
 		t.Errorf("help row is %q, want %q (the LU name does not fit)", rows[23], want)
 	}
 	if !strings.HasPrefix(rows[21], " Could not send to busy indicator") {

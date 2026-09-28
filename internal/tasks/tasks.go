@@ -39,6 +39,9 @@ type Task struct {
 	// ID is the task's permanent identifier, nil for a file written by the
 	// Raku version that the task program has not yet upgraded.
 	ID *big.Int
+
+	// TrelloID is the Trello card the task mirrors, empty if none.
+	TrelloID string
 }
 
 // taskFile matches an open task's file name, capturing its number.
@@ -134,6 +137,8 @@ func parse(data []byte) (Task, error) {
 				return Task{}, fmt.Errorf("invalid task-id %q", value)
 			}
 			t.ID = id
+		case "trello-id":
+			t.TrelloID = value
 		}
 	}
 	if t.Title == "" {

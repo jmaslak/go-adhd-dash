@@ -27,7 +27,7 @@ func TestCalendarScreen(t *testing.T) {
 		"CALENDAR", "AUTO-REFRESH", "September 2026", "Su Mo Tu We Th Fr Sa",
 		"Sunday, September 27, 2026 (today)",
 		"all day     Holiday", "09:30-10:30 Running", "10:15-10:45 Soon",
-		"PF3 Back",
+		"PF3=Back",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)

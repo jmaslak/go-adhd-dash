@@ -97,9 +97,9 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 		screen = append(screen, placeLine(spacerRow, cols-1, line{{Content: v.Message, Color: go3270.Red, Intense: true}})...)
 	}
 
-	help := "PF3 Exit  PF5 Auto  PF7 Up  PF8 Down  PF9 Cal  Enter Rfrsh"
+	help := "PF3=Exit PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks Enter=Rfrsh"
 	if v.BusyControl {
-		help = "PF1 Busy  PF2 Off  " + help
+		help = "PF1=Busy PF2=Off " + help
 	}
 	// The LU name is only for reference, so it is left off when it would
 	// not fit.

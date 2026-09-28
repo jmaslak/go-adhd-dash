@@ -50,7 +50,10 @@ func main() {
 	}
 
 	ctx := context.Background()
-	cfg := session.Config{TasksDir: *tasksDir, Refresh: *refresh, AgendaRefresh: *agendaRefresh}
+	cfg := session.Config{
+		TasksDir: *tasksDir, Refresh: *refresh, AgendaRefresh: *agendaRefresh,
+		Archiver: tasks.NewArchiver(*tasksDir),
+	}
 
 	switch {
 	case *busyURL != "" && *busyFile != "":

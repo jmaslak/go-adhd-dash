@@ -152,7 +152,7 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 	}
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
-		Content: truncate("PF3 Back  PF4 Today  PF5 Auto  PF7 Prev month  PF8 Next month  Enter Pick day", cols-1),
+		Content: truncate("PF3=Back PF4=Today PF5=Auto PF7=Prev month PF8=Next month Enter=Pick day", cols-1),
 	})
 	return screen, cursorRow, cursorCol
 }

@@ -1,6 +1,6 @@
 // Package session drives one TN3270 client connection: telnet negotiation,
 // then a dashboard that redraws itself on a timer until the client quits,
-// with a calendar screen a key away.
+// with a calendar screen and a task screen a key away.
 package session
 
 import (
@@ -33,6 +33,10 @@ type Config struct {
 	// BusyControl sends keys to the busy indicator; nil when its control
 	// port is not configured.
 	BusyControl *busy.Control
+
+	// Archiver archives tasks from the task screen; nil when archiving is
+	// not available.
+	Archiver TaskArchiver
 
 	// Agenda holds the calendar; nil when no calendar is configured.
 	Agenda *agenda.Cache
@@ -70,28 +74,45 @@ func Handle(rawConn net.Conn, cfg Config) {
 	rows, cols := devinfo.AltDimensions()
 	page := 0
 	autoRefresh := true
-	inCalendar := false
+	mode := modeDashboard
 	var cal calendarState
-	message := "" // shown on the dashboard until the next key
+	var tp taskPageState
+	var allTasks []tasks.Task // the task screen's tasks, as last shown
+	message := ""             // shown on the dashboard until the next key
+	logf := func(format string, args ...any) {
+		log.Printf("session %d (%s): %s", sessionID, rawConn.RemoteAddr(), fmt.Sprintf(format, args...))
+	}
 
 	for {
 		now := time.Now()
 		var screen go3270.Screen
 		var totalPages, cursorRow, cursorCol int
-		if inCalendar {
+		// A timed redraw would wipe marks typed on the task screen but not
+		// yet sent, so it only ever redraws when a key is pressed.
+		redrawOnTimer := autoRefresh
+		switch mode {
+		case modeCalendar:
 			cal.load(cfg.Agenda, cfg.AgendaRefresh, now)
 			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, autoRefresh, cfg.Agenda != nil))
-		} else {
+		case modeTasks:
+			var err error
+			allTasks, err = tasks.ReadDir(cfg.TasksDir)
+			screen, tp.page, totalPages, cursorRow, cursorCol = buildTaskList(rows, cols, now, allTasks, err, &tp)
+			redrawOnTimer = false
+		case modeConfirm:
+			screen, cursorRow, cursorCol = buildArchiveConfirm(rows, cols, now, tp.confirming), rows-1, 0
+			redrawOnTimer = false
+		default:
 			v := gather(cfg, now)
 			v.AutoRefresh, v.BusyControl, v.Message = autoRefresh, cfg.BusyControl != nil, message
 			screen, page, totalPages = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = rows-1, 0
 		}
 
-		// With auto-refresh off there is no deadline, so the screen stays as
-		// drawn until a key is pressed.
+		// Without a redraw on a timer there is no deadline, so the screen
+		// stays as drawn until a key is pressed.
 		deadline := time.Time{}
-		if autoRefresh {
+		if redrawOnTimer {
 			deadline = time.Now().Add(cfg.Refresh)
 		}
 		_ = conn.SetReadDeadline(deadline)
@@ -108,16 +129,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 		_ = conn.SetReadDeadline(time.Time{})
 		message = ""
 
-		if resp.AID == go3270.AIDPF5 {
-			autoRefresh = !autoRefresh
-			continue
-		}
-		if inCalendar {
+		switch mode {
+		case modeCalendar:
 			switch resp.AID {
 			case go3270.AIDPF3:
-				inCalendar = false
+				mode = modeDashboard
 			case go3270.AIDPF4:
 				cal.goTo(time.Now())
+			case go3270.AIDPF5:
+				autoRefresh = !autoRefresh
 			case go3270.AIDPF7:
 				cal.changeMonth(-1, time.Now())
 			case go3270.AIDPF8:
@@ -127,26 +147,50 @@ func Handle(rawConn net.Conn, cfg Config) {
 					cal.selected = day
 				}
 			}
-			continue
+		case modeTasks:
+			switch confirm, leave := tp.handleList(resp, allTasks, totalPages, cfg.Archiver); {
+			case leave:
+				mode = modeDashboard
+			case confirm:
+				mode = modeConfirm
+			}
+		case modeConfirm:
+			if tp.handleConfirm(resp, cfg.Archiver, logf) {
+				mode = modeTasks
+			}
+		default:
+			switch resp.AID {
+			case go3270.AIDPF1:
+				message = sendBusyKey(cfg, 'b')
+			case go3270.AIDPF2:
+				message = sendBusyKey(cfg, 'o')
+			case go3270.AIDPF3:
+				return
+			case go3270.AIDPF5:
+				autoRefresh = !autoRefresh
+			case go3270.AIDPF7:
+				page = max(page-1, 0)
+			case go3270.AIDPF8:
+				page = min(page+1, totalPages-1)
+			case go3270.AIDPF9:
+				mode = modeCalendar
+				cal.goTo(time.Now())
+			case go3270.AIDPF10:
+				mode = modeTasks
+				tp = taskPageState{}
+			}
+			// Enter, Clear and anything else just redraw.
 		}
-		switch resp.AID {
-		case go3270.AIDPF3:
-			return
-		case go3270.AIDPF7:
-			page = max(page-1, 0)
-		case go3270.AIDPF8:
-			page = min(page+1, totalPages-1)
-		case go3270.AIDPF9:
-			inCalendar = true
-			cal.goTo(time.Now())
-		case go3270.AIDPF1:
-			message = sendBusyKey(cfg, 'b')
-		case go3270.AIDPF2:
-			message = sendBusyKey(cfg, 'o')
-		}
-		// Enter, Clear and anything else just redraw.
 	}
 }
+
+// The screens a session can show.
+const (
+	modeDashboard = iota
+	modeCalendar
+	modeTasks
+	modeConfirm
+)
 
 // busyKeyWait is how long to wait for the indicator's feed to report the
 // change a key caused, so that the redraw after it shows the new state.

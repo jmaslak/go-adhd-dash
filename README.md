@@ -56,6 +56,7 @@ configured" rather than failing.
 - `PF5`: turn auto-refresh off / on (on at connect)
 - `PF7` / `PF8`: previous / next page of tasks
 - `PF9`: calendar
+- `PF10`: every open task, for archiving
 - `Enter`: redraw now
 - `PF3`: disconnect
 
@@ -69,6 +70,28 @@ On the calendar, a month is shown with the selected day's events beside it. Move
 
 The calendar reads each month from Google as it is shown and reuses it for
 `-agenda-refresh`, separately from the shared today-and-tomorrow agenda.
+
+The task screen lists every open task, whatever its tags, display frequency
+or maturity date. Type `X` beside the tasks to archive, then press `Enter`;
+a confirmation lists them, and `PF4` archives them. Marks are kept while
+paging.
+
+- `PF7` / `PF8`: previous / next page
+- `Enter`: archive the marked tasks, after confirmation
+- `PF4` (on the confirmation): archive
+- `PF3`: back (from the confirmation, to the list with the marks kept)
+
+The task screen never redraws on a timer, since that would wipe marks typed
+but not yet sent.
+
+Archiving a task that mirrors a Trello card first marks the card's due date
+complete and archives the card, using the `trello` credentials in
+`~/.task.secret.yaml`; otherwise the next `task trello-sync` would bring the
+task back. If Trello fails, the task is left open. The task is then closed
+through the task program's own store: found by its task ID (its number may
+have changed since it was shown), moved into `done/`, and the tasks after it
+renumbered, all under the task directory's lock. Archiving stops at the
+first task that fails; it stays marked, to try again.
 
 ## Where the data comes from
 
@@ -127,7 +150,8 @@ are.
 
 Task files are read directly on every redraw, without the task program's
 directory lock; the task program replaces files by atomic rename, so a read
-never sees a half-written task. `ignore-tags` is read from `~/.task.yaml`
+never sees a half-written task. Changes (archiving) go through the task
+program's `task` package, lock and all. `ignore-tags` is read from `~/.task.yaml`
 and `~/.task.secret.yaml` the same way the task program reads it.
 
 ## Layout
