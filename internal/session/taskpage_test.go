@@ -102,6 +102,11 @@ func TestTaskListScreen(t *testing.T) {
 	if rows := screenText(t, s, 24, 80); !strings.HasPrefix(rows[taskFirstRow], "     19 task 19") {
 		t.Errorf("second page starts %q", rows[taskFirstRow])
 	}
+
+	s, _, _, _, _ = buildTaskList(24, 80, now, nil, nil, &taskPageState{})
+	if rows := screenText(t, s, 24, 80); rows[taskColumnRow] != "" || !strings.HasPrefix(rows[taskHeaderRow], " TASKS 0 open") {
+		t.Errorf("with no tasks, header row %q and column headings row %q; want no column headings", rows[taskHeaderRow], rows[taskColumnRow])
+	}
 }
 
 func TestTaskListMarking(t *testing.T) {

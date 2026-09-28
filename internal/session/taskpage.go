@@ -96,12 +96,14 @@ func buildTaskList(rows, cols int, now time.Time, all []tasks.Task, readErr erro
 	// aligned in columns 3 to 6, and the tags and title from column 8. A
 	// field's highlighting runs on to the next attribute byte, so a plain
 	// one after the headings keeps the underline from running on to the
-	// first task row.
-	const headings = "S  Num Task"
-	screen = append(screen,
-		go3270.Field{Row: taskColumnRow, Col: 0, Content: headings, Color: go3270.Turquoise, Highlighting: go3270.Underscore},
-		go3270.Field{Row: taskColumnRow, Col: 1 + len(headings)},
-	)
+	// first task row. With no tasks there is nothing to head.
+	if len(all) > 0 {
+		const headings = "S  Num Task"
+		screen = append(screen,
+			go3270.Field{Row: taskColumnRow, Col: 0, Content: headings, Color: go3270.Turquoise, Highlighting: go3270.Underscore},
+			go3270.Field{Row: taskColumnRow, Col: 1 + len(headings)},
+		)
+	}
 
 	cursorRow, cursorCol = rows-1, 0
 	for i, t := range pageTasks {
