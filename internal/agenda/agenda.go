@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +21,19 @@ import (
 )
 
 // Event is one meeting.
-type Event = gcal.Event
+type Event struct {
+	Summary    string
+	Start, End time.Time
+
+	// AllDay marks an event given as a date rather than a time. Its End is
+	// midnight following the last day.
+	AllDay bool
+
+	// Calendar is the alias of the calendar the event is on, or of each of
+	// them, comma-separated, when it is on several; empty when no aliases
+	// are configured.
+	Calendar string
+}
 
 // Source produces the events between two times.
 type Source interface {
@@ -107,27 +120,67 @@ func (c *Cache) refresh(ctx context.Context) {
 	c.snap = Snapshot{Events: sortUnique(events), Fetched: now}
 }
 
-// sortUnique orders events by start, end and title, dropping duplicates,
+// Fetch reads the events between from and to straight from the source, for
+// views beyond the today and tomorrow the cache keeps. Nothing is cached.
+func (c *Cache) Fetch(ctx context.Context, from, to time.Time) ([]Event, error) {
+	events, err := c.source.Events(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return sortUnique(events), nil
+}
+
+// sortUnique orders events by start, end and title, merging duplicates,
 // which are common when one meeting is on more than one watched calendar.
+// A merged event keeps every calendar alias it had, in the order the
+// calendars were given.
 func sortUnique(events []Event) []Event {
 	compare := func(a, b Event) int {
 		return cmp.Or(a.Start.Compare(b.Start), a.End.Compare(b.End), cmp.Compare(a.Summary, b.Summary))
 	}
 	sorted := slices.Clone(events)
 	slices.SortStableFunc(sorted, compare)
-	return slices.CompactFunc(sorted, func(a, b Event) bool { return compare(a, b) == 0 })
+
+	var out []Event
+	for _, e := range sorted {
+		if n := len(out); n > 0 && compare(out[n-1], e) == 0 {
+			out[n-1].Calendar = mergeAliases(out[n-1].Calendar, e.Calendar)
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// mergeAliases adds alias to the comma-separated list, unless it is empty
+// or already there.
+func mergeAliases(list, alias string) string {
+	switch {
+	case alias == "" || slices.Contains(strings.Split(list, ","), alias):
+		return list
+	case list == "":
+		return alias
+	default:
+		return list + "," + alias
+	}
 }
 
 // Google reads a set of Google calendars.
 type Google struct {
 	Calendars []string
-	Client    *gcal.Client
+
+	// Aliases name the calendars, in the same order, for their events'
+	// Calendar; nil when they have none.
+	Aliases []string
+
+	Client *gcal.Client
 }
 
 // NewGoogle returns a source for calendars, authorized by the gcalcli or
 // busy-indicator credential files. Credentials are read on first use.
-func NewGoogle(calendars []string) *Google {
-	return &Google{Calendars: calendars, Client: gcal.New(gauth.NewTokenSource())}
+// aliases is nil, or one name for each calendar.
+func NewGoogle(calendars, aliases []string) *Google {
+	return &Google{Calendars: calendars, Aliases: aliases, Client: gcal.New(gauth.NewTokenSource())}
 }
 
 // Events reads every calendar. One calendar failing fails the whole fetch,
@@ -135,21 +188,28 @@ func NewGoogle(calendars []string) *Google {
 // showing a partial one that looks complete.
 func (g *Google) Events(ctx context.Context, from, to time.Time) ([]Event, error) {
 	var all []Event
-	for _, cal := range g.Calendars {
+	for i, cal := range g.Calendars {
 		events, err := g.Client.Events(ctx, cal, from, to, from.Location())
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, events...)
+		alias := ""
+		if i < len(g.Aliases) {
+			alias = g.Aliases[i]
+		}
+		for _, e := range events {
+			all = append(all, Event{Summary: e.Summary, Start: e.Start, End: e.End, AllDay: e.AllDay, Calendar: alias})
+		}
 	}
 	return all, nil
 }
 
 // File reads events from a JSON file, for trying the dashboard without
-// Google. Times are RFC 3339.
+// Google. Times are RFC 3339; calendar, optional, is the event's calendar
+// alias.
 //
 //	[{"summary": "Standup", "start": "2026-09-27T09:00:00-06:00",
-//	  "end": "2026-09-27T09:15:00-06:00", "all_day": false}]
+//	  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work"}]
 type File struct {
 	Path string
 }
@@ -161,10 +221,11 @@ func (f File) Events(_ context.Context, from, to time.Time) ([]Event, error) {
 		return nil, err
 	}
 	var raw []struct {
-		Summary string    `json:"summary"`
-		Start   time.Time `json:"start"`
-		End     time.Time `json:"end"`
-		AllDay  bool      `json:"all_day"`
+		Summary  string    `json:"summary"`
+		Start    time.Time `json:"start"`
+		End      time.Time `json:"end"`
+		AllDay   bool      `json:"all_day"`
+		Calendar string    `json:"calendar"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", f.Path, err)
@@ -173,7 +234,7 @@ func (f File) Events(_ context.Context, from, to time.Time) ([]Event, error) {
 	var out []Event
 	for _, r := range raw {
 		if r.End.After(from) && r.Start.Before(to) {
-			out = append(out, Event{Summary: r.Summary, Start: r.Start.In(from.Location()), End: r.End.In(from.Location()), AllDay: r.AllDay})
+			out = append(out, Event{Summary: r.Summary, Start: r.Start.In(from.Location()), End: r.End.In(from.Location()), AllDay: r.AllDay, Calendar: r.Calendar})
 		}
 	}
 	return out, nil

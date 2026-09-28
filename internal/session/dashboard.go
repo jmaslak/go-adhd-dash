@@ -2,22 +2,25 @@ package session
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/racingmars/go3270"
 
-	"github.com/jmaslak/go-adhd-dash/internal/busy"
+	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
 
-// Fixed rows at the top of the screen. Everything from firstBodyRow down to
-// the message row is shared between the agenda and the task list.
+// Fixed rows at the top of the screen: the title, then the busy indicator's
+// banner with its details on the row below. Everything from firstBodyRow
+// down to the spacer above the bottom banner is shared between the agenda
+// and the task list.
 const (
 	titleRow     = 0
 	busyRow      = 1
-	firstBodyRow = 3
+	firstBodyRow = 4
 )
 
 // soonThreshold is how close a meeting's start must be for it to be called
@@ -31,31 +34,43 @@ type line []go3270.Field
 // which page of tasks is shown; it is clamped to the pages that exist, and
 // the page actually shown is returned with the page count.
 func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3270.Screen, shownPage, totalPages int) {
-	// The row above the help line is left blank, for symmetry with the
-	// spacer between the sections.
-	messageRow, helpRow := rows-2, rows-1
+	// The busy banner is repeated just above the help line, with a blank
+	// spacer above it, for symmetry with the spacer between the sections.
+	spacerRow, bottomBannerRow, helpRow := rows-3, rows-2, rows-1
 
-	// Rows available between the fixed top and the message row: two
+	// Rows available between the fixed top and the bottom spacer: two
 	// section headers and a blank spacer between the sections come out of
 	// it; what remains is split between agenda and task lines.
-	body := messageRow - firstBodyRow
+	body := spacerRow - firstBodyRow
 	content := body - 3
 
-	agendaLines := agendaContent(v, content*2/5, cols)
-	taskRows := max(content-len(agendaLines), 1)
+	// The first page shows the whole agenda, even if that leaves no room
+	// for tasks; later pages show two fifths of it and more tasks.
+	firstAgenda := agendaContent(v, max(content*2/5, min(len(agendaEvents(v)), content)), cols)
+	restAgenda := agendaContent(v, content*2/5, cols)
+	firstRows := max(content-len(firstAgenda), 0)
+	restRows := max(content-len(restAgenda), 1)
 
-	totalPages = max((len(v.Tasks)+taskRows-1)/taskRows, 1)
+	totalPages = 1
+	if extra := len(v.Tasks) - firstRows; extra > 0 {
+		totalPages += (extra + restRows - 1) / restRows
+	}
 	shownPage = min(max(page, 0), totalPages-1)
-	start := shownPage * taskRows
+	agendaLines, start, taskRows := firstAgenda, 0, firstRows
+	if shownPage > 0 {
+		agendaLines, start, taskRows = restAgenda, firstRows+(shownPage-1)*restRows, restRows
+	}
 	end := min(start+taskRows, len(v.Tasks))
 	pageTasks := v.Tasks[start:end]
 
-	clock := v.Now.Format("Mon Jan 2 15:04")
-	screen = go3270.Screen{
-		{Row: titleRow, Col: 0, Intense: true, Color: go3270.White, Content: "ADHD DASHBOARD"},
-		{Row: titleRow, Col: max(cols-len(clock)-2, 16), Intense: true, Color: go3270.White, Content: clock},
+	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now, v.AutoRefresh)
+	badge, detail := busyState(v)
+	if badge.Content != "" {
+		screen = append(screen, banner(busyRow, cols, badge), banner(bottomBannerRow, cols, badge))
+		screen = append(screen, placeLine(busyRow+1, cols, detail)...)
+	} else {
+		screen = append(screen, placeLine(busyRow, cols, detail)...)
 	}
-	screen = append(screen, placeLine(busyRow, cols, busyLine(v))...)
 
 	row := firstBodyRow
 	screen = append(screen, placeLine(row, cols, agendaHeader(v))...)
@@ -66,7 +81,7 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	}
 	row++ // spacer
 
-	screen = append(screen, placeLine(row, cols, taskHeader(v, shownPage, totalPages))...)
+	screen = append(screen, placeLine(row, cols, taskHeader(v, shownPage, totalPages, len(pageTasks)))...)
 	row++
 	for _, t := range pageTasks {
 		screen = append(screen, placeLine(row, cols, taskLine(t))...)
@@ -76,9 +91,20 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 		screen = append(screen, placeLine(row, cols, line{{Content: "Nothing to do. Really."}})...)
 	}
 
-	help := "PF3 Exit  PF7 Up  PF8 Down  Enter Refresh"
-	if luName != "" {
-		help += "   LU " + luName
+	if v.Message != "" {
+		// cols-1 keeps clear of the bottom banner's attribute byte at the
+		// end of this row.
+		screen = append(screen, placeLine(spacerRow, cols-1, line{{Content: v.Message, Color: go3270.Red, Intense: true}})...)
+	}
+
+	help := "PF3 Exit  PF5 Auto  PF7 Up  PF8 Down  PF9 Cal  Enter Rfrsh"
+	if v.BusyControl {
+		help = "PF1 Busy  PF2 Off  " + help
+	}
+	// The LU name is only for reference, so it is left off when it would
+	// not fit.
+	if lu := "   LU " + luName; luName != "" && len(help)+len(lu) <= cols-1 {
+		help += lu
 	}
 	screen = append(screen,
 		go3270.Field{Row: helpRow, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)},
@@ -86,12 +112,33 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	return screen, shownPage, totalPages
 }
 
+// titleFields is the title row: title on the left, the clock on the right,
+// and while auto-refresh is on a marker left of the clock, when there is room
+// for it after the title.
+func titleFields(cols int, title string, now time.Time, autoRefresh bool) go3270.Screen {
+	clock := now.Format("Mon Jan 2 15:04:05")
+	clockCol := max(cols-len(clock)-2, len(title)+2)
+	screen := go3270.Screen{
+		{Row: titleRow, Col: 0, Intense: true, Color: go3270.White, Content: title},
+		{Row: titleRow, Col: clockCol, Intense: true, Color: go3270.White, Content: clock},
+	}
+	const autoMarker = "AUTO-REFRESH"
+	if autoCol := clockCol - len(autoMarker) - 2; autoRefresh && autoCol > len(title) {
+		screen = append(screen, go3270.Field{Row: titleRow, Col: autoCol, Color: go3270.Turquoise, Content: autoMarker})
+	}
+	return screen
+}
+
 // placeLine positions a line's fields on row, one after the other. Each
 // field's attribute byte takes a column of its own before its content, and
 // content that would run past the right edge is cut off.
 func placeLine(row, cols int, l line) []go3270.Field {
+	return placeLineAt(row, 0, cols, l)
+}
+
+// placeLineAt is placeLine starting at col rather than the left edge.
+func placeLineAt(row, col, cols int, l line) []go3270.Field {
 	var out []go3270.Field
-	col := 0
 	for _, f := range l {
 		room := cols - col - 1
 		if room <= 0 {
@@ -105,11 +152,12 @@ func placeLine(row, cols int, l line) []go3270.Field {
 	return out
 }
 
-// busyLine is the busy indicator's state: a reverse-video badge, then when
-// the next meeting is.
-func busyLine(v view) line {
+// busyState is the busy indicator's state: a badge naming it, shown as a
+// banner, and a detail line to go under it. The badge is empty when there is
+// no indicator, and the detail line then says so.
+func busyState(v view) (badge go3270.Field, detail line) {
 	if !v.BusyEnabled {
-		return line{{Content: "Busy indicator not configured (-busy-url)", Color: go3270.Blue}}
+		return go3270.Field{}, line{{Content: "Busy indicator not configured (-busy-url)", Color: go3270.Blue}}
 	}
 	s := v.Busy
 	if !s.Connected {
@@ -117,41 +165,103 @@ func busyLine(v view) line {
 		if !s.Updated.IsZero() {
 			msg += fmt.Sprintf(" (was %s at %s)", s.Light, s.Updated.Format("15:04"))
 		}
-		return line{
-			{Content: " ???? ", Color: go3270.Yellow, Highlighting: go3270.ReverseVideo},
-			{Content: msg, Color: go3270.Yellow},
-		}
+		return go3270.Field{Content: "????", Color: go3270.Yellow, Highlighting: go3270.ReverseVideo},
+			line{{Content: msg, Color: go3270.Yellow}}
 	}
 
-	var badge go3270.Field
 	switch s.Light {
 	case "red":
-		badge = go3270.Field{Content: " BUSY ", Color: go3270.Red, Highlighting: go3270.ReverseVideo, Intense: true}
+		badge = go3270.Field{Content: "** BUSY **", Color: go3270.Red, Highlighting: go3270.ReverseVideo}
 	case "green":
-		badge = go3270.Field{Content: " AVAILABLE ", Color: go3270.Green, Highlighting: go3270.ReverseVideo}
+		badge = go3270.Field{Content: "** AVAILABLE **", Color: go3270.Green, Highlighting: go3270.ReverseVideo}
 	default:
-		badge = go3270.Field{Content: " NOT BUSY ", Color: go3270.Turquoise, Highlighting: go3270.ReverseVideo}
+		badge = go3270.Field{Content: "** NOT BUSY **", Color: go3270.Green}
 	}
-	return line{badge, {Content: nextMeetingText(s, v.Now)}}
+	return badge, line{{Content: nextMeetingText(v)}}
 }
 
-// nextMeetingText describes the feed's minutes-to-next. The indicator only
-// publishes on its own refresh interval, so the time since the last message
-// is taken off to keep the countdown current in between.
-func nextMeetingText(s busy.Status, now time.Time) string {
+// banner fills all of row with f's content centered. Its attribute byte goes
+// in the last column of the row above, so that reverse video reaches column 0
+// too; the field placed at the start of the row below ends it, so that row
+// must have one.
+func banner(row, cols int, f go3270.Field) go3270.Field {
+	text := truncate(f.Content, cols)
+	pad := cols - utf8.RuneCountInString(text)
+	f.Row, f.Col = row-1, cols-1
+	f.Content = strings.Repeat(" ", pad/2) + text + strings.Repeat(" ", pad-pad/2)
+	return f
+}
+
+// nextMeetingText describes the meeting under way or the next one. With a
+// calendar it is read from there, by the same rules as the agenda, so the two
+// agree: the indicator's feed counts to its next calendar entry of any kind,
+// all-day ones included. Without one it is the feed's minutes-to-next, less
+// the time since the feed's last message to keep it current in between.
+func nextMeetingText(v view) string {
+	if v.AgendaEnabled && !v.Agenda.Fetched.IsZero() {
+		if names := meetingsNow(v); len(names) > 0 {
+			return "Meeting now: " + strings.Join(names, ", ")
+		}
+		for _, e := range v.Agenda.Upcoming(v.Now) {
+			if isMeeting(e) && e.Start.After(v.Now) {
+				return "Next meeting in " + duration(e.Start.Sub(v.Now)) + ": " + meetingName(e)
+			}
+		}
+		return "No more meetings today or tomorrow"
+	}
+
+	s := v.Busy
 	if s.MinutesToNext == nil {
 		return "No more meetings today"
 	}
-	minutes := *s.MinutesToNext - int(now.Sub(s.Updated)/time.Minute)
-	if minutes <= 0 {
+	until := s.Updated.Add(time.Duration(*s.MinutesToNext) * time.Minute).Sub(v.Now)
+	if until <= 0 {
 		return "Meeting now"
 	}
-	return "Next meeting in " + duration(time.Duration(minutes)*time.Minute)
+	return "Next meeting in " + duration(until)
+}
+
+// meetingsNow names the calendar's timed meetings under way.
+func meetingsNow(v view) []string {
+	if !v.AgendaEnabled {
+		return nil
+	}
+	var names []string
+	for _, e := range v.Agenda.Upcoming(v.Now) {
+		if isMeeting(e) && !e.Start.After(v.Now) {
+			names = append(names, meetingName(e))
+		}
+	}
+	return names
+}
+
+// outOfOfficeTitle matches the titles of out-of-office events. The calendar
+// client does not pass on Google's event type, so the title is all there is
+// to go on.
+var outOfOfficeTitle = regexp.MustCompile(`(?i)out of (the )?office|\booo\b`)
+
+// isMeeting reports whether e belongs on the dashboard: all-day and
+// out-of-office events are not meetings.
+func isMeeting(e agenda.Event) bool {
+	return !e.AllDay && !outOfOfficeTitle.MatchString(e.Summary)
+}
+
+// meetingName is e's title, or a stand-in when it has none, after its
+// calendar alias in brackets when it has one.
+func meetingName(e agenda.Event) string {
+	name := e.Summary
+	if name == "" {
+		name = "(No title)"
+	}
+	if e.Calendar != "" {
+		name = "[" + e.Calendar + "] " + name
+	}
+	return name
 }
 
 // agendaHeader titles the agenda, noting a failed or missing calendar.
 func agendaHeader(v view) line {
-	l := line{{Content: "AGENDA", Color: go3270.Turquoise, Intense: true}}
+	l := line{{Content: "AGENDA (next 24 hours)", Color: go3270.Turquoise, Intense: true}}
 	switch {
 	case !v.AgendaEnabled:
 	case v.Agenda.Err != nil && v.Agenda.Fetched.IsZero():
@@ -165,20 +275,34 @@ func agendaHeader(v view) line {
 	return l
 }
 
+// agendaWindow is how far ahead the agenda looks.
+const agendaWindow = 24 * time.Hour
+
+// agendaEvents are the meetings under way or starting within agendaWindow.
+func agendaEvents(v view) []agenda.Event {
+	var out []agenda.Event
+	for _, e := range v.Agenda.Upcoming(v.Now) {
+		if isMeeting(e) && e.Start.Before(v.Now.Add(agendaWindow)) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // agendaContent is the agenda's lines, at most limit of them (but always at
-// least one): today's and tomorrow's meetings that have not ended, the
-// last line summarizing any that did not fit.
+// least one): the agendaEvents, the last line summarizing any that did not
+// fit.
 func agendaContent(v view, limit, cols int) []line {
 	limit = max(limit, 1)
 	if !v.AgendaEnabled {
 		return []line{{{Content: "No calendar configured (-calendar)", Color: go3270.Blue}}}
 	}
-	upcoming := v.Agenda.Upcoming(v.Now)
+	upcoming := agendaEvents(v)
 	if len(upcoming) == 0 {
 		if v.Agenda.Fetched.IsZero() {
 			return []line{{{Content: "Waiting for calendar", Color: go3270.Blue}}}
 		}
-		return []line{{{Content: "Nothing left on the calendar today or tomorrow"}}}
+		return []line{{{Content: "Nothing on the calendar in the next 24 hours"}}}
 	}
 
 	shown := upcoming
@@ -202,15 +326,10 @@ func agendaContent(v view, limit, cols int) []line {
 		}
 
 		when := e.Start.Format("15:04") + "-" + e.End.Format("15:04")
-		if e.AllDay {
-			when = "all day"
-		}
 
 		var countdown string
 		color, intense := go3270.Green, false
 		switch {
-		case e.AllDay:
-			color = go3270.Blue
 		case !e.Start.After(v.Now):
 			countdown, color, intense = "NOW", go3270.Yellow, true
 		case !nextMarked:
@@ -226,10 +345,7 @@ func agendaContent(v view, limit, cols int) []line {
 			color, intense = go3270.Blue, false
 		}
 
-		text := fmt.Sprintf("%-5s %-11s %-8s %s", dayLabel, when, countdown, e.Summary)
-		if e.Summary == "" {
-			text += "(No title)"
-		}
+		text := fmt.Sprintf("%-5s %-11s %-8s %s", dayLabel, when, countdown, meetingName(e))
 		out = append(out, line{{Content: text, Color: color, Intense: intense}})
 	}
 	if len(shown) < len(upcoming) {
@@ -238,8 +354,9 @@ func agendaContent(v view, limit, cols int) []line {
 	return out
 }
 
-// taskHeader titles the task list with its count and page.
-func taskHeader(v view, page, totalPages int) line {
+// taskHeader titles the task list with its count and page, pointing to the
+// next page when the agenda has left this one no room for tasks.
+func taskHeader(v view, page, totalPages, onPage int) line {
 	l := line{{Content: "TASKS", Color: go3270.Turquoise, Intense: true}}
 	if v.TasksErr != nil {
 		return append(l, go3270.Field{Content: v.TasksErr.Error(), Color: go3270.Red})
@@ -247,6 +364,9 @@ func taskHeader(v view, page, totalPages int) line {
 	info := fmt.Sprintf("%d open", len(v.Tasks))
 	if totalPages > 1 {
 		info += fmt.Sprintf(", page %d/%d", page+1, totalPages)
+	}
+	if onPage == 0 && len(v.Tasks) > 0 {
+		info += ", PF8 to see them"
 	}
 	return append(l, go3270.Field{Content: info, Color: go3270.Blue})
 }

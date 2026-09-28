@@ -26,9 +26,10 @@ func (f *fakeSource) Events(context.Context, time.Time, time.Time) ([]Event, err
 
 func TestRefreshSortsDedupesAndKeepsOnFailure(t *testing.T) {
 	src := &fakeSource{events: []Event{
-		{Summary: "B", Start: at(10, 0), End: at(11, 0)},
-		{Summary: "A", Start: at(9, 0), End: at(10, 0)},
-		{Summary: "B", Start: at(10, 0), End: at(11, 0)},
+		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work"},
+		{Summary: "A", Start: at(9, 0), End: at(10, 0), Calendar: "work"},
+		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "home"},
+		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work"},
 	}}
 	c := NewCache(src)
 	c.refresh(context.Background())
@@ -36,6 +37,9 @@ func TestRefreshSortsDedupesAndKeepsOnFailure(t *testing.T) {
 	snap := c.Snapshot()
 	if snap.Err != nil || len(snap.Events) != 2 || snap.Events[0].Summary != "A" {
 		t.Fatalf("snapshot = %+v", snap)
+	}
+	if got := snap.Events[1].Calendar; got != "work,home" {
+		t.Errorf("merged duplicate's calendars are %q, want \"work,home\"", got)
 	}
 
 	src.err = errors.New("boom")
@@ -60,7 +64,7 @@ func TestUpcoming(t *testing.T) {
 
 func TestFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agenda.json")
-	data := `[{"summary":"In","start":"2026-09-27T09:00:00Z","end":"2026-09-27T10:00:00Z"},
+	data := `[{"summary":"In","start":"2026-09-27T09:00:00Z","end":"2026-09-27T10:00:00Z","calendar":"work"},
 	          {"summary":"Out","start":"2026-09-30T09:00:00Z","end":"2026-09-30T10:00:00Z"}]`
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
@@ -69,7 +73,7 @@ func TestFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Summary != "In" {
+	if len(got) != 1 || got[0].Summary != "In" || got[0].Calendar != "work" {
 		t.Errorf("File.Events = %+v", got)
 	}
 }

@@ -5,8 +5,12 @@ package busy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -39,6 +43,11 @@ type Status struct {
 
 	// Problem is a short, screen-sized form of Err.
 	Problem string
+}
+
+// Source supplies the indicator's latest status.
+type Source interface {
+	Status() Status
 }
 
 // message is the feed's JSON.
@@ -129,4 +138,54 @@ func (w *Watcher) follow(ctx context.Context) (bool, error) {
 		}
 		w.mu.Unlock()
 	}
+}
+
+// File reads the status from a JSON file shaped like the feed's messages,
+// for trying the dashboard without an indicator:
+//
+//	{"status": "red", "minutes-to-next": 20}
+//
+// The file is re-read every time the status is asked for, so an edit shows
+// at the next redraw. Its modification time stands in for when the status
+// was received, so the minutes count down as they do from the feed.
+type File struct {
+	Path string
+}
+
+// Status reads the file, reporting a missing or malformed one as a feed that
+// is not connected.
+func (f File) Status() Status {
+	info, err := os.Stat(f.Path)
+	if err != nil {
+		return Status{Err: err, Problem: "file " + f.Path + " unreadable"}
+	}
+	data, err := os.ReadFile(f.Path)
+	if err != nil {
+		return Status{Err: err, Problem: "file " + f.Path + " unreadable"}
+	}
+	var msg message
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return Status{Err: fmt.Errorf("parsing %s: %w", f.Path, err), Problem: "file " + f.Path + " is not valid JSON"}
+	}
+	return Status{Connected: true, Light: msg.Status, MinutesToNext: msg.MinutesToNext, Updated: info.ModTime()}
+}
+
+// Control sends keystrokes to a busy indicator's UDP control port
+// (busy-indicator --port), as its busy command does: "b" turns the light red,
+// "o" turns it off until the next meeting.
+type Control struct {
+	// Addr is the control port's host:port, such as localhost:3333.
+	Addr string
+}
+
+// Send sends key. UDP is not acknowledged, so a nil error means only that
+// the datagram went out, not that an indicator received it.
+func (c Control) Send(key rune) error {
+	conn, err := net.Dial("udp", c.Addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close() //nolint:errcheck
+	_, err = conn.Write([]byte("KEY " + string(key)))
+	return err
 }

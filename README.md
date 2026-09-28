@@ -6,14 +6,18 @@ screen shows:
 - the **busy indicator**: whether the light is red, green or off, and how
   long until the next meeting, from
   [go-busy-indicator](../go-busy-indicator)'s WebSocket status feed;
-- the **agenda**: meetings that have not yet ended, today and tomorrow,
+- the **agenda**: every meeting under way or starting in the next 24 hours,
   from Google Calendar, with the one in progress marked `NOW` and a
-  countdown to the next;
+  countdown to the next. All-day events and out-of-office events (by
+  title: "out of office" or the word "OOO") are left out. If they do not
+  all fit alongside the tasks, the first page gives them the room and the
+  tasks move to later pages;
 - the **tasks**: the open tasks from [go-task](../go-task), filtered the way
   `task list` filters them (ignored tags, display frequency, maturity date).
 
 The screen redraws itself every `-refresh`, so it can be left up on a spare
-terminal.
+terminal. `PF5` turns that off and on again for the session; the title row
+shows `AUTO-REFRESH` while it is on.
 
 ## Usage
 
@@ -35,7 +39,10 @@ Model 5's 27x132 or larger.
 | `-refresh` | `10s` | how often an idle screen is redrawn |
 | `-tasks-dir` | `$TASKDIR`, then `~/.task` | the task program's directory |
 | `-busy-url` | (none) | busy indicator feed, `ws://host:port/feed` |
+| `-busy-file` | (none) | read the busy status from a JSON file instead of a feed |
+| `-busy-control` | `localhost:3333` | busy indicator UDP control port, `host:port` (its `--port`), for `PF1` / `PF2`; empty to turn them off |
 | `-calendar` | (none) | comma-separated Google calendars for the agenda |
+| `-calendar-alias` | (none) | comma-separated short names for the `-calendar` calendars, in the same order; each event is shown as `[name] title` |
 | `-agenda-file` | (none) | read the agenda from a JSON file instead of Google |
 | `-agenda-refresh` | `5m` | how often the calendar is read |
 
@@ -44,9 +51,24 @@ configured" rather than failing.
 
 ## Keys
 
+- `PF1` / `PF2`: set the busy indicator to busy / turn it off until the
+  next meeting, as `busy b` / `busy o` do (not offered with `-busy-control=`)
+- `PF5`: turn auto-refresh off / on (on at connect)
 - `PF7` / `PF8`: previous / next page of tasks
+- `PF9`: calendar
 - `Enter`: redraw now
 - `PF3`: disconnect
+
+On the calendar, a month is shown with the selected day's events beside it. Move the cursor onto a day and press
+`Enter` to select it.
+
+- `PF7` / `PF8`: previous / next month
+- `PF4`: back to today
+- `PF5`: turn auto-refresh off / on
+- `PF3`: back to the dashboard
+
+The calendar reads each month from Google as it is shown and reuses it for
+`-agenda-refresh`, separately from the shared today-and-tomorrow agenda.
 
 ## Where the data comes from
 
@@ -62,6 +84,19 @@ The indicator publishes on its own `--interval` (60 seconds by default), so
 the countdown is adjusted locally between messages. A dropped feed is
 redialed every 5 seconds; while it is down the screen says so and shows the
 last state received.
+
+`-busy-file` takes the feed's message as a JSON file instead, for trying the
+dashboard without an indicator:
+
+```json
+{"status": "red", "minutes-to-next": 20}
+```
+
+`status` is `red` (busy), `green` (available) or `off` (not busy); leave out
+`minutes-to-next` for no more meetings today. The file is re-read at every
+redraw, and its modification time counts as when the status arrived, so the
+countdown runs down from when the file was last saved (`touch` it to
+restart it).
 
 ### Agenda
 
@@ -82,8 +117,11 @@ indicator share one implementation.
 
 ```json
 [{"summary": "Standup", "start": "2026-09-27T09:00:00-06:00",
-  "end": "2026-09-27T09:15:00-06:00", "all_day": false}]
+  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work"}]
 ```
+
+`calendar` is optional; it is shown in brackets as `-calendar-alias` names
+are.
 
 ### Tasks
 
