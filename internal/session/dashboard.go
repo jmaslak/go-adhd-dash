@@ -88,7 +88,7 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 		row++
 	}
 	if v.TasksErr == nil && len(v.Tasks) == 0 {
-		screen = append(screen, placeLine(row, cols, line{{Content: "Nothing to do. Really."}})...)
+		screen = append(screen, placeLine(row, cols, line{{Content: "All tasks completed!"}})...)
 	}
 
 	if v.Message != "" {

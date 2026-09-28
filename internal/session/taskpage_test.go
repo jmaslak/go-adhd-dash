@@ -54,11 +54,25 @@ func TestTaskListScreen(t *testing.T) {
 
 	s, shown, total, crow, ccol := buildTaskList(24, 80, now, all, nil, tp)
 	if shown != 0 || total != 2 {
-		t.Errorf("page %d of %d, want 0 of 2 (19 tasks a page)", shown, total)
+		t.Errorf("page %d of %d, want 0 of 2 (18 tasks a page)", shown, total)
 	}
 	rows := screenText(t, s, 24, 80)
 	if !strings.HasPrefix(rows[taskHeaderRow], " TASKS 25 open, page 1/2, 1 marked") {
 		t.Errorf("header is %q", rows[taskHeaderRow])
+	}
+	if rows[taskColumnRow] != " S  Num Task" {
+		t.Errorf("column headings are %q", rows[taskColumnRow])
+	}
+	// The underline must end with the headings: a field's highlighting runs
+	// to the next attribute byte.
+	ended := false
+	for _, f := range s {
+		if f.Row == taskColumnRow && f.Col == len(" S  Num Task") && f.Highlighting == go3270.DefaultHighlight {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Errorf("no plain attribute right after the column headings, so the underline runs on")
 	}
 	if rows[taskFirstRow] != " X    1 task 1" || rows[taskFirstRow+1] != "      2 task 2" {
 		t.Errorf("first rows are %q, %q", rows[taskFirstRow], rows[taskFirstRow+1])
@@ -76,8 +90,8 @@ func TestTaskListScreen(t *testing.T) {
 			fields[f.Name] = f
 		}
 	}
-	if len(fields) != 18 {
-		t.Errorf("%d mark fields, want 18: the task without an ID gets none", len(fields))
+	if len(fields) != 17 {
+		t.Errorf("%d mark fields, want 17: the task without an ID gets none", len(fields))
 	}
 	if f := fields["mark:101"]; f.Content != "X" || f.Row != taskFirstRow || f.Col != 0 {
 		t.Errorf("task 1's mark field is %+v", f)
@@ -85,7 +99,7 @@ func TestTaskListScreen(t *testing.T) {
 
 	tp.page = 1
 	s, _, _, _, _ = buildTaskList(24, 80, now, all, nil, tp)
-	if rows := screenText(t, s, 24, 80); !strings.HasPrefix(rows[taskFirstRow], "     20 task 20") {
+	if rows := screenText(t, s, 24, 80); !strings.HasPrefix(rows[taskFirstRow], "     19 task 19") {
 		t.Errorf("second page starts %q", rows[taskFirstRow])
 	}
 }
@@ -98,8 +112,8 @@ func TestTaskListMarking(t *testing.T) {
 		return tp.handleList(go3270.Response{AID: aid, Values: values}, all, 2, arch)
 	}
 
-	if confirm, _ := key(go3270.AIDEnter, map[string]string{"mark:101": ""}); confirm || !tp.isError || !strings.Contains(tp.message, "Nothing is marked") {
-		t.Errorf("Enter with nothing marked: confirm %v, message %q", confirm, tp.message)
+	if confirm, _ := key(go3270.AIDPF6, map[string]string{"mark:101": ""}); confirm || !tp.isError || !strings.Contains(tp.message, "Nothing is marked") {
+		t.Errorf("PF6 with nothing marked: confirm %v, message %q", confirm, tp.message)
 	}
 	if confirm, _ := key(go3270.AIDEnter, map[string]string{"mark:101": "q"}); confirm || !strings.Contains(tp.message, `not "q"`) {
 		t.Errorf("bad mark: confirm %v, message %q", confirm, tp.message)
@@ -110,9 +124,13 @@ func TestTaskListMarking(t *testing.T) {
 	if tp.page != 1 || len(tp.marked) != 2 {
 		t.Fatalf("after PF8: page %d, marked %v", tp.page, tp.marked)
 	}
-	confirm, _ := key(go3270.AIDEnter, map[string]string{"mark:120": "X"})
+	// Enter keeps the marks but does not archive.
+	if confirm, _ := key(go3270.AIDEnter, map[string]string{"mark:120": "X"}); confirm || tp.isError || len(tp.marked) != 3 {
+		t.Fatalf("Enter: confirm %v, message %q, marked %v; want the mark kept and nothing else", confirm, tp.message, tp.marked)
+	}
+	confirm, _ := key(go3270.AIDPF6, nil)
 	if !confirm {
-		t.Fatalf("Enter with marks did not confirm: %q", tp.message)
+		t.Fatalf("PF6 with marks did not confirm: %q", tp.message)
 	}
 	var got []int
 	for _, c := range tp.confirming {
@@ -124,7 +142,7 @@ func TestTaskListMarking(t *testing.T) {
 
 	arch.checkErr = errors.New("no Trello credentials")
 	tp.confirming = nil
-	if confirm, _ := key(go3270.AIDEnter, nil); confirm || !strings.Contains(tp.message, "no Trello credentials") {
+	if confirm, _ := key(go3270.AIDPF6, nil); confirm || !strings.Contains(tp.message, "no Trello credentials") {
 		t.Errorf("failed check: confirm %v, message %q", confirm, tp.message)
 	}
 

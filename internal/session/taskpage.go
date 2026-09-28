@@ -25,15 +25,16 @@ type TaskArchiver interface {
 // archiveTimeout bounds archiving one task, most of which is Trello.
 const archiveTimeout = time.Minute
 
-// Task screen layout: the heading, then one task per row down to the row
-// above the message row. Each task that can be archived has a one-character
-// input field before it for its mark.
+// Task screen layout: the heading, the column headings, then one task per
+// row down to the row above the message row. Each task that can be archived
+// has a one-character input field before it for its mark.
 const (
 	taskHeaderRow   = 2
-	taskFirstRow    = 3
+	taskColumnRow   = 3
+	taskFirstRow    = 4
 	taskMarkField   = "mark:"
 	taskTitleCol    = 2
-	taskMarkMessage = "Type X beside each task to archive, then press Enter."
+	taskMarkMessage = "Type X beside each task to archive, then press PF6."
 )
 
 // taskPageState is one session's place on the task screen: the page shown,
@@ -91,6 +92,16 @@ func buildTaskList(rows, cols int, now time.Time, all []tasks.Task, readErr erro
 		header = append(header, go3270.Field{Content: info, Color: go3270.Blue})
 	}
 	screen = append(screen, placeLine(taskHeaderRow, cols, header)...)
+	// Aligned with a task row: the mark in column 1, the number right
+	// aligned in columns 3 to 6, and the tags and title from column 8. A
+	// field's highlighting runs on to the next attribute byte, so a plain
+	// one after the headings keeps the underline from running on to the
+	// first task row.
+	const headings = "S  Num Task"
+	screen = append(screen,
+		go3270.Field{Row: taskColumnRow, Col: 0, Content: headings, Color: go3270.Turquoise, Highlighting: go3270.Underscore},
+		go3270.Field{Row: taskColumnRow, Col: 1 + len(headings)},
+	)
 
 	cursorRow, cursorCol = rows-1, 0
 	for i, t := range pageTasks {
@@ -126,7 +137,7 @@ func buildTaskList(rows, cols int, now time.Time, all []tasks.Task, readErr erro
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: tp.isError}})...)
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
-		Content: truncate("PF3=Back PF7=Up PF8=Down Enter=Archive marked tasks", cols-1),
+		Content: truncate("PF3=Back PF6=Archive marked PF7=Up PF8=Down Enter=Keep marks", cols-1),
 	})
 	return screen, shownPage, totalPages, cursorRow, cursorCol
 }
@@ -240,7 +251,7 @@ func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, tota
 		tp.page = max(tp.page-1, 0)
 	case go3270.AIDPF8:
 		tp.page = min(tp.page+1, totalPages-1)
-	case go3270.AIDEnter:
+	case go3270.AIDPF6:
 		marked := tp.markedTasks(all)
 		switch {
 		case len(marked) == 0:

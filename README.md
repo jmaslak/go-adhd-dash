@@ -72,12 +72,13 @@ The calendar reads each month from Google as it is shown and reuses it for
 `-agenda-refresh`, separately from the shared today-and-tomorrow agenda.
 
 The task screen lists every open task, whatever its tags, display frequency
-or maturity date. Type `X` beside the tasks to archive, then press `Enter`;
-a confirmation lists them, and `PF4` archives them. Marks are kept while
-paging.
+or maturity date. Type `X` in the `S` column beside the tasks to archive,
+then press `PF6`; a confirmation lists them, and `PF4` archives them. Marks
+are kept while paging.
 
+- `PF6`: archive the marked tasks, after confirmation
 - `PF7` / `PF8`: previous / next page
-- `Enter`: archive the marked tasks, after confirmation
+- `Enter`: keep the marks typed, archiving nothing
 - `PF4` (on the confirmation): archive
 - `PF3`: back (from the confirmation, to the list with the marks kept)
 

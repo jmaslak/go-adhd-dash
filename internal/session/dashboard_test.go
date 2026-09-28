@@ -359,7 +359,7 @@ func TestDashboardDegraded(t *testing.T) {
 
 	s, _, _ = buildDashboard(24, 80, view{Now: now}, 0, "")
 	text = strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"not configured (-busy-url)", "No calendar configured", "Nothing to do"} {
+	for _, want := range []string{"not configured (-busy-url)", "No calendar configured", "All tasks completed!"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
