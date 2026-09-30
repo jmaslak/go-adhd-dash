@@ -19,9 +19,12 @@ import (
 // and the message and help rows.
 //
 // Each user's row is a one-character command field (D deletes the user, P
-// changes their password), the name, and one-character admin and
-// restricted fields, Y or N. Autoskip after each input field sends the
+// changes their password), the name, and one-character admin, restricted
+// and console fields, Y or N. Autoskip after each input field sends the
 // cursor on to the next.
+//
+// The rows for adding a user have no console field, as there is no room:
+// a user is made the console's once added.
 const (
 	usHeaderRow = 2
 	usColumnRow = 3
@@ -32,10 +35,13 @@ const (
 	usEndCol    = usAdminCol + 2 // the attribute byte ending the admin field
 	usResCol    = usAdminCol + 6 // the restricted field, under "Restricted"
 	usResEndCol = usResCol + 2
+	usConCol    = usResCol + 11 // the console field, under "Console"
+	usConEndCol = usConCol + 2
 
 	usSelField      = "usel:"
 	usAdminField    = "uadm:"
 	usResField      = "ures:"
+	usConField      = "ucon:"
 	usPasswordField = "upw:" // then the ID of the user whose password is changing
 	usNewName       = "unew"
 	usNewAdmin      = "unewadm"
@@ -49,7 +55,7 @@ const (
 	// (see users.MaxConcurrentHashes) before giving up.
 	usersHashWait = 30 * time.Second
 
-	usPrompt         = "D deletes, P changes password; Y or N under Admin and Restricted."
+	usPrompt         = "D deletes, P changes password; Y or N under Admin, Restricted, Console."
 	usPasswordPrompt = "Type the new password and press Enter. PF3 cancels."
 )
 
@@ -134,10 +140,9 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 
 	if end > start {
 		// Aligned with a user's row: the command in column 1, the name
-		// from column 3, the admin and restricted fields under their
-		// headings. The first command
-		// field stops the underline.
-		headings := fmt.Sprintf("%-2s%-*s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", usResCol-usAdminCol, "Admin", "Restricted")
+		// from column 3, the admin, restricted and console fields under
+		// their headings. The first command field stops the underline.
+		headings := fmt.Sprintf("%-2s%-*s%-*s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", usResCol-usAdminCol, "Admin", usConCol-usResCol, "Restricted", "Console")
 		screen = append(screen, go3270.Field{
 			Row: usColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
 			Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
@@ -170,6 +175,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
 			go3270.Field{Row: row, Col: usResEndCol, Autoskip: true},
+			go3270.Field{
+				Row: row, Col: usConCol, Write: true, Name: usConField + id, Content: u.fieldValue(usConField+id, yesNo(x.Console)),
+				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+			},
+			go3270.Field{Row: row, Col: usConEndCol, Autoskip: true},
 		)
 	}
 
@@ -255,6 +265,7 @@ type usersEdit struct {
 	deletes     map[int]bool
 	admin       map[int]bool // new admin flags, by ID
 	restricted  map[int]bool // new restricted flags, by ID
+	console     map[int]bool // new console flags, by ID
 	passwordFor int          // a user picked, with P, to change the password of
 	newName     string
 	newAdmin    bool
@@ -266,7 +277,7 @@ type usersEdit struct {
 // parse checks what was typed over the fields drawn last, returning why it
 // cannot be used when it cannot.
 func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
-	e.deletes, e.admin, e.restricted = map[int]bool{}, map[int]bool{}, map[int]bool{}
+	e.deletes, e.admin, e.restricted, e.console = map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for name, shown := range u.shown {
 		v, ok := values[name]
 		if !ok || v == shown {
@@ -306,7 +317,19 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 			default:
 				return e, fmt.Sprintf("Type Y or N under Restricted, not %q.", v)
 			}
+		case usConField:
+			switch v {
+			case "Y", "N":
+				if v != shown {
+					e.console[id] = v == "Y"
+				}
+			default:
+				return e, fmt.Sprintf("Type Y or N under Console, not %q.", v)
+			}
 		}
+	}
+	if e.consoleTo() < 0 {
+		return e, "Type Y under Console for only one user."
 	}
 
 	if u.passwordFor != 0 {
@@ -336,6 +359,27 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 	return e, ""
 }
 
+// consoleTo is the user given Y under Console, zero for none, or -1 for
+// more than one.
+func (e usersEdit) consoleTo() int {
+	to := 0
+	for id, c := range e.console {
+		switch {
+		case !c:
+		case to != 0:
+			return -1
+		default:
+			to = id
+		}
+	}
+	return to
+}
+
+// changesFlags reports whether e changes any user's flags.
+func (e usersEdit) changesFlags() bool {
+	return len(e.admin) > 0 || len(e.restricted) > 0 || len(e.console) > 0
+}
+
 // usersPending is a save holding deletions, awaiting confirmation: the
 // edit, the hash of any password in it, and what to go back to if it is
 // not confirmed.
@@ -354,6 +398,7 @@ type usersResult struct {
 	removed         []string
 	changedPassword string
 	added           string
+	console         string // the user the console was handed to
 }
 
 // applyEdit applies e to list, with hash for the password it sets or the
@@ -365,8 +410,19 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 		}
 		return e.deletes[x.ID]
 	})
+	// Y under Console for one user takes it from whoever had it.
+	to := e.consoleTo()
 	for i := range *list {
 		x := &(*list)[i]
+		switch c, ok := e.console[x.ID]; {
+		case to > 0:
+			x.Console = x.ID == to
+			if x.Console {
+				r.console = x.Name
+			}
+		case ok:
+			x.Console = c
+		}
 		if admin, ok := e.admin[x.ID]; ok {
 			x.Admin = admin
 		}
@@ -389,8 +445,11 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 
 // editError is the message for err, from applying an edit.
 func editError(err error) string {
-	if errors.Is(err, users.ErrNoAdmin) {
+	switch {
+	case errors.Is(err, users.ErrNoAdmin):
 		return "At least one user must be an admin: that would leave none."
+	case errors.Is(err, users.ErrNoConsole):
+		return "The console must log in as someone: type Y under Console for another user."
 	}
 	msg := err.Error()
 	return strings.ToUpper(msg[:1]) + msg[1:] + "."
@@ -433,7 +492,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 		u.message, u.isError, u.typed = msg, true, typed
 	}
 	e, bad := u.parse(resp.Values)
-	if bad == "" && resp.AID == go3270.AIDEnter && u.passwordFor != 0 && e.setPassword == "" && len(e.deletes) == 0 && len(e.admin) == 0 && len(e.restricted) == 0 && e.passwordFor == 0 {
+	if bad == "" && resp.AID == go3270.AIDEnter && u.passwordFor != 0 && e.setPassword == "" && len(e.deletes) == 0 && !e.changesFlags() && e.passwordFor == 0 {
 		bad = "Type the new password, or press PF3 to cancel."
 	}
 	if bad != "" {
@@ -474,7 +533,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 		}
 		p := &usersPending{
 			edit: e, hash: hash, passwordFor: u.passwordFor, aid: resp.AID, typed: typed,
-			others: len(e.admin) > 0 || len(e.restricted) > 0 || hash != "" || e.passwordFor != 0,
+			others: e.changesFlags() || hash != "" || e.passwordFor != 0,
 		}
 		for _, x := range list {
 			if e.deletes[x.ID] {
@@ -492,7 +551,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 // typed left to fix, then pages as aid asks.
 func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, hash string, aid go3270.AID, typed map[string]string, logf func(string, ...any)) {
 	var r usersResult
-	if len(e.deletes) > 0 || len(e.admin) > 0 || len(e.restricted) > 0 || hash != "" {
+	if len(e.deletes) > 0 || e.changesFlags() || hash != "" {
 		err := store.Update(func(list *[]users.User, nextID func() int) (err error) {
 			r, err = applyEdit(list, e, passwordFor, hash, nextID)
 			return err
@@ -532,6 +591,10 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 			logf("user %d restricted set to %v", id, restricted)
 		}
 		said = append(said, "Changed "+countText(n, "restricted setting", 0, 1)+".")
+	}
+	if r.console != "" {
+		logf("console user set to %q", r.console)
+		said = append(said, "The console now logs in as "+r.console+".")
 	}
 	u.message = strings.Join(said, " ")
 	if e.passwordFor != 0 {

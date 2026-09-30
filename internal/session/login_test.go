@@ -2,12 +2,15 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	tn3270e "github.com/jmaslak/go-3270e"
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -207,5 +210,32 @@ func TestIsDefaultLogin(t *testing.T) {
 		if got := isDefaultLogin(c.name, c.password); got != c.want {
 			t.Errorf("%q/%q: %v", c.name, c.password, got)
 		}
+	}
+}
+
+func TestConsoleLogin(t *testing.T) {
+	if u, err := consoleLogin(nil); u != nil || err != nil {
+		t.Errorf("no store: %+v, %v", u, err)
+	}
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if u, err := consoleLogin(store); err != nil || u == nil || u.Name != users.FirstName {
+		t.Errorf("new store: %+v, %v", u, err)
+	}
+	bad := filepath.Join(t.TempDir(), "users.json")
+	if err := os.WriteFile(bad, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := consoleLogin(users.NewStore(bad)); err == nil || u != nil {
+		t.Errorf("bad file: %+v, %v", u, err)
+	}
+}
+
+func TestConsoleRejectReasons(t *testing.T) {
+	// In use is DEVICE-IN-USE; asked for from elsewhere is INV-NAME.
+	if !errors.Is(errConsoleInUse, tn3270e.ErrDeviceInUse) {
+		t.Error("in use is not ErrDeviceInUse")
+	}
+	if errors.Is(errConsoleRemote, tn3270e.ErrDeviceInUse) {
+		t.Error("remote is ErrDeviceInUse")
 	}
 }

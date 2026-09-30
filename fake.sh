@@ -31,7 +31,7 @@ EOF
 
     echo '{"status": "red", "minutes-to-next": 12}' > busy.json
 
-    go build -o adhd-dash . && ./adhd-dash -agenda-file agenda.json -tasks-dir tasks -port 3299 -busy-file busy.json
+    go build -o adhd-dash . && ./adhd-dash -agenda-file agenda.json -port 3299 -busy-file busy.json
 }
 
 doit "$@"

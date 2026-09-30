@@ -248,22 +248,32 @@ func TestActivityClaimLU(t *testing.T) {
 	a.update(1, func(s *SessionActivity) { s.LU = consoleLU })
 	a.update(2, func(s *SessionActivity) { s.LU = "AD000002" })
 
-	if booted := a.claimLU(3, consoleLU, consoleBootedFarewell); fmt.Sprint(booted) != "[1]" {
-		t.Errorf("booted %v, want the old console alone", booted)
+	// Refused while the console has it, with nobody booted.
+	if a.claimLU(3, consoleLU) {
+		t.Error("claimed while another console has it")
 	}
-	if a.farewellFor(1) != consoleBootedFarewell || a.terminated(2) || a.terminated(3) {
-		t.Errorf("farewells: %q %q %q", a.farewellFor(1), a.farewellFor(2), a.farewellFor(3))
+	if a.terminated(1) || a.terminated(2) || a.List()[2].LU == consoleLU {
+		t.Errorf("refused claim changed things: %+v", a.List())
 	}
-	if list := a.List(); list[2].LU != consoleLU {
-		t.Errorf("claimer's LU is %q", list[2].LU)
+	if !a.claimLU(1, consoleLU) {
+		t.Error("the console cannot claim its own LU again")
 	}
-	// Terminated from the viewer: an administrator did it.
-	a.terminate(2)
-	if a.farewellFor(2) != terminatedFarewell {
-		t.Errorf("viewer farewell %q", a.farewellFor(2))
+
+	// Free once the console is terminated, or gone.
+	a.terminate(1)
+	if a.farewellFor(1) != terminatedFarewell {
+		t.Errorf("viewer farewell %q", a.farewellFor(1))
 	}
+	if !a.claimLU(3, consoleLU) || a.List()[2].LU != consoleLU {
+		t.Errorf("claim after the console was terminated: %+v", a.List())
+	}
+	a.remove(3)
+	if !a.claimLU(2, consoleLU) {
+		t.Error("claim after the console left")
+	}
+
 	var nilActivity *Activity
-	if nilActivity.claimLU(1, consoleLU, "x") != nil || nilActivity.farewellFor(1) != "" {
-		t.Error("nil Activity booted something")
+	if !nilActivity.claimLU(1, consoleLU) || nilActivity.farewellFor(1) != "" {
+		t.Error("nil Activity refused a claim")
 	}
 }

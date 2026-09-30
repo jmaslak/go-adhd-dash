@@ -2,8 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
-github.com/jmaslak/go-3270e v0.2.2 h1:PF+ssLht1besBNqs5JsfVuQF6jO3Rk9/1agTbEOAVTc=
-github.com/jmaslak/go-3270e v0.2.2/go.mod h1:NrMhbHiWHZW0KXUkQrwGJCkfRYyU/WQa4TTY3SjnMIo=
+github.com/jmaslak/go-3270e v0.3.0 h1:Aiwt+g+StGYckO79nsZSIIHp4IHMnnrvpaKWdmPnYNA=
+github.com/jmaslak/go-3270e v0.3.0/go.mod h1:NrMhbHiWHZW0KXUkQrwGJCkfRYyU/WQa4TTY3SjnMIo=
 github.com/jmaslak/go-busy-indicator v0.1.0 h1:ZyRcPmn9rTn5JidSGb/QaqugI3BSPQ3S9iK7GVdcHn0=
 github.com/jmaslak/go-busy-indicator v0.1.0/go.mod h1:OJiLf7+ZhGu4mj3IeBk6dcb0um9P39YAsaBSzD0bb2s=
 github.com/racingmars/go3270 v0.9.13 h1:qFjzx6zUMR0u1dFN3Wv17D5sXdX/PUqBTt77/4angZk=

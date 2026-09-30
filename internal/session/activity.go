@@ -126,26 +126,25 @@ func (a *Activity) terminate(id uint64) bool {
 	return a.terminateLocked(id, terminatedFarewell)
 }
 
-// claimLU records that session id has LU name lu, terminating every other
-// session with it, each left saying farewell, and returns their IDs. Done
-// under one hold of the lock, so that of two sessions claiming lu at once,
-// the later one keeps it.
-func (a *Activity) claimLU(id uint64, lu, farewell string) (booted []uint64) {
+// claimLU records that session id has LU name lu, unless another session
+// not terminated has it, reporting whether it did. Done under one hold of
+// the lock, so that of two sessions claiming lu at once, only one gets it.
+// With no Activity, every claim succeeds.
+func (a *Activity) claimLU(id uint64, lu string) bool {
 	if a == nil {
-		return nil
+		return true
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for other, s := range a.sessions {
-		if other != id && s.LU == lu && !s.terminated && a.terminateLocked(other, farewell) {
-			booted = append(booted, other)
+		if other != id && s.LU == lu && !s.terminated {
+			return false
 		}
 	}
 	if s, ok := a.sessions[id]; ok {
 		s.LU = lu
 	}
-	slices.Sort(booted)
-	return booted
+	return true
 }
 
 // terminateLocked is terminate, leaving farewell. a.mu must be held.

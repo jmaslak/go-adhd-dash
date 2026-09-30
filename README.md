@@ -128,15 +128,16 @@ The admin menu (`admin`) lists its options by number; type one on the
 The users are kept in `-users-file`, which is made when the server starts
 if it does not exist, holding one user, `admin`, with the password `admin`.
 That password is refused at the login screen: the admin connects as the
-console (which needs no password) and changes it there first, and the log
-says so. The file is readable only by its owner and
+console (which is logged in as `admin` with no password) and changes it
+there first, and the log says so. The file is readable only by its owner and
 rewritten by atomic rename; passwords are stored hashed with Argon2id (RFC
 9106's second recommended parameters: 64 MiB, 3 passes, 4 lanes, a 16-byte
 random salt), in PHC string format, so the parameters can be raised later
 without breaking the hashes already stored.
 
 Admin menu option `4` lists the users, a page at a time (`PF7` / `PF8`),
-each with a one-character command field and an `Admin` field:
+each with a one-character command field and `Admin`, `Restricted` and
+`Console` fields:
 
 - type `D` beside a user to delete them (a confirmation lists them first,
   and saves nothing until `PF4`; `PF3` goes back with what was typed left
@@ -145,12 +146,17 @@ each with a one-character command field and an `Admin` field:
   `PF3` cancels;
 - type `Y` or `N` under `Admin` to make a user an admin or not, and under
   `Restricted` to restrict them or not (see below);
+- type `Y` under `Console` to make a user the one the console logs in as
+  (see below), taking it from whoever had it;
 - on the bottom rows, type a new user's name, `Y` or `N` for `Admin` and
-  `Restricted` (blank is `N`), and their password, to add them.
+  `Restricted` (blank is `N`), and their password, to add them. There is
+  no room there for `Console`: add the user, then type `Y` on their row.
 
 `Enter` (or paging) saves everything typed at once. Names must be unique
-(ignoring case) and have no spaces, no admin may be restricted, and at least
-one user must stay an admin: a change that would break either is refused whole, with what was
+(ignoring case) and have no spaces, no admin may be restricted, at least
+one user must stay an admin, and exactly one user must be the console's (so
+the console's user can be deleted only once another is given `Y` under
+`Console`): a change that would break any of these is refused whole, with what was
 typed left to fix (passwords aside, which are never drawn again). `PF3`
 goes back to the admin menu without saving.
 
@@ -166,17 +172,25 @@ and each failed one, is logged with the address it came from.
 The console is a session whose TN3270E client asks for the LU name
 `CONSOLE` (with `s3270` or `c3270`, connect to `CONSOLE@127.0.0.1:3270`),
 from this machine: `127.0.0.1` or `::1` (or `127.0.0.1` written as
-`::ffff:127.0.0.1`). It does not log in. There is only ever one: a new
-console boots the one before, which is left saying so. A client anywhere
-else asking for `CONSOLE` is refused it (TN3270E `DEVICE-TYPE REJECT`,
-reason `INV-NAME`), and logged; it may ask again for another name, or none,
+`::ffff:127.0.0.1`). It does not log in: it is logged in as the user with
+`Y` under `Console`, which a users file from before there was one takes to
+be `admin` (or, with no admin called that, the first admin). A change to
+which user that is takes effect when the console next connects. If the
+users file cannot be read, the console gets the login screen like any other
+session. There is only ever one: while a console is connected, any other
+client on this machine asking for `CONSOLE` is refused it (TN3270E
+`DEVICE-TYPE REJECT`, reason `DEVICE-IN-USE`), and logged; an
+administrator can free it by terminating the console from the activity
+viewer. A client anywhere else asking for `CONSOLE` is refused it (reason
+`INV-NAME`, whether or not a console is connected), and logged; it may ask again for another name, or none,
 and log in, but most clients give up. Any other name a client asks for is
 not honoured: it gets one of the server's own, `AD` and a number. A client
 that does not speak TN3270E cannot ask for a name, so cannot be the
 console.
 
-A user who logged in and is not an admin cannot open the admin menu. The
-console can.
+A user who is not an admin cannot open the admin menu, and neither can the
+console when its user is not an admin; a restricted console user has only
+the calculator, and logging off there disconnects the console.
 
 ### Audit log
 
@@ -193,11 +207,11 @@ readable only by its owner). Each line is the time, the event, and
 ```
 
 `LOGIN-FAILED` names the user as typed, with `try` counting the tries. The
-console counts as logging in when it connects, as `user=(console)`. A
+console counts as logging in when it connects, as its user. A
 session that logged in ends with `LOGOUT` when the user leaves (`PF3` or
 `exit` on the dashboard, or `PF3` in a restricted user's calculator), or
 else `DISCONNECT` with a `reason`: `connection lost` (and why), `terminated
-by an administrator`, `another console connected`, or `server shut down`.
+by an administrator`, or `server shut down`.
 Connections that never log in are not logged there, only in the server's
 own log.
 
@@ -206,8 +220,8 @@ nothing else: `PF9` switches between it and the dBm calculator, and `PF3`
 (shown as `PF3=Log off`) logs them off. A change to a user's restricted
 flag takes effect at their next login.
 
-The activity viewer shows who each session logged in as, blank for the
-console; the chat still names sessions by LU.
+The activity viewer shows who each session logged in as, the console
+included; the chat still names sessions by LU.
 
 On the calendar, a month is shown with the selected day's events beside it. Move the cursor onto a day and press
 `Enter` to select it.

@@ -127,6 +127,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 	watchdog := time.AfterFunc(negotiateTimeout, func() { _ = rawConn.Close() })
 	neg, err := tn3270e.NegotiateLU(rawConn, func(requested string) (string, error) {
 		lu, err := chooseLU(requested, local, sessionID)
+		// There is one console: claimed here, so that a client asking for
+		// it while another has it is refused it, as a remote one is.
+		if err == nil && lu == consoleLU && !cfg.Activity.claimLU(sessionID, consoleLU) {
+			lu, err = "", errConsoleInUse
+		}
 		if err != nil {
 			log.Printf("session %d (%s): refused LU %q: %v", sessionID, rawConn.RemoteAddr(), requested, err)
 		}
@@ -144,13 +149,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 	log.Printf("session %d (%s): connected, LU %s", sessionID, rawConn.RemoteAddr(), neg.LUName)
 	defer log.Printf("session %d (%s): disconnected", sessionID, rawConn.RemoteAddr())
 	defer cfg.Viewers.Set(sessionID, 0)
-	// There is one console: a new one boots any other.
+	// The console claimed its LU name while negotiating.
 	console := neg.LUName == consoleLU
-	if console {
-		for _, id := range cfg.Activity.claimLU(sessionID, consoleLU, consoleBootedFarewell) {
-			log.Printf("session %d (%s): took over the console from session %d", sessionID, rawConn.RemoteAddr(), id)
-		}
-	} else {
+	if !console {
 		cfg.Activity.update(sessionID, func(s *SessionActivity) { s.LU = neg.LUName })
 	}
 
@@ -165,11 +166,35 @@ func Handle(rawConn net.Conn, cfg Config) {
 	page := 0
 	autoRefresh := true
 	mode := modeDashboard
-	// Every session logs in first but the console. user is who logged
-	// in, nil for the console.
+	// Every session logs in first but the console, which is logged in as
+	// the user marked as the console's. user is who is logged in: nil until
+	// then, and for a console with no user database, which has everything.
+	// A console whose user cannot be read logs in like any other session.
 	var user *users.User
 	var login loginState
-	if !console {
+	var calc calcState // kept while the session lasts, as a calculator's stack is
+	// logIn makes u the session's user. A restricted user has the
+	// calculator, in either mode, and nothing else.
+	logIn := func(u users.User) {
+		user, mode = &u, modeDashboard
+		cfg.Activity.update(sessionID, func(s *SessionActivity) { s.User = u.Name })
+		if u.Restricted {
+			mode, calc = modeCalc, calcState{logOff: true}
+		}
+	}
+	consoleLoggedIn := false
+	if console {
+		switch u, err := consoleLogin(cfg.Users); {
+		case err != nil:
+			log.Printf("session %d (%s): console logs in: %v", sessionID, rawConn.RemoteAddr(), err)
+		case u != nil:
+			logIn(*u)
+			consoleLoggedIn = true
+		default:
+			consoleLoggedIn = true
+		}
+	}
+	if !consoleLoggedIn {
 		timeout := cfg.LoginTimeout
 		if timeout <= 0 {
 			timeout = defaultLoginTimeout
@@ -192,15 +217,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 	loggedOut, endReason := false, "connection lost"
 	defer func() {
 		switch {
-		case user == nil && !console:
+		case user == nil && !consoleLoggedIn:
 		case loggedOut:
 			cfg.Audit.Record(audit.Logout, auditFields(auditName(user))...)
 		default:
 			cfg.Audit.Record(audit.Disconnect, auditFields(auditName(user), audit.F("reason", endReason))...)
 		}
 	}()
-	if console {
-		cfg.Audit.Record(audit.Login, auditFields(auditName(nil))...)
+	if consoleLoggedIn {
+		cfg.Audit.Record(audit.Login, auditFields(auditName(user))...)
 	}
 	// bye leaves text on the terminal as the session disconnects.
 	bye := func(text string) {
@@ -216,7 +241,6 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var ch chatState
 	var us usersState
 	defer cfg.Chat.unwatch(sessionID)
-	var calc calcState             // kept while the session lasts, as a calculator's stack is
 	var allTasks []tasks.Task      // the task screen's tasks, as last shown
 	var sessions []SessionActivity // the activity viewer's sessions, as last shown
 	var checklistAt map[int]int    // the dashboard's checklists, as last shown, by row
@@ -397,12 +421,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 			return
 		case cfg.Activity.terminated(sessionID):
 			logf("terminated")
-			farewell := cfg.Activity.farewellFor(sessionID)
 			endReason = "terminated by an administrator"
-			if farewell == consoleBootedFarewell {
-				endReason = "another console connected"
-			}
-			bye(farewell)
+			bye(cfg.Activity.farewellFor(sessionID))
 			return
 		case mode == modeLogin && !time.Now().Before(login.expires):
 			logf("login timed out")
@@ -521,13 +541,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				bye(farewell)
 				return
 			case u != nil:
-				user, mode = u, modeDashboard
-				cfg.Activity.update(sessionID, func(s *SessionActivity) { s.User = u.Name })
-				// A restricted user has the calculator, in either mode, and
-				// nothing else.
-				if u.Restricted {
-					mode, calc = modeCalc, calcState{logOff: true}
-				}
+				logIn(*u)
 			}
 		case modeChat:
 			if ch.handle(resp, cfg.Chat, sessionID, neg.LUName, rows) {

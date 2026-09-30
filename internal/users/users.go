@@ -1,6 +1,7 @@
 // Package users keeps the user database in a JSON file: each user's name,
 // whether they are an admin, and their password, hashed with Argon2id. At
-// least one user is always an admin.
+// least one user is always an admin, and exactly one is the console's: the
+// user the console is logged in as.
 //
 // Users carry IDs, unique across the file and never reused while it lasts,
 // so that a change made on a screen drawn before another session changed
@@ -35,6 +36,10 @@ type User struct {
 	// is restricted.
 	Restricted bool `json:"restricted,omitempty"`
 
+	// Console is set for the one user the console is logged in as, with no
+	// login screen.
+	Console bool `json:"console,omitempty"`
+
 	Password string `json:"password"` // Argon2id, in PHC string format
 }
 
@@ -46,6 +51,9 @@ const (
 
 // ErrNoAdmin reports a change that would leave no admin.
 var ErrNoAdmin = errors.New("at least one user must be an admin")
+
+// ErrNoConsole reports a change that would leave no user for the console.
+var ErrNoConsole = errors.New("one user must be the console's")
 
 // file is the JSON file's contents.
 type file struct {
@@ -90,7 +98,7 @@ func (s *Store) Load() (list []User, created bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	list = []User{{ID: 1, Name: FirstName, Admin: true, Password: hash}}
+	list = []User{{ID: 1, Name: FirstName, Admin: true, Console: true, Password: hash}}
 	if err := s.write(list); err != nil {
 		return nil, false, err
 	}
@@ -99,8 +107,9 @@ func (s *Store) Load() (list []User, created bool, err error) {
 
 // Update reads the users, passes them to change, and writes back what it
 // leaves, unless it returns an error or the users it leaves are not valid:
-// names must be given and unique (ignoring case), and at least one user an
-// admin (else ErrNoAdmin). NextID gives change IDs for users it adds.
+// names must be given and unique (ignoring case), at least one user an admin
+// (else ErrNoAdmin), and exactly one the console's (else ErrNoConsole, for
+// none). NextID gives change IDs for users it adds.
 func (s *Store) Update(change func(list *[]User, nextID func() int) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,10 +136,10 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 
 // Validate reports why list is not a valid set of users: a name empty,
 // holding a space, or used twice (ignoring case), a user both an admin and
-// restricted, or no admin.
+// restricted, no admin, or not exactly one user the console's.
 func Validate(list []User) error {
 	seen := map[string]bool{}
-	admins := 0
+	admins, consoles := 0, 0
 	for _, u := range list {
 		switch key := strings.ToLower(u.Name); {
 		case u.Name == "":
@@ -150,11 +159,51 @@ func Validate(list []User) error {
 		if u.Admin {
 			admins++
 		}
+		if u.Console {
+			consoles++
+		}
 	}
-	if admins == 0 {
+	switch {
+	case admins == 0:
 		return ErrNoAdmin
+	case consoles == 0:
+		return ErrNoConsole
+	case consoles > 1:
+		return errors.New("only one user can be the console's")
 	}
 	return nil
+}
+
+// ConsoleUser returns the user the console is logged in as.
+func ConsoleUser(list []User) (User, bool) {
+	for _, u := range list {
+		if u.Console {
+			return u, true
+		}
+	}
+	return User{}, false
+}
+
+// defaultConsole marks the console's user in a list that has none, as a
+// file from before there was one has: the first user, FirstName, if they
+// are still there and an admin, else the first admin.
+func defaultConsole(list []User) {
+	if _, ok := ConsoleUser(list); ok {
+		return
+	}
+	pick := -1
+	for i, u := range list {
+		switch {
+		case u.Admin && strings.EqualFold(u.Name, FirstName):
+			list[i].Console = true
+			return
+		case u.Admin && pick < 0:
+			pick = i
+		}
+	}
+	if pick >= 0 {
+		list[pick].Console = true
+	}
 }
 
 // Authenticate returns the user called name (ignoring case) if password is
@@ -219,6 +268,7 @@ func (s *Store) read() ([]User, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("reading users from %s: %w", s.path, err)
 	}
+	defaultConsole(f.Users)
 	return f.Users, nil
 }
 

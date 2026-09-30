@@ -56,8 +56,8 @@ func TestUsersScreen(t *testing.T) {
 	r := newUsersRig(t)
 	for i, want := range map[int]string{
 		usHeaderRow: " USERS 1 user, 1 admin",
-		usColumnRow: " S Name                      Admin Restricted",
-		usFirstRow:  "   admin                     Y     N",
+		usColumnRow: " S Name                      Admin Restricted Console",
+		usFirstRow:  "   admin                     Y     N          Y",
 		20:          " New user ===>                       Admin ===>   Restricted ===>",
 		21:          " Password ===>",
 	} {
@@ -72,7 +72,7 @@ func TestUsersScreen(t *testing.T) {
 		switch {
 		case f.Name == usNewPassword && !f.Hidden:
 			t.Error("password field shows what is typed")
-		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol) && !f.Autoskip:
+		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol || f.Col == usConEndCol) && !f.Autoskip:
 			t.Errorf("field at col %d does not skip on", f.Col)
 		}
 	}
@@ -121,9 +121,13 @@ func TestUsersAddChangeRemove(t *testing.T) {
 		t.Errorf("bad command: %q", r.u.message)
 	}
 
-	// Handing over admin and removing the old one, in one go: asked first,
-	// with nothing saved until PF4.
+	// Handing over admin and the console and removing the old one, in one
+	// go: asked first, with nothing saved until PF4.
 	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "usel:1": "D"})
+	if !strings.Contains(r.u.message, "The console must log in as someone") || r.u.pending != nil {
+		t.Errorf("remove the console's user: %q, pending %v; want refused before asking", r.u.message, r.u.pending)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "ucon:2": "y", "usel:1": "D"})
 	text := strings.Join(r.rows, "\n")
 	for _, want := range []string{"DELETE USERS", "Delete this user?", "admin (admin)", "other changes typed with it are saved with it", "PF4=Delete"} {
 		if !strings.Contains(text, want) {
@@ -144,13 +148,13 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	if !strings.Contains(strings.Join(r.rows, "\n"), "joelle                    y") {
 		t.Errorf("typed not drawn again after PF3:\n%s", strings.Join(r.rows, "\n"))
 	}
-	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "usel:1": "D"})
+	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "ucon:2": "y", "usel:1": "D"})
 	r.key(go3270.AIDPF4, nil)
 	list = r.list()
-	if r.u.isError || len(list) != 1 || list[0].Name != "joelle" || !list[0].Admin {
+	if r.u.isError || len(list) != 1 || list[0].Name != "joelle" || !list[0].Admin || !list[0].Console {
 		t.Fatalf("hand over: message %q, users %+v", r.u.message, list)
 	}
-	if r.u.message != "Removed 1 user. Changed 1 admin setting." {
+	if r.u.message != "Removed 1 user. Changed 1 admin setting. The console now logs in as joelle." {
 		t.Errorf("hand over message %q", r.u.message)
 	}
 
@@ -247,5 +251,41 @@ func TestUsersRestricted(t *testing.T) {
 	r.key(go3270.AIDEnter, map[string]string{usNewRes: "Y"})
 	if r.u.message != "Type the new user's name." {
 		t.Errorf("restricted with no name: %q", r.u.message)
+	}
+}
+
+func TestUsersConsole(t *testing.T) {
+	r := newUsersRig(t)
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "pw"})
+	if len(r.list()) != 3 {
+		t.Fatalf("adding: %q", r.u.message)
+	}
+
+	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "q"})
+	if !strings.Contains(r.u.message, `under Console, not "Q"`) {
+		t.Errorf("bad flag: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "y", "ucon:3": "Y"})
+	if r.u.message != "Type Y under Console for only one user." || r.u.typed["ucon:3"] != "Y" {
+		t.Errorf("two console users: %q, typed %v", r.u.message, r.u.typed)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"ucon:1": "N"})
+	if !strings.Contains(r.u.message, "The console must log in as someone") || !r.list()[0].Console {
+		t.Errorf("no console user: %q", r.u.message)
+	}
+
+	// Y for another takes it from whoever had it, N typed there or not; a
+	// restricted user may have it.
+	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "y"})
+	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "calc" || r.u.message != "The console now logs in as calc." {
+		t.Errorf("hand to calc: %q, console user %+v", r.u.message, u)
+	}
+	if !strings.Contains(r.rows[usFirstRow], "admin                     Y     N          N") {
+		t.Errorf("row %q", r.rows[usFirstRow])
+	}
+	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "N", "ucon:3": "Y"})
+	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "joelle" {
+		t.Errorf("hand to joelle: %q, console user %+v", r.u.message, u)
 	}
 }

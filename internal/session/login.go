@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	tn3270e "github.com/jmaslak/go-3270e"
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -93,12 +94,13 @@ func bannerLines() []line {
 }
 
 // consoleLU is the LU name of the console: the one session that need not
-// log in, which must connect from this machine and asks for it by name.
+// log in, being logged in as the user marked as the console's, which must
+// connect from this machine and asks for it by name.
 const consoleLU = "CONSOLE"
 
-// consoleBootedFarewell is left on a console's terminal when another
-// console connects.
-const consoleBootedFarewell = "Another CONSOLE session connected. Goodbye."
+// errConsoleInUse refuses the console's LU name while another session has
+// it, with DEVICE-TYPE REJECT reason DEVICE-IN-USE.
+var errConsoleInUse = fmt.Errorf("the CONSOLE LU is in use by another session (%w)", tn3270e.ErrDeviceInUse)
 
 // errConsoleRemote refuses the console's LU name to a client not on this
 // machine.
@@ -117,6 +119,23 @@ func chooseLU(requested string, local bool, id uint64) (string, error) {
 		return consoleLU, nil
 	}
 	return fmt.Sprintf("AD%06X", id&0xFFFFFF), nil
+}
+
+// consoleLogin returns the user the console is logged in as, from store:
+// nil, for everything, when there is no store.
+func consoleLogin(store *users.Store) (*users.User, error) {
+	if store == nil {
+		return nil, nil
+	}
+	list, _, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	u, ok := users.ConsoleUser(list)
+	if !ok {
+		return nil, errors.New("no user is marked as the console's")
+	}
+	return &u, nil
 }
 
 // isLocal reports whether addr is this machine's loopback address,
@@ -256,8 +275,8 @@ func buildFarewell(cols int, now time.Time, text string) go3270.Screen {
 	return append(screen, placeLine(2, cols, line{{Content: text, Color: go3270.Yellow, Intense: true}})...)
 }
 
-// auditName is how the audit log names user: by name, or for the console,
-// which does not log in, as (console).
+// auditName is how the audit log names user: by name, or for a console
+// with no user database, and so no user, as (console).
 func auditName(user *users.User) string {
 	if user == nil {
 		return "(console)"
