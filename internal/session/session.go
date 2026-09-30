@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/audit"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
@@ -59,6 +61,10 @@ type Config struct {
 
 	// Users keeps the user database; nil for none.
 	Users *users.Store
+
+	// Audit is the audit log of logins, logouts and disconnections; nil
+	// for none.
+	Audit *audit.Log
 
 	// Chat holds the chat's messages; nil for no chat.
 	Chat *Chat
@@ -135,6 +141,32 @@ func Handle(rawConn net.Conn, cfg Config) {
 	if !console {
 		mode, login.expires = modeLogin, time.Now().Add(loginTimeout)
 	}
+
+	// The audit log records each login, and how each session logged in
+	// (the console included) ended: logged out, or disconnected, and why.
+	// Every way out sets loggedOut or endReason first.
+	ip := rawConn.RemoteAddr().String()
+	if h, _, err := net.SplitHostPort(ip); err == nil {
+		ip = h
+	}
+	auditFields := func(name string, extra ...audit.Field) []audit.Field {
+		return append([]audit.Field{
+			audit.F("user", name), audit.F("lu", neg.LUName), audit.F("ip", ip), audit.F("session", strconv.FormatUint(sessionID, 10)),
+		}, extra...)
+	}
+	loggedOut, endReason := false, "connection lost"
+	defer func() {
+		switch {
+		case user == nil && !console:
+		case loggedOut:
+			cfg.Audit.Record(audit.Logout, auditFields(auditName(user))...)
+		default:
+			cfg.Audit.Record(audit.Disconnect, auditFields(auditName(user), audit.F("reason", endReason))...)
+		}
+	}()
+	if console {
+		cfg.Audit.Record(audit.Login, auditFields(auditName(nil))...)
+	}
 	// bye leaves text on the terminal as the session disconnects.
 	bye := func(text string) {
 		_, _ = go3270.ShowScreenOpts(buildFarewell(cols, time.Now(), text), nil, conn, go3270.ScreenOpts{
@@ -204,6 +236,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "chat":
 			mode, ch = modeChat, chatState{}
 		case "exit":
+			loggedOut = true
 			return true
 		}
 		return false
@@ -324,11 +357,17 @@ func Handle(rawConn net.Conn, cfg Config) {
 		// A terminated session is the same.
 		switch {
 		case cfg.Shutdown.Requested():
+			endReason = "server shut down"
 			bye(shutdownFarewell)
 			return
 		case cfg.Activity.terminated(sessionID):
 			logf("terminated")
-			bye(cfg.Activity.farewellFor(sessionID))
+			farewell := cfg.Activity.farewellFor(sessionID)
+			endReason = "terminated by an administrator"
+			if farewell == consoleBootedFarewell {
+				endReason = "another console connected"
+			}
+			bye(farewell)
 			return
 		case mode == modeLogin && !time.Now().Before(login.expires):
 			logf("login timed out")
@@ -347,6 +386,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		}
 		if err != nil {
 			log.Printf("session %d (%s): %v", sessionID, rawConn.RemoteAddr(), err)
+			endReason = "connection lost: " + err.Error()
 			return
 		}
 		_ = conn.SetReadDeadline(time.Time{})
@@ -388,6 +428,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if calc.handle(resp) {
 				if user != nil && user.Restricted {
 					logf("logged off")
+					loggedOut = true
 					bye("Logged off. Goodbye.")
 					return
 				}
@@ -432,7 +473,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeTerminateConfirm
 			}
 		case modeLogin:
+			failures := login.failures
 			u, quit, farewell := login.handle(resp, cfg.Users, logf)
+			if login.failures > failures {
+				cfg.Audit.Record(audit.LoginFailed, auditFields(login.name, audit.F("try", strconv.Itoa(login.failures)))...)
+			}
+			if u != nil {
+				cfg.Audit.Record(audit.Login, auditFields(u.Name)...)
+			}
 			switch {
 			case quit:
 				bye(farewell)

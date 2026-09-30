@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	_ "time/tzdata" // the calendar's world clocks, on hosts without zoneinfo
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/audit"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/session"
@@ -33,6 +36,7 @@ func main() {
 	agendaFile := flag.String("agenda-file", "", "read the agenda from this JSON file instead of Google Calendar")
 	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
+	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often the calendar is read")
 	flag.Parse()
 
@@ -58,6 +62,15 @@ func main() {
 	shutdown := session.NewShutdown()
 	taskCache := tasks.NewCache()
 
+	var auditLog *audit.Log
+	if *auditFile != "" {
+		var err error
+		if auditLog, err = audit.Open(*auditFile); err != nil {
+			log.Fatal(err)
+		}
+		defer auditLog.Close() //nolint:errcheck
+	}
+
 	// Made now, with its first user, rather than when first looked at.
 	userStore := users.NewStore(*usersFile)
 	if _, created, err := userStore.Load(); err != nil {
@@ -71,6 +84,7 @@ func main() {
 		Tasks: taskCache, Archiver: taskCache, Adder: taskCache,
 		Checklists: checklist.NewStore(*checklistFile),
 		Users:      userStore,
+		Audit:      auditLog,
 		Viewers:    session.NewViewers(),
 		Activity:   session.NewActivity(),
 		Chat:       session.NewChat(),
@@ -135,3 +149,12 @@ func main() {
 // shutdownGrace is how long sessions have to say goodbye and disconnect on
 // shutdown before their connections are closed under them.
 const shutdownGrace = 5 * time.Second
+
+// defaultAuditPath is where the audit log goes unless told otherwise:
+// .adhd-dash-audit.log in the home directory.
+func defaultAuditPath() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".adhd-dash-audit.log")
+	}
+	return ".adhd-dash-audit.log"
+}

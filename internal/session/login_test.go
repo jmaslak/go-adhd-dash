@@ -161,3 +161,9 @@ func TestChooseLU(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditName(t *testing.T) {
+	if auditName(nil) != "(console)" || auditName(&users.User{Name: "bob"}) != "bob" {
+		t.Error("audit names wrong")
+	}
+}

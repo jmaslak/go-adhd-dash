@@ -46,6 +46,7 @@ Model 5's 27x132 or larger.
 | `-agenda-refresh` | `5m` | how often the calendar is read |
 | `-checklist-file` | `~/.adhd-dash-checklists.json` | JSON file the checklists are kept in |
 | `-users-file` | `~/.adhd-dash-users.json` | JSON file the users are kept in |
+| `-audit-log` | `~/.adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
 
 Leaving `-busy-url` or `-calendar` empty leaves that section showing "not
 configured" rather than failing.
@@ -170,6 +171,29 @@ console.
 
 A user who logged in and is not an admin cannot open the admin menu. The
 console can.
+
+### Audit log
+
+`-audit-log` gets a line for every login, failed login, logout and
+disconnection, appended and flushed to disk as it happens (the file is made
+readable only by its owner). Each line is the time, the event, and
+`key=value` fields, a value quoted when it is empty or holds a space:
+
+```
+2026-09-29T20:53:56-06:00 LOGIN-FAILED user=bob lu=AD000002 ip=127.0.0.1 session=2 try=1
+2026-09-29T20:53:56-06:00 LOGIN user=bob lu=AD000002 ip=127.0.0.1 session=2
+2026-09-29T20:53:56-06:00 LOGOUT user=bob lu=AD000002 ip=127.0.0.1 session=2
+2026-09-29T20:53:57-06:00 DISCONNECT user=bob lu=AD000003 ip=127.0.0.1 session=3 reason="connection lost: EOF"
+```
+
+`LOGIN-FAILED` names the user as typed, with `try` counting the tries. The
+console counts as logging in when it connects, as `user=(console)`. A
+session that logged in ends with `LOGOUT` when the user leaves (`PF3` or
+`exit` on the dashboard, or `PF3` in a restricted user's calculator), or
+else `DISCONNECT` with a `reason`: `connection lost` (and why), `terminated
+by an administrator`, `another console connected`, or `server shut down`.
+Connections that never log in are not logged there, only in the server's
+own log.
 
 A restricted user goes straight to the calculator on logging in, and has
 nothing else: `PF9` switches between it and the dBm calculator, and `PF3`

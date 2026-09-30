@@ -229,3 +229,12 @@ func buildFarewell(cols int, now time.Time, text string) go3270.Screen {
 	screen := titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", now, false)
 	return append(screen, placeLine(2, cols, line{{Content: text, Color: go3270.Yellow, Intense: true}})...)
 }
+
+// auditName is how the audit log names user: by name, or for the console,
+// which does not log in, as (console).
+func auditName(user *users.User) string {
+	if user == nil {
+		return "(console)"
+	}
+	return user.Name
+}
