@@ -12,6 +12,7 @@ import (
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
+	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
 
@@ -75,10 +76,11 @@ func TestDashboardFitsAndPages(t *testing.T) {
 		rows, cols := size[0], size[1]
 		t.Run(fmt.Sprintf("%dx%d", rows, cols), func(t *testing.T) {
 			v := sampleView(40)
+			v.Checklists = sampleChecklists(12)
 			seen := map[int]bool{}
-			_, _, total := buildDashboard(rows, cols, v, 0, "AD000001")
+			_, _, total, _ := buildDashboard(rows, cols, v, 0, "AD000001")
 			for page := range total {
-				s, shown, _ := buildDashboard(rows, cols, v, page, "AD000001")
+				s, shown, _, _ := buildDashboard(rows, cols, v, page, "AD000001")
 				if shown != page {
 					t.Fatalf("page %d shown as %d", page, shown)
 				}
@@ -96,7 +98,7 @@ func TestDashboardFitsAndPages(t *testing.T) {
 				t.Errorf("saw %d of 40 tasks across %d pages", len(seen), total)
 			}
 
-			_, shown, _ := buildDashboard(rows, cols, v, 99, "")
+			_, shown, _, _ := buildDashboard(rows, cols, v, 99, "")
 			if shown != total-1 {
 				t.Errorf("page 99 clamped to %d, want %d", shown, total-1)
 			}
@@ -105,10 +107,10 @@ func TestDashboardFitsAndPages(t *testing.T) {
 }
 
 func TestDashboardContent(t *testing.T) {
-	s, _, _ := buildDashboard(24, 80, sampleView(3), 0, "AD000001")
+	s, _, _, _ := buildDashboard(24, 80, sampleView(3), 0, "AD000001")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{
-		"NOT BUSY", "Meeting now: Running",
+		"** NOT IN MEETING **", "Meeting now: Running",
 		"Today 09:30-10:30 NOW      Running", "in 15m   Soon", "Tmrw ",
 		"TASKS 3 open", "   1 [work] task 1",
 	} {
@@ -122,10 +124,10 @@ func TestDashboardContent(t *testing.T) {
 }
 
 func TestDashboardBusyBanner(t *testing.T) {
-	for light, want := range map[string]string{"red": "** BUSY **", "green": "** AVAILABLE **", "off": "** NOT BUSY **"} {
+	for light, want := range map[string]string{"red": "** IN MEETING **", "green": "** AVAILABLE **", "off": "** NOT IN MEETING **"} {
 		v := sampleView(0)
 		v.Busy.Light = light
-		s, _, _ := buildDashboard(24, 80, v, 0, "")
+		s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 		text := screenText(t, s, 24, 80)
 		if got := strings.TrimSpace(text[busyRow]); got != want {
 			t.Errorf("%s: banner row is %q, want %q", light, text[busyRow], want)
@@ -205,7 +207,7 @@ func TestAutoRefreshMarker(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		v := sampleView(0)
 		v.AutoRefresh = on
-		s, _, _ := buildDashboard(24, 80, v, 0, "")
+		s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 		title := screenText(t, s, 24, 80)[titleRow]
 		if got := strings.Contains(title, "AUTO-REFRESH"); got != on {
 			t.Errorf("auto-refresh %v: title row is %q", on, title)
@@ -226,7 +228,7 @@ func TestAgendaShowsNextDay(t *testing.T) {
 	later := now.Add(30 * time.Hour)
 	v.Agenda.Events = append(v.Agenda.Events, agenda.Event{Summary: "later", Start: later, End: later.Add(time.Hour)})
 
-	s, _, _ := buildDashboard(24, 80, v, 0, "")
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for i := range 10 {
 		if want := fmt.Sprint("meeting", i); !strings.Contains(text, want) {
@@ -249,7 +251,7 @@ func TestFullAgendaPushesTasksToNextPage(t *testing.T) {
 		v.Agenda.Events = append(v.Agenda.Events, agenda.Event{Summary: fmt.Sprint("crowd", i), Start: start, End: start.Add(time.Hour)})
 	}
 
-	s, _, total := buildDashboard(24, 80, v, 0, "")
+	s, _, total, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	if strings.Contains(text, "[work]") || !strings.Contains(text, "PF8 to see them") {
 		t.Errorf("first page should give every row to the agenda and point to PF8:\n%s", text)
@@ -260,7 +262,7 @@ func TestFullAgendaPushesTasksToNextPage(t *testing.T) {
 
 	seen := 0
 	for page := 1; page < total; page++ {
-		s, _, _ := buildDashboard(24, 80, v, page, "")
+		s, _, _, _ := buildDashboard(24, 80, v, page, "")
 		text := strings.Join(screenText(t, s, 24, 80), "\n")
 		seen += strings.Count(text, "[work]")
 		if strings.Contains(text, "crowd12") {
@@ -292,7 +294,7 @@ func TestIsMeeting(t *testing.T) {
 		agenda.Event{Summary: "OOO", Start: now.Add(-time.Hour), End: now.Add(3 * time.Hour)},
 		agenda.Event{Summary: "Out of office", Start: now.Add(time.Hour), End: now.Add(2 * time.Hour)},
 	)
-	s, _, _ := buildDashboard(24, 80, v, 0, "")
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	if strings.Contains(text, "OOO") || strings.Contains(text, "Out of office") {
 		t.Errorf("out-of-office event shown:\n%s", text)
@@ -308,7 +310,7 @@ func TestNextMeetingMatchesAgenda(t *testing.T) {
 	v := sampleView(0)
 	start := now.Add(15*time.Minute + 40*time.Second)
 	v.Agenda.Events = []agenda.Event{{Summary: "Odd", Start: start, End: start.Add(time.Hour)}}
-	s, _, _ := buildDashboard(24, 80, v, 0, "")
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{"Next meeting in 16m: Odd", "in 16m   Odd"} {
 		if !strings.Contains(text, want) {
@@ -319,20 +321,26 @@ func TestNextMeetingMatchesAgenda(t *testing.T) {
 
 func TestBusyControlKeys(t *testing.T) {
 	v := sampleView(0)
-	s, _, _ := buildDashboard(24, 80, v, 0, "AD000001")
-	if help := screenText(t, s, 24, 80)[23]; strings.Contains(help, "PF1=") || !strings.Contains(help, "LU AD000001") {
-		t.Errorf("without a control port, help row is %q; want no busy keys, and the LU name", help)
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "AD000001")
+	if help := screenText(t, s, 24, 80)[23]; help != " PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks PF11=Chat" {
+		t.Errorf("without a control port, help row is %q", help)
+	}
+	s, _, _, _ = buildDashboard(27, 132, v, 0, "AD000001")
+	if help := screenText(t, s, 27, 132)[26]; !strings.HasSuffix(help, "Enter=Rfrsh   LU AD000001") {
+		t.Errorf("at 132 columns, help row is %q; want the LU name", help)
 	}
 
 	v.BusyControl = true
 	v.Message = "Could not send to busy indicator: " + strings.Repeat("x", 100)
-	s, _, _ = buildDashboard(24, 80, v, 0, "AD000001")
+	s, _, _, _ = buildDashboard(24, 80, v, 0, "AD000001")
 	rows := screenText(t, s, 24, 80)
-	if want := " PF1=Busy PF2=Off PF3=Exit PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks Enter=Rfrsh"; rows[23] != want {
-		t.Errorf("help row is %q, want %q (the LU name does not fit)", rows[23], want)
+	if want := " PF1=Busy PF2=Off PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks"; rows[23] != want {
+		t.Errorf("help row is %q, want %q (neither PF11, Enter nor the LU name fits)", rows[23], want)
 	}
-	if !strings.HasPrefix(rows[21], " Could not send to busy indicator") {
-		t.Errorf("message row is %q", rows[21])
+	// The message follows the command field, stopping short of the bottom
+	// banner's attribute byte at the end of the row.
+	if !strings.HasPrefix(rows[21], " Command ===>") || !strings.Contains(rows[21], "Could not send to busy indicator") || len(rows[21]) > 79 {
+		t.Errorf("command row is %q", rows[21])
 	}
 }
 
@@ -345,7 +353,7 @@ func TestDashboardDegraded(t *testing.T) {
 		Agenda:        agenda.Snapshot{Err: errors.New("no Google credentials")},
 		TasksErr:      errors.New("reading task directory: no such file"),
 	}
-	s, _, _ := buildDashboard(24, 80, v, 0, "")
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{
 		"Busy indicator not reachable at ws://x/feed",
@@ -357,11 +365,132 @@ func TestDashboardDegraded(t *testing.T) {
 		}
 	}
 
-	s, _, _ = buildDashboard(24, 80, view{Now: now}, 0, "")
+	s, _, _, _ = buildDashboard(24, 80, view{Now: now}, 0, "")
 	text = strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{"not configured (-busy-url)", "No calendar configured", "All tasks completed!"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// sampleChecklists are n checklists, IDs 1 to n, all starred but the second,
+// the first with its one item done.
+func sampleChecklists(n int) []checklist.Checklist {
+	var out []checklist.Checklist
+	for i := range n {
+		l := checklist.Checklist{ID: i + 1, Name: fmt.Sprint("list ", i+1), Items: []checklist.Item{{ID: 100 + i, Text: "x"}}}
+		l.Items[0].Done = i == 0
+		l.Active = i != 1
+		out = append(out, l)
+	}
+	return out
+}
+
+func TestDashboardChecklists(t *testing.T) {
+	v := sampleView(3)
+	v.Checklists = sampleChecklists(3)
+	s, _, _, at := buildDashboard(24, 80, v, 0, "")
+	rows := screenText(t, s, 24, 80)
+	text := strings.Join(rows, "\n")
+	for _, want := range []string{
+		"TASKS 5 open",
+		">\n    - [checklist] list 1 (1/1)\n    - [checklist] list 3 (0/1)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("screen lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "[checklist]") < strings.Index(text, "task 3") {
+		t.Errorf("checklists should follow the tasks:\n%s", text)
+	}
+	for _, unwanted := range []string{"list 2", "OPEN CHECKLISTS", "Enter on"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("screen has %q:\n%s", unwanted, text)
+		}
+	}
+	if len(at) != 2 {
+		t.Fatalf("checklist rows are %v, want two", at)
+	}
+	for row, id := range at {
+		if want := fmt.Sprintf("list %d (", id); !strings.Contains(rows[row], want) {
+			t.Errorf("row %d is %q, mapped to checklist %d", row, rows[row], id)
+		}
+	}
+	for _, f := range s {
+		if strings.HasPrefix(f.Content, "list ") && (f.Color != go3270.Green || !f.Intense) {
+			t.Errorf("checklist name not colored as a task's title: %+v", f)
+		}
+		if f.Content == checklistTag && f.Color != go3270.Turquoise {
+			t.Errorf("checklist label not colored as a task's tags: %+v", f)
+		}
+	}
+}
+
+func TestDashboardChecklistsPage(t *testing.T) {
+	v := sampleView(40)
+	v.Checklists = sampleChecklists(12) // 11 starred
+	_, _, total, _ := buildDashboard(24, 80, v, 0, "")
+	seen := map[int]int{}
+	for page := range total {
+		s, _, _, at := buildDashboard(24, 80, v, page, "")
+		rows := screenText(t, s, 24, 80)
+		if !strings.Contains(strings.Join(rows, "\n"), "TASKS 51 open") {
+			t.Errorf("page %d: header does not count the checklists:\n%s", page+1, strings.Join(rows, "\n"))
+		}
+		for row, id := range at {
+			seen[id]++
+			if row >= dashboardCommandRow(24) || !strings.Contains(rows[row], fmt.Sprintf("list %d (", id)) {
+				t.Errorf("page %d: row %d is %q, mapped to checklist %d", page+1, row, rows[row], id)
+			}
+		}
+	}
+	if len(seen) != 11 {
+		t.Errorf("saw %d of 11 starred checklists across %d pages", len(seen), total)
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Errorf("checklist %d on %d pages", id, n)
+		}
+	}
+}
+
+func TestDashboardChecklistsError(t *testing.T) {
+	v := sampleView(3)
+	v.ChecklistsErr = errors.New("reading checklists: bad")
+	s, _, _, at := buildDashboard(24, 80, v, 0, "")
+	text := strings.Join(screenText(t, s, 24, 80), "\n")
+	if !strings.Contains(text, "[checklist] reading checklists: bad") || !strings.Contains(text, "TASKS 3 open") || len(at) != 0 {
+		t.Errorf("checklist error should be a line of the task list, not counted or opened (%v):\n%s", at, text)
+	}
+
+	// Only unstarred checklists, and no tasks: all done.
+	v = sampleView(0)
+	v.Checklists = sampleChecklists(2)[1:]
+	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "All tasks completed!") || strings.Contains(text, "[checklist]") {
+		t.Errorf("unstarred checklist shown:\n%s", text)
+	}
+
+	// A starred checklist is still open.
+	v.Checklists = sampleChecklists(1)
+	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); strings.Contains(text, "All tasks completed!") || !strings.Contains(text, "TASKS 1 open") {
+		t.Errorf("starred checklist not counted as open:\n%s", text)
+	}
+}
+
+func TestDashboardTaskFetchStatus(t *testing.T) {
+	v := view{Now: now, TasksLoading: true}
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "TASKS fetching from Trello") || strings.Contains(text, "All tasks completed!") {
+		t.Errorf("first fetch under way:\n%s", text)
+	}
+
+	v = sampleView(2)
+	v.TasksFetched, v.TasksErr = now.Add(-20*time.Minute), errors.New("trello: timeout")
+	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "TASKS 2 open stale, from 09:40: trello: timeout") || !strings.Contains(text, "   2 [work] task 2") {
+		t.Errorf("stale tasks should still be listed, noted as stale:\n%s", text)
 	}
 }

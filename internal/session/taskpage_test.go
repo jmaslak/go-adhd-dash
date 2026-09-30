@@ -4,38 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
 
-// someTasks are n open tasks with IDs 101 up; the second mirrors a Trello
-// card.
+// someTasks are n open tasks on cards 101 up.
 func someTasks(n int) []tasks.Task {
 	var out []tasks.Task
 	for i := range n {
-		t := tasks.Task{Number: i + 1, Title: fmt.Sprint("task ", i+1), ID: big.NewInt(int64(101 + i))}
-		if i == 1 {
-			t.TrelloID = "card2"
-		}
-		out = append(out, t)
+		out = append(out, tasks.Task{Number: i + 1, Title: fmt.Sprint("task ", i+1), CardID: fmt.Sprint(101 + i)})
 	}
 	return out
 }
 
-// fakeArchiver records what it archives, refusing Check with checkErr and
-// failing Archive for the task numbered failOn.
+// fakeArchiver records what it archives, failing for the task numbered
+// failOn.
 type fakeArchiver struct {
-	checkErr error
 	failOn   int
 	archived []int
 }
-
-func (f *fakeArchiver) Check([]tasks.Task) error { return f.checkErr }
 
 func (f *fakeArchiver) Archive(_ context.Context, t tasks.Task) error {
 	if t.Number == f.failOn {
@@ -49,10 +41,9 @@ func noLog(string, ...any) {}
 
 func TestTaskListScreen(t *testing.T) {
 	all := someTasks(25)
-	all[2].ID = nil // not yet upgraded: cannot be marked
 	tp := &taskPageState{marked: map[string]bool{"101": true}}
 
-	s, shown, total, crow, ccol := buildTaskList(24, 80, now, all, nil, tp)
+	s, shown, total, crow, ccol := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, tp)
 	if shown != 0 || total != 2 {
 		t.Errorf("page %d of %d, want 0 of 2 (18 tasks a page)", shown, total)
 	}
@@ -63,16 +54,24 @@ func TestTaskListScreen(t *testing.T) {
 	if rows[taskColumnRow] != " S  Num Task" {
 		t.Errorf("column headings are %q", rows[taskColumnRow])
 	}
-	// The underline must end with the headings: a field's highlighting runs
-	// to the next attribute byte.
-	ended := false
+	// The underline covers the whole headings row and stops there: a
+	// field's highlighting runs to the next attribute byte, which must be the
+	// first task row's, at its start.
+	var headings go3270.Field
+	next := 24 * 80
 	for _, f := range s {
-		if f.Row == taskColumnRow && f.Col == len(" S  Num Task") && f.Highlighting == go3270.DefaultHighlight {
-			ended = true
+		switch at := f.Row*80 + f.Col; {
+		case at == taskColumnRow*80:
+			headings = f
+		case at > taskColumnRow*80 && at < next:
+			next = at
 		}
 	}
-	if !ended {
-		t.Errorf("no plain attribute right after the column headings, so the underline runs on")
+	if headings.Highlighting != go3270.Underscore || len(headings.Content) != 79 {
+		t.Errorf("headings field is %+v; want underlined to the end of the row", headings)
+	}
+	if next != taskFirstRow*80 {
+		t.Errorf("next attribute after the headings is at row %d col %d; want the first task row's start", next/80, next%80)
 	}
 	if rows[taskFirstRow] != " X    1 task 1" || rows[taskFirstRow+1] != "      2 task 2" {
 		t.Errorf("first rows are %q, %q", rows[taskFirstRow], rows[taskFirstRow+1])
@@ -90,22 +89,43 @@ func TestTaskListScreen(t *testing.T) {
 			fields[f.Name] = f
 		}
 	}
-	if len(fields) != 17 {
-		t.Errorf("%d mark fields, want 17: the task without an ID gets none", len(fields))
+	if len(fields) != 18 {
+		t.Errorf("%d mark fields, want 18", len(fields))
 	}
 	if f := fields["mark:101"]; f.Content != "X" || f.Row != taskFirstRow || f.Col != 0 {
 		t.Errorf("task 1's mark field is %+v", f)
 	}
+	for _, f := range s {
+		if f.Row >= taskFirstRow && f.Row < taskFirstRow+18 && f.Col == taskTitleCol && !f.Autoskip {
+			t.Errorf("field after the mark on row %d does not skip on: %+v", f.Row, f)
+		}
+	}
 
 	tp.page = 1
-	s, _, _, _, _ = buildTaskList(24, 80, now, all, nil, tp)
+	s, _, _, _, _ = buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, tp)
 	if rows := screenText(t, s, 24, 80); !strings.HasPrefix(rows[taskFirstRow], "     19 task 19") {
 		t.Errorf("second page starts %q", rows[taskFirstRow])
 	}
 
-	s, _, _, _, _ = buildTaskList(24, 80, now, nil, nil, &taskPageState{})
+	s, _, _, _, _ = buildTaskList(24, 80, now, tasks.Snapshot{Fetched: now}, &taskPageState{})
 	if rows := screenText(t, s, 24, 80); rows[taskColumnRow] != "" || !strings.HasPrefix(rows[taskHeaderRow], " TASKS 0 open") {
 		t.Errorf("with no tasks, header row %q and column headings row %q; want no column headings", rows[taskHeaderRow], rows[taskColumnRow])
+	}
+}
+
+func TestTaskListStatus(t *testing.T) {
+	for _, c := range []struct {
+		snap tasks.Snapshot
+		want string
+	}{
+		{tasks.Snapshot{Loading: true}, " TASKS fetching from Trello"},
+		{tasks.Snapshot{Err: errors.New("trello: 401 Unauthorized")}, " TASKS trello: 401 Unauthorized"},
+		{tasks.Snapshot{Tasks: someTasks(2), Fetched: now.Add(-20 * time.Minute), Err: errors.New("timeout")}, " TASKS 2 open stale, from 09:40: timeout"},
+	} {
+		s, _, _, _, _ := buildTaskList(24, 80, now, c.snap, &taskPageState{})
+		if row := screenText(t, s, 24, 80)[taskHeaderRow]; row != c.want {
+			t.Errorf("header is %q, want %q", row, c.want)
+		}
 	}
 }
 
@@ -114,7 +134,8 @@ func TestTaskListMarking(t *testing.T) {
 	arch := &fakeArchiver{}
 	tp := &taskPageState{}
 	key := func(aid go3270.AID, values map[string]string) (confirm, leave bool) {
-		return tp.handleList(go3270.Response{AID: aid, Values: values}, all, 2, arch)
+		a := tp.handleList(go3270.Response{AID: aid, Values: values}, all, 2, arch)
+		return a == taskListConfirm, a == taskListLeave
 	}
 
 	if confirm, _ := key(go3270.AIDPF6, map[string]string{"mark:101": ""}); confirm || !tp.isError || !strings.Contains(tp.message, "Nothing is marked") {
@@ -145,14 +166,13 @@ func TestTaskListMarking(t *testing.T) {
 		t.Errorf("confirming %v, want tasks 1, 2 and 20", got)
 	}
 
-	arch.checkErr = errors.New("no Trello credentials")
-	tp.confirming = nil
-	if confirm, _ := key(go3270.AIDPF6, nil); confirm || !strings.Contains(tp.message, "no Trello credentials") {
-		t.Errorf("failed check: confirm %v, message %q", confirm, tp.message)
-	}
-
 	if _, leave := key(go3270.AIDPF3, nil); !leave {
 		t.Errorf("PF3 did not leave the task screen")
+	}
+
+	// PF4 goes to add a task, keeping the marks typed with it.
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF4, Values: map[string]string{"mark:103": "X"}}, all, 2, arch); a != taskListAdd || !tp.marked["103"] {
+		t.Errorf("PF4: action %v, marked %v", a, tp.marked)
 	}
 }
 
@@ -160,7 +180,7 @@ func TestArchiveConfirm(t *testing.T) {
 	all := someTasks(3)
 	s := buildArchiveConfirm(24, 80, now, all)
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"Archive these 3 tasks?", "   2 task 2", "1 of them mirror Trello cards", "Press PF4 to archive", "PF4=Archive"} {
+	for _, want := range []string{"Archive these 3 tasks?", "   2 task 2", "Their Trello cards will be marked done and archived.", "Press PF4 to archive", "PF4=Archive"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("confirmation lacks %q:\n%s", want, text)
 		}

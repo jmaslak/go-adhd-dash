@@ -1,218 +1,238 @@
-// Package tasks reads the open tasks kept by the task program
-// (github.com/jmaslak/go-task) and picks out the ones its default "task list"
-// shows.
-//
-// Only the headers that decide what is listed are read. Task files are
-// replaced by an atomic rename, so reading them without the task program's
-// directory lock never sees a half-written file; at worst a listing is one
-// change behind.
+// Package tasks reads the open tasks from Trello: the cards on the lists the
+// task program's configuration (~/.task.yaml) names for trello-sync, each
+// list's cards tagged as that configuration says. Nothing is kept on disk;
+// the cards are cached in memory and fetched again in the background.
 package tasks
 
 import (
+	"context"
 	"errors"
-	"fmt"
-	"io/fs"
-	"math/big"
-	"os"
-	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
-// Task is one open task, as much of it as the dashboard shows.
+// Task is one open task: a card on one of the configured Trello lists.
 type Task struct {
+	// Number is the task's place in the list of tasks, from 1. It changes
+	// as tasks are added and archived; CardID does not.
 	Number int
 	Title  string
 	Tags   []string
 
-	// NotBefore is the first day the task is shown, zero if unset.
-	NotBefore time.Time
-
-	// DisplayFrequency, above one, shows the task one day in that many.
-	DisplayFrequency int64
-
-	// ID is the task's permanent identifier, nil for a file written by the
-	// Raku version that the task program has not yet upgraded.
-	ID *big.Int
-
-	// TrelloID is the Trello card the task mirrors, empty if none.
-	TrelloID string
+	CardID string
+	Dest   Destination
 }
 
-// taskFile matches an open task's file name, capturing its number.
-var taskFile = regexp.MustCompile(`^(\d+)-.*\.task$`)
-
-// bodyMarker matches the line introducing the first note, which ends the
-// headers.
-var bodyMarker = regexp.MustCompile(`^--- \d+$`)
-
-// DefaultDir is the task directory the task program uses: $TASKDIR, else
-// .task in the home directory.
-func DefaultDir() string {
-	if dir := os.Getenv("TASKDIR"); dir != "" {
-		return dir
+// renumber numbers ts in order, from 1.
+func renumber(ts []Task) {
+	for i := range ts {
+		ts[i].Number = i + 1
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".task")
-	}
-	return ".task"
 }
 
-// ReadDir returns every open task in dir, ordered by number.
-func ReadDir(dir string) ([]Task, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("reading task directory: %w", err)
-	}
-
-	var out []Task
-	for _, entry := range entries {
-		m := taskFile.FindStringSubmatch(entry.Name())
-		if entry.IsDir() || m == nil {
-			continue
-		}
-		number, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if errors.Is(err, fs.ErrNotExist) {
-			// Closed or renumbered between the listing and the read.
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		t, err := parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
-		}
-		t.Number = number
-		out = append(out, t)
-	}
-
-	slices.SortFunc(out, func(a, b Task) int { return a.Number - b.Number })
-	return out, nil
-}
-
-// parse reads a task file's headers.
-func parse(data []byte) (Task, error) {
-	var t Task
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if bodyMarker.MatchString(line) {
-			break
-		}
-		field, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		value = strings.TrimLeft(value, " \t")
-
-		switch strings.ToLower(field) {
-		case "title":
-			t.Title = value
-		case "tags":
-			t.Tags = strings.Fields(value)
-		case "not-before":
-			day, err := time.ParseInLocation("2006-01-02", value, time.Local)
-			if err != nil {
-				return Task{}, fmt.Errorf("not-before: %w", err)
-			}
-			t.NotBefore = day
-		case "display-frequency":
-			freq, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return Task{}, fmt.Errorf("display-frequency: %w", err)
-			}
-			t.DisplayFrequency = freq
-		case "task-id":
-			id, ok := new(big.Int).SetString(value, 10)
-			if !ok {
-				return Task{}, fmt.Errorf("invalid task-id %q", value)
-			}
-			t.ID = id
-		case "trello-id":
-			t.TrelloID = value
-		}
-	}
-	if t.Title == "" {
-		return Task{}, errors.New("no title")
-	}
-	return t, nil
-}
-
-// Mature reports whether the task has reached its not-before day.
-func (t Task) Mature(now time.Time) bool {
-	return t.NotBefore.IsZero() || !now.Before(t.NotBefore)
-}
-
-// DisplayToday reports whether a task with a display frequency comes up
-// today. It uses the task program's calculation, (ID + Modified Julian Day)
-// mod frequency, so both agree on which days a task is shown.
-func (t Task) DisplayToday(now time.Time) bool {
-	if t.DisplayFrequency <= 1 || t.ID == nil {
-		return true
-	}
-	day := new(big.Int).Add(t.ID, big.NewInt(modifiedJulianDay(now)))
-	return new(big.Int).Mod(day, big.NewInt(t.DisplayFrequency)).Sign() == 0
-}
-
-// modifiedJulianDay numbers the local calendar day now falls on.
-func modifiedJulianDay(now time.Time) int64 {
-	const unixEpochMJD = 40587
-	y, m, d := now.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).Unix()/86400 + unixEpochMJD
-}
-
-// Visible returns the tasks the task program's default listing shows: not
-// carrying an ignored tag, due to be displayed today, and mature.
-func Visible(all []Task, ignoreTags []string, now time.Time) []Task {
+// Visible returns the tasks the dashboard shows: those not carrying an
+// ignored tag.
+func Visible(all []Task, ignoreTags []string) []Task {
 	var out []Task
 	for _, t := range all {
-		ignored := slices.ContainsFunc(t.Tags, func(tag string) bool {
-			return slices.Contains(ignoreTags, tag)
-		})
-		if !ignored && t.DisplayToday(now) && t.Mature(now) {
+		if !slices.ContainsFunc(t.Tags, func(tag string) bool { return slices.Contains(ignoreTags, tag) }) {
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-// IgnoreTags reads ignore-tags from the task program's configuration,
-// ~/.task.yaml, overridden by ~/.task.secret.yaml as the task program does.
-// Missing files are not an error.
-func IgnoreTags() ([]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, nil
+// How long fetched tasks are used before they are fetched again, and how
+// long after a failed fetch it is tried again.
+const (
+	cacheTTL   = 15 * time.Minute
+	cacheRetry = time.Minute
+	// fetchTimeout bounds one fetch of every list.
+	fetchTimeout = time.Minute
+)
+
+// Snapshot is the tasks as last fetched, with any local changes since.
+type Snapshot struct {
+	Tasks      []Task
+	IgnoreTags []string
+
+	// Fetched is when the tasks were last fetched, zero if never.
+	Fetched time.Time
+
+	// Err is why the last fetch failed, nil if it worked. The tasks from
+	// the fetch before are kept.
+	Err error
+
+	// Loading is set while the first fetch is under way, with nothing yet
+	// to show.
+	Loading bool
+}
+
+// Cache holds the tasks, fetching them from Trello in the background when
+// those it has are older than cacheTTL, or have been changed by adding or
+// archiving one; the tasks it has are used meanwhile. It is safe for
+// concurrent use.
+type Cache struct {
+	loadConfig func() (Config, error)
+	now        func() time.Time
+
+	mu         sync.Mutex
+	snap       Snapshot
+	listIDs    map[Destination]string // as of the last fetch
+	next       time.Time              // when to fetch again
+	refreshing bool
+
+	// gen counts the local changes. A fetch begun before one may not
+	// include it, so its result is thrown away and another begun.
+	gen int
+
+	fetches sync.WaitGroup // for tests to wait on
+}
+
+// NewCache returns a cache of the tasks configured in the task program's
+// configuration, which is read at each fetch, so a change shows up without
+// restarting. Nothing is fetched until the first Snapshot.
+func NewCache() *Cache {
+	return &Cache{loadConfig: LoadConfig, now: time.Now}
+}
+
+// Snapshot returns the tasks, beginning a fetch in the background if they
+// are due one. A nil Cache has no tasks.
+func (c *Cache) Snapshot() Snapshot {
+	if c == nil {
+		return Snapshot{Err: errors.New("no task source")}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maybeFetch()
+	s := c.snap
+	s.Tasks = slices.Clone(s.Tasks)
+	s.Loading = c.refreshing && s.Fetched.IsZero()
+	return s
+}
+
+// maybeFetch begins a fetch if one is due and none is under way. c.mu must
+// be held.
+func (c *Cache) maybeFetch() {
+	if c.refreshing || c.now().Before(c.next) {
+		return
+	}
+	c.refreshing = true
+	c.fetches.Add(1)
+	go c.fetch(c.gen)
+}
+
+// fetch reads every configured list from Trello into the cache, unless a
+// local change since gen has overtaken it.
+func (c *Cache) fetch(gen int) {
+	defer c.fetches.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+
+	var ts []Task
+	var ids map[Destination]string
+	cfg, err := c.loadConfig()
+	if err == nil {
+		var client *trelloClient
+		client, err = newTrelloClient(cfg)
+		switch {
+		case err != nil:
+		case len(cfg.Lists) == 0:
+			err = errors.New("no Trello lists are configured (trello: tasks: in ~/.task.yaml)")
+		default:
+			ts, ids, err = fetchTasks(ctx, client, cfg.Lists)
+		}
 	}
 
-	var tags []string
-	for _, name := range []string{".task.yaml", ".task.secret.yaml"} {
-		path := filepath.Join(home, name)
-		data, err := os.ReadFile(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		var cfg struct {
-			IgnoreTags []string `yaml:"ignore-tags"`
-		}
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", path, err)
-		}
-		if cfg.IgnoreTags != nil {
-			tags = cfg.IgnoreTags
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refreshing = false
+	now := c.now()
+	switch {
+	case gen != c.gen:
+		c.next = time.Time{}
+		c.maybeFetch()
+	case err != nil:
+		c.snap.Err, c.next = err, now.Add(cacheRetry)
+	default:
+		c.snap = Snapshot{Tasks: ts, IgnoreTags: cfg.IgnoreTags, Fetched: now}
+		c.listIDs, c.next = ids, now.Add(cacheTTL)
+	}
+}
+
+// changed records a local change to the tasks and begins fetching them
+// again, to catch up with Trello. c.mu must be held.
+func (c *Cache) changed() {
+	renumber(c.snap.Tasks)
+	c.gen++
+	c.next = time.Time{}
+	c.maybeFetch()
+}
+
+// Destinations are the configured Trello lists, by board then list.
+func (c *Cache) Destinations() ([]Destination, error) {
+	cfg, err := c.loadConfig()
+	return cfg.Lists, err
+}
+
+// Archive archives t: its card's due date is marked complete and the card
+// archived. The task leaves the cache at once.
+func (c *Cache) Archive(ctx context.Context, t Task) error {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return err
+	}
+	client, err := newTrelloClient(cfg)
+	if err != nil {
+		return err
+	}
+	if err := client.closeCard(ctx, t.CardID); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.snap.Tasks = slices.DeleteFunc(c.snap.Tasks, func(x Task) bool { return x.CardID == t.CardID })
+	c.changed()
+	return nil
+}
+
+// Add adds a task titled title as a card at the bottom of d's list,
+// returning its number. The task joins the cache at once, after the others
+// on its list.
+func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, error) {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return 0, err
+	}
+	client, err := newTrelloClient(cfg)
+	if err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	listID := c.listIDs[d]
+	c.mu.Unlock()
+	if listID == "" {
+		if listID, err = client.listID(ctx, d); err != nil {
+			return 0, err
 		}
 	}
-	return tags, nil
+	cardID, err := client.createCard(ctx, listID, title)
+	if err != nil {
+		return 0, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// After the last task of d's list, or of a list before it.
+	order := slices.Index(cfg.Lists, d)
+	at := 0
+	for i, t := range c.snap.Tasks {
+		if slices.Index(cfg.Lists, t.Dest) <= order {
+			at = i + 1
+		}
+	}
+	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: []string{d.Tag}, CardID: cardID, Dest: d})
+	c.changed()
+	return at + 1, nil
 }

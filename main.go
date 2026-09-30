@@ -1,6 +1,6 @@
 // Command adhd-dash serves a dashboard to TN3270 (mainframe) terminal
 // clients: the busy indicator's state, the calendar's next 24 hours, and the
-// open tasks from the task program.
+// open tasks from Trello.
 package main
 
 import (
@@ -11,24 +11,28 @@ import (
 	"net"
 	"strings"
 	"time"
+	_ "time/tzdata" // the calendar's world clocks, on hosts without zoneinfo
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
+	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/session"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
+	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
 func main() {
 	host := flag.String("host", "localhost", "address to listen on")
 	port := flag.Int("port", 3270, "TCP port to listen on")
 	refresh := flag.Duration("refresh", 10*time.Second, "how often an idle screen is redrawn")
-	tasksDir := flag.String("tasks-dir", tasks.DefaultDir(), "task program directory")
 	busyURL := flag.String("busy-url", "", "busy indicator status feed, e.g. ws://localhost:3334/feed (empty: none)")
 	busyFile := flag.String("busy-file", "", "read the busy indicator's status from this JSON file instead of a feed")
 	busyControl := flag.String("busy-control", "localhost:3333", "busy indicator UDP control port as host:port, for PF1 (busy) and PF2 (off) (empty: none)")
 	calendars := flag.String("calendar", "", "comma-separated Google calendars for the agenda (empty: none)")
 	calendarAliases := flag.String("calendar-alias", "", "comma-separated short names for the -calendar calendars, in the same order, shown in brackets before their events")
 	agendaFile := flag.String("agenda-file", "", "read the agenda from this JSON file instead of Google Calendar")
+	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
+	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often the calendar is read")
 	flag.Parse()
 
@@ -49,10 +53,27 @@ func main() {
 		}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shutdown := session.NewShutdown()
+	taskCache := tasks.NewCache()
+
+	// Made now, with its first user, rather than when first looked at.
+	userStore := users.NewStore(*usersFile)
+	if _, created, err := userStore.Load(); err != nil {
+		log.Fatalf("users: %v", err)
+	} else if created {
+		log.Printf("created %s with the user %q, password %q: change it", userStore.Path(), users.FirstName, users.FirstPassword)
+	}
 	cfg := session.Config{
-		TasksDir: *tasksDir, Refresh: *refresh, AgendaRefresh: *agendaRefresh,
-		Archiver: tasks.NewArchiver(*tasksDir),
+		Shutdown: shutdown,
+		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
+		Tasks: taskCache, Archiver: taskCache, Adder: taskCache,
+		Checklists: checklist.NewStore(*checklistFile),
+		Users:      userStore,
+		Viewers:    session.NewViewers(),
+		Activity:   session.NewActivity(),
+		Chat:       session.NewChat(),
 	}
 
 	switch {
@@ -88,12 +109,29 @@ func main() {
 	}
 	log.Printf("adhd-dash listening on %s", addr)
 
+	go func() {
+		<-shutdown.Done()
+		ln.Close() //nolint:errcheck // ends the accept loop
+	}()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			if shutdown.Requested() {
+				break
+			}
 			log.Printf("accept: %v", err)
 			continue
 		}
 		go session.Handle(conn, cfg)
 	}
+
+	if n := shutdown.Sessions(); n > 0 {
+		log.Printf("shutting down: waiting for %d sessions to disconnect", n)
+	}
+	shutdown.Wait(shutdownGrace)
+	log.Printf("shut down")
 }
+
+// shutdownGrace is how long sessions have to say goodbye and disconnect on
+// shutdown before their connections are closed under them.
+const shutdownGrace = 5 * time.Second

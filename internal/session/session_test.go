@@ -74,7 +74,7 @@ func TestSendBusyKey(t *testing.T) {
 
 	silent := newFakeIndicator(t, false)
 	cfg = Config{Busy: silent, BusyControl: &busy.Control{Addr: silent.conn.LocalAddr().String()}}
-	if msg := sendBusyKey(cfg, 'o'); !strings.Contains(msg, "reported no change") {
+	if msg := sendBusyKey(cfg, 'o'); !strings.Contains(msg, "No change seen") {
 		t.Errorf("no feed update: message %q", msg)
 	}
 

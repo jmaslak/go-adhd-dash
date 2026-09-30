@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 )
@@ -44,8 +45,39 @@ func TestCalendarScreen(t *testing.T) {
 	if week := rows[calFirstWeekRow]; !strings.HasPrefix(week, "        1  2  3 ") {
 		t.Errorf("first week is %q", week)
 	}
+	for i, want := range []string{
+		" Denver      04:00", " Los Angeles 03:00", " New York    06:00", " Japan       19:00", " Amsterdam   12:00", " UTC         10:00",
+	} {
+		if got := rows[calClockRow+i]; got != want {
+			t.Errorf("clock row %d is %q, want %q", i, got, want)
+		}
+	}
 	if crow != calFirstWeekRow+4 || ccol != 1 {
 		t.Errorf("cursor at %d,%d, want on the 27th at %d,1", crow, ccol, calFirstWeekRow+4)
+	}
+}
+
+// TestCalendarFillScreen checks that the calendar can be redrawn on a timer
+// without erasing the screen: it has no input fields, and once filled every
+// position is written, so nothing of the screen before is left.
+func TestCalendarFillScreen(t *testing.T) {
+	v := sampleCalendar()
+	v.Err = errors.New("unreachable")
+	s, _, _ := buildCalendar(24, 80, v)
+	covered := make([]bool, 24*80)
+	for _, f := range fillScreen(s, 24, 80) {
+		if f.Write {
+			t.Errorf("calendar has input field %q", f.Name)
+		}
+		start := f.Row*80 + f.Col
+		for a := start; a <= start+utf8.RuneCountInString(f.Content) && a < len(covered); a++ {
+			covered[a] = true
+		}
+	}
+	for a, ok := range covered {
+		if !ok {
+			t.Errorf("row %d col %d is not written", a/80, a%80)
+		}
 	}
 }
 
@@ -93,7 +125,7 @@ func TestCalendarAliases(t *testing.T) {
 	}
 	v.Agenda.Events[2].Calendar = "work,home" // Soon, on both calendars
 
-	s, _, _ := buildDashboard(24, 80, v, 0, "")
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{"NOW      [work] Running", "[work,home] Soon", "Meeting now: [work] Running"} {
 		if !strings.Contains(text, want) {

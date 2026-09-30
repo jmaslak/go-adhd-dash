@@ -10,6 +10,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
 
@@ -32,16 +33,17 @@ type line []go3270.Field
 
 // buildDashboard renders the dashboard for a rows x cols screen. page selects
 // which page of tasks is shown; it is clamped to the pages that exist, and
-// the page actually shown is returned with the page count.
-func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3270.Screen, shownPage, totalPages int) {
-	// The busy banner is repeated just above the help line, with a blank
-	// spacer above it, for symmetry with the spacer between the sections.
-	spacerRow, bottomBannerRow, helpRow := rows-3, rows-2, rows-1
+// the page actually shown is returned with the page count. checklistAt maps
+// the rows of the checklists shown in the task list to their IDs.
+func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3270.Screen, shownPage, totalPages int, checklistAt map[int]int) {
+	// The busy banner is repeated just above the help line, with the
+	// command line above it.
+	commandRow, bottomBannerRow, helpRow := dashboardCommandRow(rows), rows-2, rows-1
 
-	// Rows available between the fixed top and the bottom spacer: two
+	// Rows available between the fixed top and the command line: two
 	// section headers and a blank spacer between the sections come out of
 	// it; what remains is split between agenda and task lines.
-	body := spacerRow - firstBodyRow
+	body := commandRow - firstBodyRow
 	content := body - 3
 
 	// The first page shows the whole agenda, even if that leaves no room
@@ -51,8 +53,9 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	firstRows := max(content-len(firstAgenda), 0)
 	restRows := max(content-len(restAgenda), 1)
 
+	entries, open := taskEntries(v)
 	totalPages = 1
-	if extra := len(v.Tasks) - firstRows; extra > 0 {
+	if extra := len(entries) - firstRows; extra > 0 {
 		totalPages += (extra + restRows - 1) / restRows
 	}
 	shownPage = min(max(page, 0), totalPages-1)
@@ -60,8 +63,8 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	if shownPage > 0 {
 		agendaLines, start, taskRows = restAgenda, firstRows+(shownPage-1)*restRows, restRows
 	}
-	end := min(start+taskRows, len(v.Tasks))
-	pageTasks := v.Tasks[start:end]
+	end := min(start+taskRows, len(entries))
+	pageEntries := entries[start:end]
 
 	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now, v.AutoRefresh)
 	badge, detail := busyState(v)
@@ -81,35 +84,39 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	}
 	row++ // spacer
 
-	screen = append(screen, placeLine(row, cols, taskHeader(v, shownPage, totalPages, len(pageTasks)))...)
+	screen = append(screen, placeLine(row, cols, taskHeader(v, open, shownPage, totalPages, len(pageEntries)))...)
 	row++
-	for _, t := range pageTasks {
-		screen = append(screen, placeLine(row, cols, taskLine(t))...)
+	checklistAt = map[int]int{}
+	for _, e := range pageEntries {
+		if e.checklistID != 0 {
+			checklistAt[row] = e.checklistID
+		}
+		screen = append(screen, placeLine(row, cols, e.line)...)
 		row++
 	}
-	if v.TasksErr == nil && len(v.Tasks) == 0 {
+	if v.TasksErr == nil && !v.TasksLoading && len(entries) == 0 {
 		screen = append(screen, placeLine(row, cols, line{{Content: "All tasks completed!"}})...)
 	}
 
-	if v.Message != "" {
-		// cols-1 keeps clear of the bottom banner's attribute byte at the
-		// end of this row.
-		screen = append(screen, placeLine(spacerRow, cols-1, line{{Content: v.Message, Color: go3270.Red, Intense: true}})...)
-	}
+	screen = append(screen, commandLine(commandRow, cols, v.Message)...)
 
-	help := "PF3=Exit PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks Enter=Rfrsh"
+	help := "PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks"
 	if v.BusyControl {
 		help = "PF1=Busy PF2=Off " + help
 	}
-	// The LU name is only for reference, so it is left off when it would
-	// not fit.
-	if lu := "   LU " + luName; luName != "" && len(help)+len(lu) <= cols-1 {
-		help += lu
+	// PF11, Enter and the LU name are left off, in that order of
+	// preference, when they would not fit: chat is also on the help
+	// screen, Enter needs no telling, since any key redraws, and the LU
+	// name is only for reference.
+	for _, extra := range []string{" PF11=Chat", " Enter=Rfrsh", "   LU " + luName} {
+		if extra != "   LU " && len(help)+len(extra) <= cols-1 {
+			help += extra
+		}
 	}
 	screen = append(screen,
 		go3270.Field{Row: helpRow, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)},
 	)
-	return screen, shownPage, totalPages
+	return screen, shownPage, totalPages, checklistAt
 }
 
 // titleFields is the title row: title on the left, the clock on the right,
@@ -128,6 +135,9 @@ func titleFields(cols int, title string, now time.Time, autoRefresh bool) go3270
 	}
 	return screen
 }
+
+// dashboardCommandRow is the row of the dashboard's command line.
+func dashboardCommandRow(rows int) int { return rows - 3 }
 
 // placeLine positions a line's fields on row, one after the other. Each
 // field's attribute byte takes a column of its own before its content, and
@@ -171,11 +181,11 @@ func busyState(v view) (badge go3270.Field, detail line) {
 
 	switch s.Light {
 	case "red":
-		badge = go3270.Field{Content: "** BUSY **", Color: go3270.Red, Highlighting: go3270.ReverseVideo}
+		badge = go3270.Field{Content: "** IN MEETING **", Color: go3270.Red, Highlighting: go3270.ReverseVideo}
 	case "green":
 		badge = go3270.Field{Content: "** AVAILABLE **", Color: go3270.Green, Highlighting: go3270.ReverseVideo}
 	default:
-		badge = go3270.Field{Content: "** NOT BUSY **", Color: go3270.Green}
+		badge = go3270.Field{Content: "** NOT IN MEETING **", Color: go3270.Green}
 	}
 	return badge, line{{Content: nextMeetingText(v)}}
 }
@@ -354,21 +364,93 @@ func agendaContent(v view, limit, cols int) []line {
 	return out
 }
 
-// taskHeader titles the task list with its count and page, pointing to the
-// next page when the agenda has left this one no room for tasks.
-func taskHeader(v view, page, totalPages, onPage int) line {
+// taskHeader titles the task list with its count of open tasks and page,
+// pointing to the next page when the agenda has left this one no room for
+// tasks, and noting tasks not yet or no longer fetched.
+func taskHeader(v view, open, page, totalPages, onPage int) line {
 	l := line{{Content: "TASKS", Color: go3270.Turquoise, Intense: true}}
-	if v.TasksErr != nil {
-		return append(l, go3270.Field{Content: v.TasksErr.Error(), Color: go3270.Red})
+	status, ok := tasksStatus(v.TasksErr, v.TasksFetched, v.TasksLoading)
+	if !ok {
+		return append(l, status)
 	}
-	info := fmt.Sprintf("%d open", len(v.Tasks))
+	info := fmt.Sprintf("%d open", open)
 	if totalPages > 1 {
 		info += fmt.Sprintf(", page %d/%d", page+1, totalPages)
 	}
-	if onPage == 0 && len(v.Tasks) > 0 {
+	if onPage == 0 && open > 0 {
 		info += ", PF8 to see them"
 	}
-	return append(l, go3270.Field{Content: info, Color: go3270.Blue})
+	l = append(l, go3270.Field{Content: info, Color: go3270.Blue})
+	if status.Content != "" {
+		l = append(l, status)
+	}
+	return l
+}
+
+// tasksStatus notes, for a task list's heading, that the tasks are still
+// being fetched from Trello for the first time, could not be fetched, or
+// are left from a fetch before one that failed; it is empty when they are
+// as fetched. ok is false when there are no tasks to list.
+func tasksStatus(err error, fetched time.Time, loading bool) (note go3270.Field, ok bool) {
+	switch {
+	case loading:
+		return go3270.Field{Content: "fetching from Trello", Color: go3270.Blue}, false
+	case err != nil && fetched.IsZero():
+		return go3270.Field{Content: err.Error(), Color: go3270.Red}, false
+	case err != nil:
+		return go3270.Field{Content: fmt.Sprintf("stale, from %s: %s", fetched.Format("15:04"), err), Color: go3270.Yellow}, true
+	}
+	return go3270.Field{}, true
+}
+
+// taskEntry is one line of the dashboard's task list, with the ID of the
+// checklist it shows, zero for a task.
+type taskEntry struct {
+	line        line
+	checklistID int
+}
+
+// taskEntries is the dashboard's task list, and how many of its lines are
+// open tasks: the tasks, then the starred checklists, each as a task tagged
+// [checklist], or the reason they could not be read. The task screen lists
+// only the tasks.
+func taskEntries(v view) (entries []taskEntry, open int) {
+	for _, t := range v.Tasks {
+		entries = append(entries, taskEntry{line: taskLine(t)})
+	}
+	if v.ChecklistsErr != nil {
+		entries = append(entries, taskEntry{line: line{
+			{Content: checklistTag, Color: go3270.Turquoise},
+			{Content: v.ChecklistsErr.Error(), Color: go3270.Red},
+		}})
+	}
+	for _, l := range v.Checklists {
+		if l.Active {
+			entries = append(entries, taskEntry{line: checklistTaskLine(l), checklistID: l.ID})
+			open++
+		}
+	}
+	return entries, open + len(v.Tasks)
+}
+
+// checklistTag is where a task's number and tags go for a checklist in the
+// task list: "-" for the number, aligned as a task's is, and the tag
+// [checklist].
+const checklistTag = "   - [checklist]"
+
+// checklistTaskLine is checklist l in the task list, colored as a task is:
+// its tag, then its name and how many of its items are done.
+func checklistTaskLine(l checklist.Checklist) line {
+	done := 0
+	for _, it := range l.Items {
+		if it.Done {
+			done++
+		}
+	}
+	return line{
+		{Content: checklistTag, Color: go3270.Turquoise},
+		{Content: fmt.Sprintf("%s (%d/%d)", l.Name, done, len(l.Items)), Color: go3270.Green, Intense: true},
+	}
 }
 
 // taskLine is one task: its number and tags, then its title.

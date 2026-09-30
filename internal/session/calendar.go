@@ -22,7 +22,21 @@ const (
 	calGridWidth    = 7 * calCellWidth
 	calDayCol       = calGridWidth + 3
 	calDayRow       = 2
+
+	// calClockRow is the first world clock, a blank row below the most
+	// weeks a month can take, so the clocks stay put from month to month.
+	calClockRow = calFirstWeekRow + 6 + 1
 )
+
+// worldClocks are the places whose time is listed under the month grid.
+var worldClocks = []struct{ name, zone string }{
+	{"Denver", "America/Denver"},
+	{"Los Angeles", "America/Los_Angeles"},
+	{"New York", "America/New_York"},
+	{"Japan", "Asia/Tokyo"},
+	{"Amsterdam", "Europe/Amsterdam"},
+	{"UTC", "UTC"},
+}
 
 // calendarFetchTimeout bounds reading a month, which holds up the session.
 const calendarFetchTimeout = 30 * time.Second
@@ -103,7 +117,8 @@ func (c *calendarState) view(now time.Time, autoRefresh, agendaEnabled bool) cal
 }
 
 // buildCalendar renders the calendar screen for a rows x cols screen, and
-// where the cursor goes: on the selected day.
+// where the cursor goes: on the selected day. Every field is protected, so a
+// timed redraw can write it over the last one without erasing the screen.
 func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "CALENDAR", v.Now, v.AutoRefresh)
 
@@ -145,6 +160,7 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 		}
 	}
 
+	screen = append(screen, clockFields(rows, v.Now)...)
 	screen = append(screen, dayFields(rows, cols, v)...)
 
 	if v.Err != nil {
@@ -155,6 +171,28 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 		Content: truncate("PF3=Back PF4=Today PF5=Auto PF7=Prev month PF8=Next month Enter=Pick day", cols-1),
 	})
 	return screen, cursorRow, cursorCol
+}
+
+// clockFields lists the world clocks' times at now under the month grid, as
+// many as fit above the message row. A zone that cannot be loaded shows
+// "--:--".
+func clockFields(rows int, now time.Time) []go3270.Field {
+	var out []go3270.Field
+	for i, c := range worldClocks {
+		row := calClockRow + i
+		if row > rows-3 {
+			break
+		}
+		t := "--:--"
+		if loc, err := time.LoadLocation(c.zone); err == nil {
+			t = now.In(loc).Format("15:04")
+		}
+		out = append(out, placeLineAt(row, 0, calGridWidth+1, line{
+			{Content: fmt.Sprintf("%-11s", c.name), Color: go3270.Turquoise},
+			{Content: t, Color: go3270.White},
+		})...)
+	}
+	return out
 }
 
 // dayFields lists the selected day's events right of the grid, down to the
