@@ -36,6 +36,9 @@ func main() {
 	agendaFile := flag.String("agenda-file", "", "read the agenda from this JSON file instead of Google Calendar")
 	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
+	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
+	maxConnsPerIP := flag.Int("max-connections-per-ip", 16, "most connections open at once from one address, an IPv6 one by its /64 (0: no limit)")
+	loginTimeout := flag.Duration("login-timeout", 60*time.Second, "how long the login screen waits for a login")
 	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often the calendar is read")
 	flag.Parse()
@@ -76,18 +79,20 @@ func main() {
 	if _, created, err := userStore.Load(); err != nil {
 		log.Fatalf("users: %v", err)
 	} else if created {
-		log.Printf("created %s with the user %q, password %q: change it", userStore.Path(), users.FirstName, users.FirstPassword)
+		log.Printf("created %s with the user %q, password %q, which is refused at the login screen: connect as the CONSOLE LU from this machine and change it", userStore.Path(), users.FirstName, users.FirstPassword)
 	}
 	cfg := session.Config{
 		Shutdown: shutdown,
 		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
 		Tasks: taskCache, Archiver: taskCache, Adder: taskCache,
-		Checklists: checklist.NewStore(*checklistFile),
-		Users:      userStore,
-		Audit:      auditLog,
-		Viewers:    session.NewViewers(),
-		Activity:   session.NewActivity(),
-		Chat:       session.NewChat(),
+		Checklists:   checklist.NewStore(*checklistFile),
+		Users:        userStore,
+		Audit:        auditLog,
+		Limits:       session.NewConnLimiter(*maxConns, *maxConnsPerIP),
+		LoginTimeout: *loginTimeout,
+		Viewers:      session.NewViewers(),
+		Activity:     session.NewActivity(),
+		Chat:         session.NewChat(),
 	}
 
 	switch {

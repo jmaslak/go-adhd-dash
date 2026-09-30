@@ -25,6 +25,9 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
+// negotiateTimeout bounds telnet and TN3270E negotiation.
+const negotiateTimeout = 30 * time.Second
+
 // nextSessionID numbers connections for the log and for LU names.
 var nextSessionID atomic.Uint64
 
@@ -77,6 +80,13 @@ type Config struct {
 	// count them.
 	Viewers *Viewers
 
+	// Limits caps the connections open at once; nil for no caps.
+	Limits *ConnLimiter
+
+	// LoginTimeout is how long the login screen waits; zero for
+	// defaultLoginTimeout.
+	LoginTimeout time.Duration
+
 	// Refresh is how often an idle screen is redrawn.
 	Refresh time.Duration
 
@@ -96,6 +106,12 @@ func isTimeout(err error) bool {
 // or presses PF3, or the server shuts down.
 func Handle(rawConn net.Conn, cfg Config) {
 	defer rawConn.Close() //nolint:errcheck
+	// The caps come first, before any work is done for the connection.
+	release := cfg.Limits.admit(rawConn.RemoteAddr())
+	if release == nil {
+		return
+	}
+	defer release()
 	if !cfg.Shutdown.add(rawConn) {
 		return
 	}
@@ -105,6 +121,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 	cfg.Activity.add(sessionID, rawConn, time.Now())
 	defer cfg.Activity.remove(sessionID)
 	local := isLocal(rawConn.RemoteAddr())
+	// Negotiation reads what the client sends with deadlines of its own,
+	// which it clears as it goes; this bounds the whole of it, so that a
+	// client cannot hold a connection by stalling partway through.
+	watchdog := time.AfterFunc(negotiateTimeout, func() { _ = rawConn.Close() })
 	neg, err := tn3270e.NegotiateLU(rawConn, func(requested string) (string, error) {
 		lu, err := chooseLU(requested, local, sessionID)
 		if err != nil {
@@ -112,6 +132,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 		}
 		return lu, err
 	})
+	if !watchdog.Stop() {
+		log.Printf("session %d (%s): negotiation took over %v", sessionID, rawConn.RemoteAddr(), negotiateTimeout)
+		return
+	}
 	if err != nil {
 		log.Printf("session %d (%s): %v", sessionID, rawConn.RemoteAddr(), err)
 		return
@@ -131,6 +155,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 
 	rows, cols := devinfo.AltDimensions()
+	// Every screen's text is made safe to show in the terminal's code page
+	// before it is sent (see sanitizeScreen). go3270 falls back to 1047
+	// when the terminal reports none, and so does this.
+	cp := devinfo.Codepage()
+	if cp == nil {
+		cp = go3270.Codepage1047()
+	}
 	page := 0
 	autoRefresh := true
 	mode := modeDashboard
@@ -139,7 +170,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var user *users.User
 	var login loginState
 	if !console {
-		mode, login.expires = modeLogin, time.Now().Add(loginTimeout)
+		timeout := cfg.LoginTimeout
+		if timeout <= 0 {
+			timeout = defaultLoginTimeout
+		}
+		mode, login.expires = modeLogin, time.Now().Add(timeout)
 	}
 
 	// The audit log records each login, and how each session logged in
@@ -169,8 +204,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 	// bye leaves text on the terminal as the session disconnects.
 	bye := func(text string) {
-		_, _ = go3270.ShowScreenOpts(buildFarewell(cols, time.Now(), text), nil, conn, go3270.ScreenOpts{
-			AltScreen: devinfo, Codepage: devinfo.Codepage(), NoResponse: true,
+		_, _ = go3270.ShowScreenOpts(sanitizeScreen(buildFarewell(cols, time.Now(), text), cp), nil, conn, go3270.ScreenOpts{
+			AltScreen: devinfo, Codepage: cp, NoResponse: true,
 		})
 	}
 	var cal calendarState
@@ -335,7 +370,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		// alone, so that a command half typed, or the cursor moved to a day
 		// not yet picked, survives it.
 		opts := go3270.ScreenOpts{
-			AltScreen: devinfo, Codepage: devinfo.Codepage(), CursorRow: cursorRow, CursorCol: cursorCol,
+			AltScreen: devinfo, Codepage: cp, CursorRow: cursorRow, CursorCol: cursorCol,
 		}
 		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat) {
 			screen, opts.NoClear = fillScreen(screen, rows, cols), true
@@ -380,7 +415,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		if mode == modeChat && cfg.Chat.latest() != ch.shown {
 			continue
 		}
-		resp, err := go3270.ShowScreenOpts(screen, nil, conn, opts)
+		resp, err := go3270.ShowScreenOpts(sanitizeScreen(screen, cp), nil, conn, opts)
 		if timedOut = isTimeout(err); timedOut {
 			continue
 		}
@@ -476,7 +511,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			failures := login.failures
 			u, quit, farewell := login.handle(resp, cfg.Users, logf)
 			if login.failures > failures {
-				cfg.Audit.Record(audit.LoginFailed, auditFields(login.name, audit.F("try", strconv.Itoa(login.failures)))...)
+				cfg.Audit.Record(audit.LoginFailed, auditFields(login.name, audit.F("try", strconv.Itoa(login.failures)), audit.F("reason", login.failReason))...)
 			}
 			if u != nil {
 				cfg.Audit.Record(audit.Login, auditFields(u.Name)...)

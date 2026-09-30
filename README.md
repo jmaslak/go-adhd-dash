@@ -46,6 +46,9 @@ Model 5's 27x132 or larger.
 | `-agenda-refresh` | `5m` | how often the calendar is read |
 | `-checklist-file` | `~/.adhd-dash-checklists.json` | JSON file the checklists are kept in |
 | `-users-file` | `~/.adhd-dash-users.json` | JSON file the users are kept in |
+| `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
+| `-max-connections-per-ip` | `16` | most open at once from one address (an IPv6 one by its /64); `0` for no limit |
+| `-login-timeout` | `60s` | how long the login screen waits for a login |
 | `-audit-log` | `~/.adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
 
 Leaving `-busy-url` or `-calendar` empty leaves that section showing "not
@@ -123,8 +126,10 @@ The admin menu (`admin`) lists its options by number; type one on the
 ### Users
 
 The users are kept in `-users-file`, which is made when the server starts
-if it does not exist, holding one user, `admin`, with the password `admin`
-(the log says so: change it). The file is readable only by its owner and
+if it does not exist, holding one user, `admin`, with the password `admin`.
+That password is refused at the login screen: the admin connects as the
+console (which needs no password) and changes it there first, and the log
+says so. The file is readable only by its owner and
 rewritten by atomic rename; passwords are stored hashed with Argon2id (RFC
 9106's second recommended parameters: 64 MiB, 3 passes, 4 lanes, a 16-byte
 random salt), in PHC string format, so the parameters can be raised later
@@ -153,9 +158,10 @@ goes back to the admin menu without saving.
 
 Every session logs in first, on a `LOGIN` screen under an `exec/3270`
 banner, with a user name (ignoring case) and password from the users,
-except the console. Three wrong tries, or two minutes without logging in,
-disconnect it; `PF3` disconnects at once. Each login, and each failed one,
-is logged with the address it came from.
+except the console. `admin` with the default password `admin` is refused
+(it counts as a wrong try); change it from the console. Three wrong tries,
+or a minute without logging in (`-login-timeout`), disconnect it; `PF3` disconnects at once. Each login,
+and each failed one, is logged with the address it came from.
 
 The console is a session whose TN3270E client asks for the LU name
 `CONSOLE` (with `s3270` or `c3270`, connect to `CONSOLE@127.0.0.1:3270`),
@@ -436,6 +442,34 @@ and why, and the fetch is tried again after a minute. Until the first fetch
 finishes, the heading says the tasks are being fetched. The configuration is
 read at each fetch, so a change to it shows up within 15 minutes, without a
 restart.
+
+### Limits
+
+A connection over `-max-connections` in all, or `-max-connections-per-ip`
+from one address (an IPv6 address counted by its /64), is closed before
+anything is sent to it. Connections from this machine are not counted, so
+that a flood from elsewhere cannot lock out the console. Refusals are
+logged at most once every 10 seconds, with a count of those not logged.
+
+Telnet and TN3270E negotiation must finish within 30 seconds, and the login
+screen waits `-login-timeout`; with the caps, that bounds how many
+connections a client can hold and for how long.
+
+At most 4 passwords are checked (or hashed, in the user editor) at once:
+each check uses 64 MiB, on purpose, so many logins at once could otherwise
+exhaust the server's memory. A login waits up to 10 seconds for its turn;
+if it does not get one, the screen says the server is busy, and it does not
+count as a wrong try.
+
+### Screen text
+
+Much of what the screens show was written by someone else: calendar
+invitations, Trello cards, chat messages, checklists, user names. Before a
+screen is sent, every character that the terminal's code page would encode
+to anything but a byte it shows (3270 orders such as start-field or
+set-buffer-address, other controls, and FF, the telnet IAC byte) is replaced
+with `?`, so text cannot redraw, add fields to, or break into the screen of
+whoever reads it. User names may not hold control characters at all.
 
 ## Layout
 

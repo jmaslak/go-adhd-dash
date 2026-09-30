@@ -8,6 +8,7 @@
 package users
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -84,7 +86,7 @@ func (s *Store) Load() (list []User, created bool, err error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return list, false, err
 	}
-	hash, err := HashPassword(FirstPassword)
+	hash, err := hashPassword(FirstPassword) // at startup, with nothing to wait for
 	if err != nil {
 		return nil, false, err
 	}
@@ -135,6 +137,8 @@ func Validate(list []User) error {
 			return errors.New("a user must have a name")
 		case strings.ContainsAny(u.Name, " \t"):
 			return fmt.Errorf("user name %q has a space in it", u.Name)
+		case strings.ContainsFunc(u.Name, unicode.IsControl):
+			return fmt.Errorf("user name %q has a control character in it", u.Name)
 		case seen[key]:
 			return fmt.Errorf("there is already a user called %q", u.Name)
 		default:
@@ -154,12 +158,18 @@ func Validate(list []User) error {
 }
 
 // Authenticate returns the user called name (ignoring case) if password is
-// theirs.
-func (s *Store) Authenticate(name, password string) (User, bool, error) {
+// theirs. The check takes one of the MaxConcurrentHashes slots, waiting for
+// it until ctx is done, and then fails with ErrBusy.
+func (s *Store) Authenticate(ctx context.Context, name, password string) (User, bool, error) {
 	list, _, err := s.Load()
 	if err != nil {
 		return User{}, false, err
 	}
+	release, err := acquireHashSlot(ctx)
+	if err != nil {
+		return User{}, false, err
+	}
+	defer release()
 	for _, u := range list {
 		if strings.EqualFold(u.Name, name) {
 			return u, CheckPassword(u.Password, password), nil
@@ -171,7 +181,30 @@ func (s *Store) Authenticate(name, password string) (User, bool, error) {
 }
 
 // dummyHash is checked against for a user who does not exist.
-var dummyHash, _ = HashPassword("no such user")
+var dummyHash, _ = hashPassword("no such user")
+
+// MaxConcurrentHashes is how many Argon2id hashes (password checks and new
+// passwords) may be worked out at once. Each takes 64 MiB, on purpose, so
+// without a limit anyone able to reach the login screen could exhaust the
+// server's memory by trying many logins at once.
+const MaxConcurrentHashes = 4
+
+// hashSlots holds a token for each hash being worked out.
+var hashSlots = make(chan struct{}, MaxConcurrentHashes)
+
+// ErrBusy reports that no hash slot came free in time.
+var ErrBusy = errors.New("the server is busy checking other passwords; try again in a moment")
+
+// acquireHashSlot waits for a hash slot until ctx is done, returning the
+// function that gives it back.
+func acquireHashSlot(ctx context.Context) (release func(), err error) {
+	select {
+	case hashSlots <- struct{}{}:
+		return func() { <-hashSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w (%v)", ErrBusy, ctx.Err())
+	}
+}
 
 // read returns the users in the file; a missing file is fs.ErrNotExist.
 func (s *Store) read() ([]User, error) {
@@ -232,8 +265,20 @@ var argon2Params = struct {
 }{64 * 1024, 3, 4, 16, 32}
 
 // HashPassword hashes password with Argon2id and a random salt, in PHC
-// string format: $argon2id$v=19$m=65536,t=3,p=4$salt$key.
-func HashPassword(password string) (string, error) {
+// string format: $argon2id$v=19$m=65536,t=3,p=4$salt$key. It takes one of
+// the MaxConcurrentHashes slots, waiting for it until ctx is done, and then
+// fails with ErrBusy.
+func HashPassword(ctx context.Context, password string) (string, error) {
+	release, err := acquireHashSlot(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	return hashPassword(password)
+}
+
+// hashPassword is HashPassword without waiting for a slot.
+func hashPassword(password string) (string, error) {
 	p := argon2Params
 	salt := make([]byte, p.saltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -247,7 +292,7 @@ func HashPassword(password string) (string, error) {
 
 // CheckPassword reports whether password matches hash, made by
 // HashPassword, with whatever parameters it records. A hash it cannot read
-// matches nothing.
+// matches nothing. It does not take a hash slot; Authenticate does.
 func CheckPassword(hash, password string) bool {
 	parts := strings.Split(hash, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {

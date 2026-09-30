@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -43,6 +44,10 @@ const (
 
 	usNewNameWidth  = 20
 	usPasswordWidth = 30
+
+	// usersHashWait is how long hashing a password waits for a slot
+	// (see users.MaxConcurrentHashes) before giving up.
+	usersHashWait = 30 * time.Second
 
 	usPrompt         = "D deletes, P changes password; Y or N under Admin and Restricted."
 	usPasswordPrompt = "Type the new password and press Enter. PF3 cancels."
@@ -440,11 +445,13 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 	// purpose.
 	var hash string
 	var err error
+	ctx, cancel := context.WithTimeout(context.Background(), usersHashWait)
+	defer cancel()
 	switch {
 	case e.setPassword != "":
-		hash, err = users.HashPassword(e.setPassword)
+		hash, err = users.HashPassword(ctx, e.setPassword)
 	case e.newName != "":
-		hash, err = users.HashPassword(e.newPassword)
+		hash, err = users.HashPassword(ctx, e.newPassword)
 	}
 	if err != nil {
 		fail(err.Error())

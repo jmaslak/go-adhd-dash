@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -13,10 +14,13 @@ import (
 )
 
 // Logins: how many wrong tries a session gets before it is disconnected,
-// and how long the login screen waits for them.
+// how long the login screen waits for them unless configured otherwise,
+// and how long a try waits for a password check to be free (see
+// users.MaxConcurrentHashes) before being told the server is busy.
 const (
-	loginTries   = 3
-	loginTimeout = 2 * time.Minute
+	loginTries          = 3
+	defaultLoginTimeout = 60 * time.Second
+	loginCheckWait      = 10 * time.Second
 )
 
 // Login screen layout: the banner from loginBannerRow, the prompt, then
@@ -134,6 +138,9 @@ type loginState struct {
 	failures int
 	expires  time.Time // when the screen gives up waiting
 
+	// failReason is why the last try failed, for the audit log.
+	failReason string
+
 	message string
 }
 
@@ -204,23 +211,42 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 		logf("login as %q refused: no user database", l.name)
 		return nil, true, "Logins are not available."
 	}
-	u, ok, err := store.Authenticate(l.name, password)
+	ctx, cancel := context.WithTimeout(context.Background(), loginCheckWait)
+	defer cancel()
+	u, ok, err := store.Authenticate(ctx, l.name, password)
 	switch {
+	case errors.Is(err, users.ErrBusy):
+		// Not a wrong try: the password was never checked.
+		logf("login as %q: %v", l.name, err)
+		l.message = "The server is busy; press Enter to try again."
+		return nil, false, ""
 	case err != nil:
 		logf("login as %q: %v", l.name, err)
 		l.message = "Could not check the password: " + err.Error()
 		return nil, false, ""
+	case ok && isDefaultLogin(u.Name, password):
+		// Right, but the default: it works only on the console, which
+		// needs no password, so that the admin sets a real one there
+		// before anyone can log in as admin from anywhere.
+		l.failReason, l.message = "default password", "The default admin password only works on the CONSOLE; change it there."
 	case ok:
 		logf("logged in as %q", u.Name)
 		return &u, false, ""
+	default:
+		l.failReason, l.message = "wrong password", "Wrong user name or password."
 	}
 	l.failures++
-	logf("login as %q failed (%d of %d)", l.name, l.failures, loginTries)
+	logf("login as %q failed (%d of %d): %s", l.name, l.failures, loginTries, l.failReason)
 	if l.failures >= loginTries {
 		return nil, true, "Too many failed logins. Goodbye."
 	}
-	l.message = "Wrong user name or password."
 	return nil, false, ""
+}
+
+// isDefaultLogin reports whether name and password are the first user's,
+// as made with a new users file: admin, with the password admin.
+func isDefaultLogin(name, password string) bool {
+	return strings.EqualFold(name, users.FirstName) && password == users.FirstPassword
 }
 
 // buildFarewell is the screen left on a terminal as it is disconnected,

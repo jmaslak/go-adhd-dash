@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -115,13 +116,37 @@ func TestLoginHandle(t *testing.T) {
 	if u, quit, _ := enter(&l, "admin", ""); u != nil || quit || l.message != "Type both your user name and your password." {
 		t.Errorf("no password: %v %v %q", u, quit, l.message)
 	}
-	if u, quit, _ := enter(&l, " Admin ", "admin"); u == nil || quit || u.Name != "admin" || !u.Admin {
-		t.Errorf("right password: %+v %v %q", u, quit, l.message)
+	// The default password is right, but refused: it only works on the
+	// console, which does not ask for it. It counts as a try.
+	if u, quit, _ := enter(&l, " Admin ", "admin"); u != nil || quit || !strings.Contains(l.message, "only works on the CONSOLE") || l.failures != 1 || l.failReason != "default password" {
+		t.Errorf("default password: %+v %v %q, %d failures, reason %q", u, quit, l.message, l.failures, l.failReason)
+	}
+	// Once changed, admin logs in.
+	if err := store.Update(func(list *[]users.User, _ func() int) error {
+		h, err := users.HashPassword(context.Background(), "s3cret")
+		(*list)[0].Password = h
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u, quit, _ := enter(&l, " Admin ", "s3cret"); u == nil || quit || u.Name != "admin" || !u.Admin {
+		t.Errorf("changed password: %+v %v %q", u, quit, l.message)
+	}
+	// Another user whose password is "admin" is not the default login.
+	if err := store.Update(func(list *[]users.User, nextID func() int) error {
+		h, err := users.HashPassword(context.Background(), "admin")
+		*list = append(*list, users.User{ID: nextID(), Name: "bob", Password: h})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, _ := enter(&loginState{}, "bob", "admin"); u == nil {
+		t.Error("bob with the password admin refused")
 	}
 
 	l = loginState{}
 	for i := 1; i < loginTries; i++ {
-		if u, quit, _ := enter(&l, "admin", "wrong"); u != nil || quit || l.message != "Wrong user name or password." || l.name != "admin" {
+		if u, quit, _ := enter(&l, "admin", "wrong"); u != nil || quit || l.message != "Wrong user name or password." || l.name != "admin" || l.failReason != "wrong password" {
 			t.Fatalf("wrong try %d: %v %v %q", i, u, quit, l.message)
 		}
 	}
@@ -165,5 +190,22 @@ func TestChooseLU(t *testing.T) {
 func TestAuditName(t *testing.T) {
 	if auditName(nil) != "(console)" || auditName(&users.User{Name: "bob"}) != "bob" {
 		t.Error("audit names wrong")
+	}
+}
+
+func TestIsDefaultLogin(t *testing.T) {
+	for _, c := range []struct {
+		name, password string
+		want           bool
+	}{
+		{"admin", "admin", true},
+		{"ADMIN", "admin", true},
+		{"admin", "Admin", false},
+		{"admin", "admin ", false},
+		{"bob", "admin", false},
+	} {
+		if got := isDefaultLogin(c.name, c.password); got != c.want {
+			t.Errorf("%q/%q: %v", c.name, c.password, got)
+		}
 	}
 }
