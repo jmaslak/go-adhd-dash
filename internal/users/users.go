@@ -25,9 +25,14 @@ import (
 
 // User is one user.
 type User struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Admin    bool   `json:"admin"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Admin bool   `json:"admin"`
+
+	// Restricted users can use the calculator and nothing else. No admin
+	// is restricted.
+	Restricted bool `json:"restricted,omitempty"`
+
 	Password string `json:"password"` // Argon2id, in PHC string format
 }
 
@@ -119,7 +124,8 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 }
 
 // Validate reports why list is not a valid set of users: a name empty,
-// holding a space, or used twice (ignoring case), or no admin.
+// holding a space, or used twice (ignoring case), a user both an admin and
+// restricted, or no admin.
 func Validate(list []User) error {
 	seen := map[string]bool{}
 	admins := 0
@@ -133,6 +139,9 @@ func Validate(list []User) error {
 			return fmt.Errorf("there is already a user called %q", u.Name)
 		default:
 			seen[key] = true
+		}
+		if u.Admin && u.Restricted {
+			return fmt.Errorf("%s cannot be both an admin and restricted", u.Name)
 		}
 		if u.Admin {
 			admins++

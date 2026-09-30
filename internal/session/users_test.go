@@ -56,9 +56,9 @@ func TestUsersScreen(t *testing.T) {
 	r := newUsersRig(t)
 	for i, want := range map[int]string{
 		usHeaderRow: " USERS 1 user, 1 admin",
-		usColumnRow: " S Name                      Admin",
-		usFirstRow:  "   admin                     Y",
-		20:          " New user ===>                       Admin (Y/N) ===>",
+		usColumnRow: " S Name                      Admin Restricted",
+		usFirstRow:  "   admin                     Y     N",
+		20:          " New user ===>                       Admin ===>   Restricted ===>",
 		21:          " Password ===>",
 	} {
 		if r.rows[i] != want {
@@ -72,7 +72,7 @@ func TestUsersScreen(t *testing.T) {
 		switch {
 		case f.Name == usNewPassword && !f.Hidden:
 			t.Error("password field shows what is typed")
-		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol) && !f.Autoskip:
+		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol) && !f.Autoskip:
 			t.Errorf("field at col %d does not skip on", f.Col)
 		}
 	}
@@ -212,5 +212,40 @@ func TestDeleteUsersConfirm(t *testing.T) {
 	text := strings.Join(screenText(t, buildDeleteUsersConfirm(24, 80, now, p), 24, 80), "\n")
 	if !strings.Contains(text, "Delete these 2 users?") || strings.Contains(text, "other changes") || strings.Contains(text, "(admin)") {
 		t.Errorf("two users, nothing else:\n%s", text)
+	}
+}
+
+func TestUsersRestricted(t *testing.T) {
+	r := newUsersRig(t)
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
+	list := r.list()
+	if r.u.isError || len(list) != 2 || !list[1].Restricted || list[1].Admin {
+		t.Fatalf("add restricted: message %q, users %+v", r.u.message, list)
+	}
+	if !strings.Contains(r.rows[usFirstRow+1], "calc                      N     Y") {
+		t.Errorf("row %q", r.rows[usFirstRow+1])
+	}
+
+	r.key(go3270.AIDEnter, map[string]string{"ures:2": "N"})
+	if r.list()[1].Restricted || r.u.message != "Changed 1 restricted setting." {
+		t.Errorf("unrestrict: message %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"ures:2": "q"})
+	if !strings.Contains(r.u.message, `under Restricted, not "Q"`) {
+		t.Errorf("bad flag: %q", r.u.message)
+	}
+
+	// No admin is restricted.
+	r.key(go3270.AIDEnter, map[string]string{"ures:1": "Y"})
+	if !strings.Contains(r.u.message, "cannot be both an admin and restricted") || r.list()[0].Restricted {
+		t.Errorf("restrict the admin: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "both", usNewPassword: "pw", usNewAdmin: "Y", usNewRes: "Y"})
+	if !strings.Contains(r.u.message, "cannot be both") || len(r.list()) != 2 {
+		t.Errorf("add a restricted admin: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewRes: "Y"})
+	if r.u.message != "Type the new user's name." {
+		t.Errorf("restricted with no name: %q", r.u.message)
 	}
 }

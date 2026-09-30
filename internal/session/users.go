@@ -18,8 +18,9 @@ import (
 // and the message and help rows.
 //
 // Each user's row is a one-character command field (D deletes the user, P
-// changes their password), the name, and a one-character admin field, Y or
-// N. Autoskip after each input field sends the cursor on to the next.
+// changes their password), the name, and one-character admin and
+// restricted fields, Y or N. Autoskip after each input field sends the
+// cursor on to the next.
 const (
 	usHeaderRow = 2
 	usColumnRow = 3
@@ -28,18 +29,22 @@ const (
 	usNameWidth = 25 // the name, as shown
 	usAdminCol  = usNameCol + 1 + usNameWidth
 	usEndCol    = usAdminCol + 2 // the attribute byte ending the admin field
+	usResCol    = usAdminCol + 6 // the restricted field, under "Restricted"
+	usResEndCol = usResCol + 2
 
 	usSelField      = "usel:"
 	usAdminField    = "uadm:"
+	usResField      = "ures:"
 	usPasswordField = "upw:" // then the ID of the user whose password is changing
 	usNewName       = "unew"
 	usNewAdmin      = "unewadm"
+	usNewRes        = "unewres"
 	usNewPassword   = "unewpw"
 
 	usNewNameWidth  = 20
 	usPasswordWidth = 30
 
-	usPrompt         = "D deletes a user, P changes a password; type Y or N under Admin."
+	usPrompt         = "D deletes, P changes password; Y or N under Admin and Restricted."
 	usPasswordPrompt = "Type the new password and press Enter. PF3 cancels."
 )
 
@@ -124,9 +129,10 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 
 	if end > start {
 		// Aligned with a user's row: the command in column 1, the name
-		// from column 3, the admin field under "Admin". The first command
+		// from column 3, the admin and restricted fields under their
+		// headings. The first command
 		// field stops the underline.
-		headings := fmt.Sprintf("%-2s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", "Admin")
+		headings := fmt.Sprintf("%-2s%-*s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", usResCol-usAdminCol, "Admin", "Restricted")
 		screen = append(screen, go3270.Field{
 			Row: usColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
 			Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
@@ -137,8 +143,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 		u.rowIDs[row] = x.ID
 		id := strconv.Itoa(x.ID)
 		color, intense := go3270.Green, false
-		if x.Admin {
+		switch {
+		case x.Admin:
 			color, intense = go3270.White, true
+		case x.Restricted:
+			color = go3270.Pink
 		}
 		screen = append(screen,
 			go3270.Field{
@@ -151,6 +160,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
 			go3270.Field{Row: row, Col: usEndCol, Autoskip: true},
+			go3270.Field{
+				Row: row, Col: usResCol, Write: true, Name: usResField + id, Content: u.fieldValue(usResField+id, yesNo(x.Restricted)),
+				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+			},
+			go3270.Field{Row: row, Col: usResEndCol, Autoskip: true},
 		)
 	}
 
@@ -161,10 +175,12 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 	var pwName string
 	if i < 0 {
 		u.passwordFor = 0
-		const nameLabel, adminLabel = "New user ===>", "Admin (Y/N) ===>"
+		const nameLabel, adminLabel, resLabel = "New user ===>", "Admin ===>", "Restricted ===>"
 		nameCol := len(nameLabel) + 1
 		adminLabelCol := nameCol + 1 + usNewNameWidth + 1
 		adminCol := adminLabelCol + 1 + len(adminLabel)
+		resLabelCol := adminCol + 2
+		resCol := resLabelCol + 1 + len(resLabel)
 		screen = append(screen,
 			go3270.Field{Row: topRow, Col: 0, Color: go3270.Turquoise, Content: nameLabel},
 			go3270.Field{
@@ -176,7 +192,12 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 				Row: topRow, Col: adminCol, Write: true, Name: usNewAdmin, Content: u.typed[usNewAdmin],
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
-			go3270.Field{Row: topRow, Col: adminCol + 2, Autoskip: true},
+			go3270.Field{Row: topRow, Col: resLabelCol, Color: go3270.Turquoise, Content: resLabel, Autoskip: true},
+			go3270.Field{
+				Row: topRow, Col: resCol, Write: true, Name: usNewRes, Content: u.typed[usNewRes],
+				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+			},
+			go3270.Field{Row: topRow, Col: resCol + 2, Autoskip: true},
 		)
 		pwName = usNewPassword
 	} else {
@@ -228,9 +249,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 type usersEdit struct {
 	deletes     map[int]bool
 	admin       map[int]bool // new admin flags, by ID
+	restricted  map[int]bool // new restricted flags, by ID
 	passwordFor int          // a user picked, with P, to change the password of
 	newName     string
 	newAdmin    bool
+	newRes      bool
 	newPassword string
 	setPassword string // for u.passwordFor
 }
@@ -238,7 +261,7 @@ type usersEdit struct {
 // parse checks what was typed over the fields drawn last, returning why it
 // cannot be used when it cannot.
 func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
-	e.deletes, e.admin = map[int]bool{}, map[int]bool{}
+	e.deletes, e.admin, e.restricted = map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for name, shown := range u.shown {
 		v, ok := values[name]
 		if !ok || v == shown {
@@ -269,6 +292,15 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 			default:
 				return e, fmt.Sprintf("Type Y or N under Admin, not %q.", v)
 			}
+		case usResField:
+			switch v {
+			case "Y", "N":
+				if v != shown {
+					e.restricted[id] = v == "Y"
+				}
+			default:
+				return e, fmt.Sprintf("Type Y or N under Restricted, not %q.", v)
+			}
 		}
 	}
 
@@ -284,8 +316,14 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 	case a != "" && a != "N":
 		return e, fmt.Sprintf("Type Y or N for the new user's Admin, not %q.", a)
 	}
+	switch r := strings.ToUpper(strings.TrimSpace(values[usNewRes])); {
+	case r == "Y":
+		e.newRes = true
+	case r != "" && r != "N":
+		return e, fmt.Sprintf("Type Y or N for the new user's Restricted, not %q.", r)
+	}
 	switch {
-	case e.newName == "" && (e.newPassword != "" || e.newAdmin):
+	case e.newName == "" && (e.newPassword != "" || e.newAdmin || e.newRes):
 		return e, "Type the new user's name."
 	case e.newName != "" && e.newPassword == "":
 		return e, "Type the new user's password."
@@ -327,6 +365,9 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 		if admin, ok := e.admin[x.ID]; ok {
 			x.Admin = admin
 		}
+		if restricted, ok := e.restricted[x.ID]; ok {
+			x.Restricted = restricted
+		}
 		if x.ID == passwordFor && hash != "" {
 			x.Password, r.changedPassword = hash, x.Name
 		}
@@ -335,7 +376,7 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 		return r, errors.New("that user has been removed")
 	}
 	if e.newName != "" {
-		*list = append(*list, users.User{ID: nextID(), Name: e.newName, Admin: e.newAdmin, Password: hash})
+		*list = append(*list, users.User{ID: nextID(), Name: e.newName, Admin: e.newAdmin, Restricted: e.newRes, Password: hash})
 		r.added = e.newName
 	}
 	return r, nil
@@ -387,7 +428,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 		u.message, u.isError, u.typed = msg, true, typed
 	}
 	e, bad := u.parse(resp.Values)
-	if bad == "" && resp.AID == go3270.AIDEnter && u.passwordFor != 0 && e.setPassword == "" && len(e.deletes) == 0 && len(e.admin) == 0 && e.passwordFor == 0 {
+	if bad == "" && resp.AID == go3270.AIDEnter && u.passwordFor != 0 && e.setPassword == "" && len(e.deletes) == 0 && len(e.admin) == 0 && len(e.restricted) == 0 && e.passwordFor == 0 {
 		bad = "Type the new password, or press PF3 to cancel."
 	}
 	if bad != "" {
@@ -426,7 +467,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 		}
 		p := &usersPending{
 			edit: e, hash: hash, passwordFor: u.passwordFor, aid: resp.AID, typed: typed,
-			others: len(e.admin) > 0 || hash != "" || e.passwordFor != 0,
+			others: len(e.admin) > 0 || len(e.restricted) > 0 || hash != "" || e.passwordFor != 0,
 		}
 		for _, x := range list {
 			if e.deletes[x.ID] {
@@ -444,7 +485,7 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 // typed left to fix, then pages as aid asks.
 func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, hash string, aid go3270.AID, typed map[string]string, logf func(string, ...any)) {
 	var r usersResult
-	if len(e.deletes) > 0 || len(e.admin) > 0 || hash != "" {
+	if len(e.deletes) > 0 || len(e.admin) > 0 || len(e.restricted) > 0 || hash != "" {
 		err := store.Update(func(list *[]users.User, nextID func() int) (err error) {
 			r, err = applyEdit(list, e, passwordFor, hash, nextID)
 			return err
@@ -478,6 +519,12 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 			logf("user %d admin set to %v", id, admin)
 		}
 		said = append(said, "Changed "+countText(n, "admin setting", 0, 1)+".")
+	}
+	if n := len(e.restricted); n > 0 {
+		for id, restricted := range e.restricted {
+			logf("user %d restricted set to %v", id, restricted)
+		}
+		said = append(said, "Changed "+countText(n, "restricted setting", 0, 1)+".")
 	}
 	u.message = strings.Join(said, " ")
 	if e.passwordFor != 0 {

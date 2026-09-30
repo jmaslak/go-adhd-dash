@@ -137,13 +137,14 @@ each with a one-character command field and an `Admin` field:
   as it was), or `P` to change their password:
   the bottom rows then ask for it (typed hidden), `Enter` saves it and
   `PF3` cancels;
-- type `Y` or `N` under `Admin` to make a user an admin or not;
-- on the bottom rows, type a new user's name, `Y` or `N` for admin (blank is
-  `N`), and their password, to add them.
+- type `Y` or `N` under `Admin` to make a user an admin or not, and under
+  `Restricted` to restrict them or not (see below);
+- on the bottom rows, type a new user's name, `Y` or `N` for `Admin` and
+  `Restricted` (blank is `N`), and their password, to add them.
 
 `Enter` (or paging) saves everything typed at once. Names must be unique
-(ignoring case) and have no spaces, and at least one user must stay an
-admin: a change that would break either is refused whole, with what was
+(ignoring case) and have no spaces, no admin may be restricted, and at least
+one user must stay an admin: a change that would break either is refused whole, with what was
 typed left to fix (passwords aside, which are never drawn again). `PF3`
 goes back to the admin menu without saving.
 
@@ -169,6 +170,11 @@ console.
 
 A user who logged in and is not an admin cannot open the admin menu. The
 console can.
+
+A restricted user goes straight to the calculator on logging in, and has
+nothing else: `PF9` switches between it and the dBm calculator, and `PF3`
+(shown as `PF3=Log off`) logs them off. A change to a user's restricted
+flag takes effect at their next login.
 
 The activity viewer shows who each session logged in as, blank for the
 console; the chat still names sessions by LU.

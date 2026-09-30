@@ -138,3 +138,14 @@ func TestLoadBadFile(t *testing.T) {
 		t.Errorf("bad file: created %v, %v", created, err)
 	}
 }
+
+func TestRestrictedAdmin(t *testing.T) {
+	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "calc", Restricted: true}}
+	if err := Validate(list); err != nil {
+		t.Errorf("restricted non-admin: %v", err)
+	}
+	list[0].Restricted = true
+	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "both an admin and restricted") {
+		t.Errorf("restricted admin: %v", err)
+	}
+}

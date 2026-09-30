@@ -236,7 +236,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		}
 		switch mode {
 		case modeLogin:
-			screen, cursorRow, cursorCol = buildLogin(rows, cols, now, &login)
+			screen, cursorRow, cursorCol = buildLogin(rows, cols, now, neg.LUName, &login)
 			redrawOnTimer = false
 		case modeChat:
 			// A timed redraw, or one woken by a message posted, writes over
@@ -386,6 +386,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modeCalc:
 			if calc.handle(resp) {
+				if user != nil && user.Restricted {
+					logf("logged off")
+					bye("Logged off. Goodbye.")
+					return
+				}
 				mode = modeDashboard
 			}
 		case modeChecklist:
@@ -435,6 +440,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case u != nil:
 				user, mode = u, modeDashboard
 				cfg.Activity.update(sessionID, func(s *SessionActivity) { s.User = u.Name })
+				// A restricted user has the calculator, in either mode, and
+				// nothing else.
+				if u.Restricted {
+					mode, calc = modeCalc, calcState{logOff: true}
+				}
 			}
 		case modeChat:
 			if ch.handle(resp, cfg.Chat, sessionID, neg.LUName, rows) {

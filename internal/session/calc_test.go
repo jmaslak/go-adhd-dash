@@ -205,3 +205,16 @@ func TestCalcSumAvg(t *testing.T) {
 		}
 	}
 }
+
+func TestCalcLogOffHelp(t *testing.T) {
+	for _, dbm := range []bool{false, true} {
+		c := calcState{dbm: dbm}
+		if h := c.mode().help; !strings.HasPrefix(h, "PF3=Back ") {
+			t.Errorf("dbm %v: help %q", dbm, h)
+		}
+		c.logOff = true
+		if h := c.mode().help; !strings.HasPrefix(h, "PF3=Log off ") || !strings.Contains(h, "PF9=") {
+			t.Errorf("dbm %v, restricted: help %q", dbm, h)
+		}
+	}
+}

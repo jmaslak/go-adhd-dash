@@ -227,6 +227,10 @@ type calcState struct {
 	input   string
 	message string
 	isError bool
+
+	// logOff is set for a restricted user, for whom leaving the
+	// calculator logs off, as its help row says.
+	logOff bool
 }
 
 // calcInputField names the calculator's input field.
@@ -307,6 +311,15 @@ type calcMode struct {
 
 // mode describes the current mode.
 func (c *calcState) mode() calcMode {
+	m := c.modeFor()
+	if c.logOff {
+		m.help = strings.Replace(m.help, "PF3=Back", "PF3=Log off", 1)
+	}
+	return m
+}
+
+// modeFor describes the current mode, with PF3 going back.
+func (c *calcState) modeFor() calcMode {
 	if c.dbm {
 		m := calcMode{
 			title: "dBm CALCULATOR", heading1: "dBm / dB", heading2: "mW",

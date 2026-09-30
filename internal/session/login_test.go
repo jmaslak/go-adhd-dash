@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ func (a fakeAddr) String() string  { return string(a) }
 
 func TestLoginScreen(t *testing.T) {
 	var l loginState
-	s, row, col := buildLogin(24, 80, now, &l)
+	s, row, col := buildLogin(24, 80, now, "AD00002A", &l)
 	rows := screenText(t, s, 24, 80)
 	if !strings.HasPrefix(rows[titleRow], " LOGIN ") || strings.Contains(rows[titleRow], "DASHBOARD") {
 		t.Errorf("title row %q", rows[titleRow])
@@ -57,17 +58,31 @@ func TestLoginScreen(t *testing.T) {
 	if lead := len(rows[loginBannerRow+6]) - len(strings.TrimLeft(rows[loginBannerRow+6], " ")); lead < 9 || lead > 11 {
 		t.Errorf("banner starts at column %d, not centered", lead)
 	}
-	colors := map[go3270.Color]int{}
-	for _, f := range s {
-		if f.Row >= loginBannerRow && f.Row < loginBannerRow+7 {
-			colors[f.Color]++
+	// Each banner row is nine fields, a glyph each: exec's four in that
+	// row's rainbow band, then the slash in white and 3270 in yellow.
+	bands := []go3270.Color{go3270.Red, go3270.Yellow, go3270.Green, go3270.Turquoise, go3270.Blue}
+	for r := 2; r < 7; r++ {
+		var got []go3270.Color
+		for _, f := range s {
+			if f.Row == loginBannerRow+r {
+				got = append(got, f.Color)
+			}
 		}
-	}
-	if colors[go3270.Turquoise] != 4*7 || colors[go3270.White] != 7 || colors[go3270.Yellow] != 4*7 {
-		t.Errorf("banner fields by color %v; want exec turquoise, / white, 3270 yellow", colors)
+		b := bands[r-2]
+		want := []go3270.Color{b, b, b, b, go3270.White, go3270.Yellow, go3270.Yellow, go3270.Yellow, go3270.Yellow}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("banner row %d colors %v, want %v", r, got, want)
+		}
 	}
 	if !strings.Contains(rows[loginPromptRow], "Log in to continue.") || !strings.HasPrefix(rows[loginNameRow], " User name ===>") || !strings.HasPrefix(rows[loginPassRow], " Password  ===>") {
 		t.Errorf("login screen:\n%s", strings.Join(rows, "\n"))
+	}
+	if rows[23] != " PF3=Disconnect Enter=Log in   LU AD00002A" {
+		t.Errorf("help row %q; want the LU on it", rows[23])
+	}
+	s, _, _ = buildLogin(24, 80, now, "", &l)
+	if got := screenText(t, s, 24, 80)[23]; got != " PF3=Disconnect Enter=Log in" {
+		t.Errorf("without an LU, help row %q", got)
 	}
 	if row != loginNameRow || col != len(loginNameLbl)+2 {
 		t.Errorf("cursor at %d,%d, want the user name", row, col)
@@ -81,7 +96,7 @@ func TestLoginScreen(t *testing.T) {
 	// After a wrong try, the name is kept and the cursor goes to the
 	// password.
 	l.name, l.message = "joelle", "Wrong user name or password."
-	s, row, _ = buildLogin(24, 80, now, &l)
+	s, row, _ = buildLogin(24, 80, now, "AD00002A", &l)
 	if row != loginPassRow || !strings.Contains(strings.Join(screenText(t, s, 24, 80), "\n"), "Wrong user name or password.") {
 		t.Errorf("after a wrong try: cursor row %d", row)
 	}

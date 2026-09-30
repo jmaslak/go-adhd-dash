@@ -34,10 +34,22 @@ const (
 )
 
 // bannerGlyph is one character of the login banner, drawn in # (which
-// every code page has) seven rows high and five wide, in color.
+// every code page has) seven rows high and five wide, each row in a color.
 type bannerGlyph struct {
-	rows  [7]string
-	color go3270.Color
+	rows   [7]string
+	colors [7]go3270.Color
+}
+
+// solid is every row of a glyph in c.
+func solid(c go3270.Color) [7]go3270.Color {
+	return [7]go3270.Color{c, c, c, c, c, c, c}
+}
+
+// rainbow colors a lowercase glyph's five rows in bands, as near a rainbow
+// as the 3270's colors come: red, yellow, green, turquoise, blue. (Its top
+// two rows are blank.)
+var rainbow = [7]go3270.Color{
+	go3270.Red, go3270.Red, go3270.Red, go3270.Yellow, go3270.Green, go3270.Turquoise, go3270.Blue,
 }
 
 // Glyphs for the banner. Lowercase letters stand on the baseline, two rows
@@ -53,12 +65,12 @@ var (
 	glyph0     = [7]string{" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "}
 )
 
-// loginBanner is "exec/3270": the name in turquoise, the slash in white,
-// the number in yellow.
+// loginBanner is "exec/3270": the name in rainbow bands, the slash in
+// white, the number in yellow.
 var loginBanner = []bannerGlyph{
-	{glyphE, go3270.Turquoise}, {glyphX, go3270.Turquoise}, {glyphE, go3270.Turquoise}, {glyphC, go3270.Turquoise},
-	{glyphSlash, go3270.White},
-	{glyph3, go3270.Yellow}, {glyph2, go3270.Yellow}, {glyph7, go3270.Yellow}, {glyph0, go3270.Yellow},
+	{glyphE, rainbow}, {glyphX, rainbow}, {glyphE, rainbow}, {glyphC, rainbow},
+	{glyphSlash, solid(go3270.White)},
+	{glyph3, solid(go3270.Yellow)}, {glyph2, solid(go3270.Yellow)}, {glyph7, solid(go3270.Yellow)}, {glyph0, solid(go3270.Yellow)},
 }
 
 // bannerGlyphWidth is how many columns a glyph takes: its attribute byte,
@@ -70,7 +82,7 @@ func bannerLines() []line {
 	out := make([]line, 7)
 	for r := range out {
 		for _, g := range loginBanner {
-			out[r] = append(out[r], go3270.Field{Content: g.rows[r] + " ", Color: g.color, Intense: true})
+			out[r] = append(out[r], go3270.Field{Content: g.rows[r] + " ", Color: g.colors[r], Intense: true})
 		}
 	}
 	return out
@@ -125,9 +137,10 @@ type loginState struct {
 	message string
 }
 
-// buildLogin renders the login screen, and where the cursor goes: the user
-// name, or after a wrong try with one typed, the password.
-func buildLogin(rows, cols int, now time.Time, l *loginState) (screen go3270.Screen, cursorRow, cursorCol int) {
+// buildLogin renders the login screen for a session with LU name lu (empty
+// for a client without TN3270E), and where the cursor goes: the user name,
+// or after a wrong try with one typed, the password.
+func buildLogin(rows, cols int, now time.Time, lu string, l *loginState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "LOGIN", now, false)
 	bannerCol := max((cols-len(loginBanner)*bannerGlyphWidth)/2, 0)
 	for i, l := range bannerLines() {
@@ -157,7 +170,11 @@ func buildLogin(rows, cols int, now time.Time, l *loginState) (screen go3270.Scr
 		message, color = "Type your user name and password, then press Enter.", go3270.Blue
 	}
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: l.message != ""}})...)
-	screen = append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate("PF3=Disconnect Enter=Log in", cols-1)})
+	help := "PF3=Disconnect Enter=Log in"
+	if lu != "" {
+		help += "   LU " + lu
+	}
+	screen = append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
 
 	if l.name != "" {
 		return screen, loginPassRow, fieldCol + 1
