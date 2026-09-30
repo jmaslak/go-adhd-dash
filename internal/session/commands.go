@@ -118,14 +118,15 @@ func buildHelp(rows, cols int, now time.Time, message string) (screen go3270.Scr
 // fillScreen pads every protected field with spaces to the next attribute
 // byte, so that the screen written without first being erased replaces
 // everything shown before. Input fields are left as they are: written with
-// no content, whatever has been typed in them stays. The screen must have a
-// field at the top left corner.
+// their content dropped, whatever has been typed in them stays. The screen
+// must have a field at the top left corner.
 func fillScreen(screen go3270.Screen, rows, cols int) go3270.Screen {
 	out := slices.Clone(screen)
 	addr := func(f go3270.Field) int { return f.Row*cols + f.Col }
 	sort.SliceStable(out, func(i, j int) bool { return addr(out[i]) < addr(out[j]) })
 	for i := range out {
 		if out[i].Write {
+			out[i].Content = ""
 			continue
 		}
 		next := rows * cols

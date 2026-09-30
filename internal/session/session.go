@@ -335,9 +335,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 			// the screen without erasing it, so what is typed survives.
 			screen, cursorRow, cursorCol = buildChat(rows, cols, now, cfg.Chat, neg.LUName, &ch)
 		case modeActivity:
-			sessions = cfg.Activity.List()
+			// Redrawn on the timer like the dashboard, keeping what has
+			// been typed, and each session in its row so that marks typed
+			// stay beside theirs.
+			if timedOut {
+				sessions = keepRows(sessions, cfg.Activity.List())
+			} else {
+				sessions = cfg.Activity.List()
+			}
 			screen, totalPages, cursorRow, cursorCol = buildActivity(rows, cols, now, sessions, sessionID, &act)
-			redrawOnTimer = false
 		case modeTerminateConfirm:
 			screen, cursorRow, cursorCol = buildTerminateConfirm(rows, cols, now, sessionID, &act), rows-1, 0
 			redrawOnTimer = false
@@ -389,14 +395,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
 		}
 
-		// A timed redraw of the dashboard or calendar writes over the screen
-		// without erasing it, and leaves the command field and the cursor
-		// alone, so that a command half typed, or the cursor moved to a day
-		// not yet picked, survives it.
+		// A timed redraw of the dashboard, calendar, chat or activity viewer
+		// writes over the screen without erasing it, and leaves the input
+		// fields and the cursor alone, so that a command half typed, the
+		// cursor moved to a day not yet picked, or marks typed, survive it.
 		opts := go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, CursorRow: cursorRow, CursorCol: cursorCol,
 		}
-		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat) {
+		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity) {
 			screen, opts.NoClear = fillScreen(screen, rows, cols), true
 		}
 

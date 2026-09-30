@@ -38,6 +38,10 @@ type SessionActivity struct {
 	Screen    string
 	Connected time.Time
 	LastKey   time.Time // when a key was last pressed, or the session connected
+
+	// Gone is set on a session kept in its row by keepRows after it
+	// disconnected.
+	Gone bool
 }
 
 // terminateGrace is how long a terminated session has to say goodbye and
@@ -208,6 +212,34 @@ type activityState struct {
 	isError bool
 }
 
+// keepRows is the sessions for a redraw that keeps what has been typed:
+// those shown before, in the same rows, brought up to date from now, so that
+// a mark typed beside one stays beside it; those since disconnected kept,
+// marked Gone; then any new ones.
+func keepRows(before, now []SessionActivity) []SessionActivity {
+	current := make(map[uint64]SessionActivity, len(now))
+	for _, s := range now {
+		current[s.ID] = s
+	}
+	out := make([]SessionActivity, 0, len(before)+len(now))
+	shown := make(map[uint64]bool, len(before))
+	for _, s := range before {
+		shown[s.ID] = true
+		if cur, ok := current[s.ID]; ok {
+			s = cur
+		} else {
+			s.Gone = true
+		}
+		out = append(out, s)
+	}
+	for _, s := range now {
+		if !shown[s.ID] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // activityRows is how many sessions fit on one page of the activity viewer.
 func activityRows(rows int) int {
 	return max(rows-2-actFirstRow, 1)
@@ -225,7 +257,13 @@ func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, se
 	screen = titleFields(cols, "ACTIVITY", now, false)
 	shown, totalPages, start, end := pageRange(len(sessions), activityRows(rows), a.page)
 	a.page = shown
-	count := countText(len(sessions), "session", 0, 1) + " connected"
+	connected := 0
+	for _, s := range sessions {
+		if !s.Gone {
+			connected++
+		}
+	}
+	count := countText(connected, "session", 0, 1) + " connected"
 	if totalPages > 1 {
 		count += fmt.Sprintf(", page %d/%d", shown+1, totalPages)
 	}
@@ -254,12 +292,16 @@ func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, se
 			mark = "X"
 		}
 		star, color, intense := "", go3270.Green, false
-		if s.ID == self {
+		doing := s.Screen
+		switch {
+		case s.ID == self:
 			star, color, intense = "*", go3270.White, true
+		case s.Gone:
+			doing, color = "Disconnected", go3270.Blue
 		}
-		connected := s.Connected.Format("15:04")
+		since := s.Connected.Format("15:04")
 		if !dayOf(s.Connected).Equal(dayOf(now)) {
-			connected = s.Connected.Format("Jan 2")
+			since = s.Connected.Format("Jan 2")
 		}
 		screen = append(screen,
 			go3270.Field{
@@ -270,7 +312,7 @@ func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, se
 			// typed.
 			go3270.Field{
 				Row: row, Col: actTextCol, Color: color, Intense: intense, Autoskip: true,
-				Content: truncate(activityFormat(star, s.LU, s.User, s.Screen, connected, duration(now.Sub(s.LastKey)), s.Addr), cols-actTextCol-1),
+				Content: truncate(activityFormat(star, s.LU, s.User, doing, since, duration(now.Sub(s.LastKey)), s.Addr), cols-actTextCol-1),
 			},
 		)
 		if i == 0 {

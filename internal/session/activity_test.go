@@ -277,3 +277,39 @@ func TestActivityClaimLU(t *testing.T) {
 		t.Error("nil Activity refused a claim")
 	}
 }
+
+func TestKeepRows(t *testing.T) {
+	before := []SessionActivity{{ID: 1, Screen: "Dashboard"}, {ID: 3, Screen: "Calendar"}, {ID: 4, Screen: "Chat"}}
+	// 3 has gone, 1 has moved on, 2 was added late and 5 is new.
+	now := []SessionActivity{{ID: 1, Screen: "Tasks"}, {ID: 2, Screen: "Login"}, {ID: 4, Screen: "Chat"}, {ID: 5, Screen: "Login"}}
+	got := keepRows(before, now)
+	var ids []string
+	for _, s := range got {
+		ids = append(ids, fmt.Sprintf("%d:%s:%v", s.ID, s.Screen, s.Gone))
+	}
+	if want := "1:Tasks:false 3:Calendar:true 4:Chat:false 2:Login:false 5:Login:false"; strings.Join(ids, " ") != want {
+		t.Errorf("rows %s, want %s", strings.Join(ids, " "), want)
+	}
+}
+
+func TestActivityGoneAndTimedRedraw(t *testing.T) {
+	sessions := []SessionActivity{
+		{ID: 1, LU: "CONSOLE", Screen: "Activity viewer", Connected: now, LastKey: now},
+		{ID: 2, LU: "AD000002", Screen: "Dashboard", Connected: now, LastKey: now, Gone: true},
+	}
+	a := &activityState{marked: map[uint64]bool{2: true}}
+	s, _, _, _ := buildActivity(24, 80, now, sessions, 1, a)
+	rows := screenText(t, s, 24, 80)
+	if !strings.Contains(rows[actHeaderRow], "1 session connected, 1 marked") {
+		t.Errorf("header %q counts the one gone", rows[actHeaderRow])
+	}
+	if !strings.Contains(rows[actFirstRow+1], "AD000002 ") || !strings.Contains(rows[actFirstRow+1], "Disconnected") {
+		t.Errorf("gone row %q", rows[actFirstRow+1])
+	}
+	// Written over without erasing, the marks are left as typed.
+	for _, f := range fillScreen(s, 24, 80) {
+		if f.Write && f.Content != "" {
+			t.Errorf("timed redraw writes %q into %s", f.Content, f.Name)
+		}
+	}
+}

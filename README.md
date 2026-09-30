@@ -116,8 +116,12 @@ The admin menu (`admin`) lists its options by number; type one on the
   anything it is in the middle of first; one not gone within 5 seconds has
   its connection closed. Until it is gone its screen shows as
   `Terminating`. `PF7` / `PF8` page, `Enter` refreshes (keeping the marks),
-  and `PF3` goes back to the menu. It does not redraw on a timer, which
-  would wipe marks typed but not yet sent.
+  and `PF3` goes back to the menu. It also redraws every `-refresh`, like
+  the dashboard (unless auto-refresh is off), writing over the screen
+  without erasing what is typed. Until a key is pressed, each session stays
+  in its row, so that a mark stays beside the session it was typed for: one
+  that has disconnected shows as `Disconnected`, and new ones are added at
+  the end.
 - `3`: clear the chat, after a confirmation (`PF4`) saying how many
   messages it deletes. Every session on the chat screen shows it emptied at
   once.
