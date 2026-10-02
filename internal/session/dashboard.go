@@ -10,6 +10,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
@@ -134,6 +135,60 @@ func titleFields(cols int, title string, now time.Time, autoRefresh bool) go3270
 		screen = append(screen, go3270.Field{Row: titleRow, Col: autoCol, Color: go3270.Turquoise, Content: autoMarker})
 	}
 	return screen
+}
+
+// tintTitle turns screen's title row, as made by titleFields, into one
+// field in reverse video in color: black on color, the whole row. Its
+// attribute byte goes in the last column of the last row, so that the color
+// reaches column 0 too, and anything on the last row running into that
+// column is cut short by one. A banner below the title row the same color
+// (as the dashboard's busy banner is while it is tinted for the same state)
+// is made part of the same field, so that nothing between them is left
+// uncolored. The field runs to the next field placed on the screen, with
+// one added at the start of the row after it to end it if there is none.
+func tintTitle(screen go3270.Screen, rows, cols int, color go3270.Color) go3270.Screen {
+	text := []rune(strings.Repeat(" ", cols))
+	out := make(go3270.Screen, 0, len(screen)+2)
+	end := rows * cols
+	for _, f := range screen {
+		n := utf8.RuneCountInString(f.Content)
+		switch {
+		case f.Row == titleRow && f.Col+1+n <= cols:
+			copy(text[f.Col+1:], []rune(f.Content))
+			continue
+		case f.Row == titleRow && f.Col == cols-1 && !f.Write && f.Color == color && f.Highlighting == go3270.ReverseVideo:
+			text = append(text, []rune(f.Content)...) // a banner on the row below
+			continue
+		case f.Row == rows-1 && f.Col+n >= cols-1:
+			f.Content = truncate(f.Content, max(cols-2-f.Col, 0))
+		}
+		end = min(end, f.Row*cols+f.Col)
+		out = append(out, f)
+	}
+	if end > len(text) {
+		out, end = append(out, go3270.Field{Row: len(text) / cols, Col: len(text) % cols}), len(text)
+	}
+	return append(out, go3270.Field{
+		Row: rows - 1, Col: cols - 1, Content: string(text[:end]),
+		Color: color, Highlighting: go3270.ReverseVideo,
+	})
+}
+
+// headerColor is the color the title row is tinted for the busy indicator:
+// red while busy, green while available, and none (false) while off,
+// unknown, or with no indicator.
+func headerColor(src busy.Source) (go3270.Color, bool) {
+	if src == nil {
+		return 0, false
+	}
+	switch s := src.Status(); {
+	case !s.Connected:
+	case s.Light == "red":
+		return go3270.Red, true
+	case s.Light == "green":
+		return go3270.Green, true
+	}
+	return 0, false
 }
 
 // dashboardCommandRow is the row of the dashboard's command line.

@@ -307,47 +307,62 @@ confirmation, to start the list over. The first screen lists the
 checklists, with how many of each one's items are done: green when they
 all are, red when some are not.
 
-Names and items are protected, so `Tab` goes straight down the column of
-one-character fields to their left: `S` on the list, to select a
-checklist, and `X` on a checklist, to check an item off.
+On the list, each checklist's row has an `S` column, to select it, a `*`
+column, to star it, then its name, which can be typed over. On a checklist,
+items are protected, so `Tab` goes straight down the column of `X` fields
+to their left.
 
-- type a name, or an item, on the `New ... ===>` row and press `Enter` to
-  add it at the end; the cursor stays there to add another;
-- on the list, type `S` (or any character) beside a checklist and press
-  `Enter` to open it, or with nothing typed, press `Enter` with the cursor
-  in its `S` column;
-- on the list, type `*` beside a checklist to star it as active, and blank
-  the `*` to unstar it. Starred checklists are listed first, their names
-  green when every item is done and red when not; unstarred, a checklist
-  goes back to its place. Starred checklists cannot be moved with `PF10` /
-  `PF11`, and unstarred ones move past them. Typing `S` over a star selects
-  the checklist without unstarring it;
+- on the list, type a name on the blank row after the last checklist (on
+  the last page) and press `Enter` to add it; the cursor goes to the blank
+  row after it, to add another;
+- on a checklist, type an item on the `New item ===>` row and press
+  `Enter` to add it at the end; the cursor stays there to add another;
+- on the list, type `S` (or any character) in a checklist's `S` column
+  and press `Enter` to open it, wherever the cursor is. Without one typed,
+  `Enter` opens nothing;
+- on the list, type `*` (or any character) in a checklist's `*` column to
+  star it as active, and blank the `*` to unstar it. Starred checklists are
+  listed first, their names green when every item is done and red when
+  not; unstarred, a checklist goes back to its place. Starred checklists
+  cannot be moved with `PF10` / `PF11`, and unstarred ones move past them;
 - on a checklist, type `X` beside an item to check it off, or blank the
   `X` to uncheck it. Items still to do are red, those done green;
-- to change a name or an item, press `PF4` on it: it moves to the bottom
-  row, now `Change ... ===>`, to be typed over, or blanked to remove it
-  (a checklist's items go with it), then `Enter`.
+- on the list, type over a name to rename the checklist, or blank it to
+  remove the checklist and its items. Nothing is saved until it is
+  confirmed: the next key shows the renames and removals, with each
+  removed checklist's item count, and everything else typed alongside;
+  `PF4` there saves it all (then, if the key was `Enter`, opens the
+  checklist selected), `PF3` goes back to the list with it all still
+  typed, to change, and `PF12` discards it all;
+- to change an item, press `PF4` on it: it moves to the bottom row, now
+  `Change item ===>`, to be typed over, or blanked to remove it, then
+  `Enter`.
 
-`PF4`, `PF10` and `PF11` act on the checklist selected, or with none
-selected, the one the cursor is on; on a checklist, the item the cursor is
-on. Selecting more than one checklist is refused, with the selections left
+`PF10` and `PF11` act on the checklist selected, or with none selected,
+the one the cursor is on; on a checklist, `PF4`, `PF10` and `PF11` act on
+the item the cursor is on. Selecting more than one checklist is refused, with the selections left
 to fix.
 
-Whatever is typed is saved with the next key, whichever key it is. If a
-mark is anything but `X` or blank, nothing is saved and what was typed is
-left on the screen to fix.
+Whatever is typed is saved with the next key, whichever key it is, except
+that a name typed over or blanked asks for confirmation first (and the
+key, unless it is `Enter`, does nothing else), and so does `PF3` with
+anything typed. If a mark is anything but `X` or blank, nothing is saved
+and what was typed is left on the screen to fix.
 
-- `Enter`: save; on the list, open the checklist selected, or with none
-  and nothing changed, the one whose `S` column the cursor is in
-- `PF4`: change or remove a name or an item
+- `Enter`: save; on the list, open the checklist selected (unless it is
+  being removed)
+- `PF4` (on a checklist): change or remove an item
 - `PF10` / `PF11`: move a checklist (not a starred one) or an item up /
   down; the cursor goes with it, onto the next page if need be, so the key
   can be pressed again
 - `PF6` (on a checklist): uncheck every item, after a confirmation listing
   the items checked; `PF4` there unchecks them, `PF3` goes back
 - `PF7` / `PF8`: previous / next page
-- `PF3`: back (from a checklist, to the list); while changing a name or an
-  item, cancel the change
+- `PF3`: back (from a checklist, to the list). With anything typed but a
+  selection, it first lists what was typed and asks: `PF4` saves it and
+  goes back, `PF12` discards it and goes back, and `PF3` returns to the
+  screen with it still typed. While changing an item, `PF3` cancels the
+  change instead, saving any marks typed
 
 Neither screen redraws on a timer, since that would wipe what was typed but
 not yet saved.
@@ -383,6 +398,13 @@ The indicator publishes on its own `--interval` (60 seconds by default), so
 the countdown is adjusted locally between messages. A dropped feed is
 redialed every 5 seconds; while it is down the screen says so and shows the
 last state received.
+
+Every screen but the login screen also shows the state in its title row:
+black on red across the whole row while the light is red, black on green
+while it is green, and unchanged while it is off or the feed is down. (On
+the dashboard it runs on into the busy banner below, the same color, with
+no gap.) A restricted user's title row is never colored. A screen
+that does not redraw on a timer shows a change of state at the next key.
 
 `-busy-file` takes the feed's message as a JSON file instead, for trying the
 dashboard without an indicator:

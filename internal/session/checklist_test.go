@@ -76,46 +76,49 @@ func (r *checklistRig) lists() []checklist.Checklist {
 
 func TestChecklistList(t *testing.T) {
 	r := newChecklistRig(t)
-	if !strings.HasPrefix(r.rows[clHeaderRow], " CHECKLISTS 0 checklists") || r.rows[clColumnRow] != "" {
+	if !strings.HasPrefix(r.rows[clHeaderRow], " CHECKLISTS 0 checklists") || !strings.HasPrefix(r.rows[clColumnRow], " S * Name") {
 		t.Errorf("empty list: header %q, headings %q", r.rows[clHeaderRow], r.rows[clColumnRow])
 	}
-	if r.crow != 21 || !strings.HasPrefix(r.rows[21], " New checklist ===>") {
-		t.Errorf("empty list: cursor on row %d, row 21 %q; want on the new checklist row", r.crow, r.rows[21])
+	if r.crow != clFirstRow || r.rows[clFirstRow] != "" || r.rows[21] != "" {
+		t.Errorf("empty list: cursor on row %d, rows %q, %q; want the cursor on the blank first row, and no row for adding below",
+			r.crow, r.rows[clFirstRow], r.rows[21])
 	}
 
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Morning"})
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Evening"})
+	// A name typed on the blank row is added, with the blank row after it
+	// and the cursor there to add another.
+	r.key(go3270.AIDEnter, clFirstRow, map[string]string{clNewField: "Morning"})
+	r.key(go3270.AIDEnter, clFirstRow+1, map[string]string{clNewField: "Evening"})
 	if l := r.lists(); len(l) != 2 || l[0].Name != "Morning" || l[1].Name != "Evening" {
 		t.Fatalf("after adding: %+v", l)
 	}
-	if r.crow != 21 {
-		t.Errorf("after adding, cursor on row %d; want still on the new checklist row", r.crow)
+	if r.crow != clFirstRow+2 || r.rows[clFirstRow+2] != "" {
+		t.Errorf("after adding, cursor on row %d, row %q; want on the blank row after Evening", r.crow, r.rows[clFirstRow+2])
 	}
-	if !strings.HasPrefix(r.rows[clColumnRow], " S Name") || !strings.HasSuffix(r.rows[clColumnRow], "Done") {
+	if !strings.HasPrefix(r.rows[clColumnRow], " S * Name") || !strings.HasSuffix(r.rows[clColumnRow], "Done") {
 		t.Errorf("headings %q", r.rows[clColumnRow])
 	}
-	if !strings.HasPrefix(r.rows[clFirstRow], "   Morning") || !strings.HasSuffix(r.rows[clFirstRow], " 0/0") {
+	if !strings.HasPrefix(r.rows[clFirstRow], "     Morning") || !strings.HasSuffix(r.rows[clFirstRow], " 0/0") {
 		t.Errorf("first row %q", r.rows[clFirstRow])
 	}
-	// Names are protected, so that tabbing goes down the selection fields.
+	// Names can be typed over.
+	names := 0
 	for _, f := range r.screen {
 		if f.Write && strings.HasPrefix(f.Name, clNameField) {
-			t.Errorf("name field %q can be typed in", f.Name)
+			names++
 		}
 	}
+	if names != 2 {
+		t.Errorf("%d name fields can be typed in, want 2", names)
+	}
 
-	// With nothing selected, Enter opens the checklist whose selection
-	// field the cursor is in, and nothing with the cursor elsewhere.
-	r.keyAt(go3270.AIDEnter, clFirstRow+1, 5, nil)
-	if r.c.open != 0 {
-		t.Errorf("Enter with the cursor on a name opened %d", r.c.open)
+	// With nothing selected, Enter opens nothing, wherever the cursor.
+	for _, col := range []int{1, 5} {
+		r.keyAt(go3270.AIDEnter, clFirstRow+1, col, nil)
+		if r.c.open != 0 {
+			t.Errorf("Enter with nothing selected, cursor in column %d of Evening, opened %d", col, r.c.open)
+		}
 	}
-	r.keyAt(go3270.AIDEnter, clFirstRow+1, 1, nil)
-	if r.c.open != 2 {
-		t.Errorf("Enter with the cursor in Evening's selection field opened %d, want 2", r.c.open)
-	}
-	r.key(go3270.AIDPF3, 0, nil)
-	// A selection wins over where the cursor is.
+	// A selection opens the checklist, wherever the cursor is.
 	r.keyAt(go3270.AIDEnter, clFirstRow+1, 1, map[string]string{"sel:1": "S"})
 	if r.c.open != 1 {
 		t.Errorf("Enter with Morning selected, cursor on Evening, opened %d, want 1", r.c.open)
@@ -133,28 +136,50 @@ func TestChecklistList(t *testing.T) {
 	// Two selected is refused, and they stay selected to fix.
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S", "sel:2": "S"})
 	if r.c.open != 0 || !strings.Contains(r.rows[22], "Select one checklist at a time.") ||
-		!strings.HasPrefix(r.rows[clFirstRow], " S Morning") || !strings.HasPrefix(r.rows[clFirstRow+1], " S Evening") {
+		!strings.HasPrefix(r.rows[clFirstRow], " S   Morning") || !strings.HasPrefix(r.rows[clFirstRow+1], " S   Evening") {
 		t.Errorf("two selected: open %d, message %q, rows %q, %q", r.c.open, r.rows[22], r.rows[clFirstRow], r.rows[clFirstRow+1])
 	}
 
-	// PF4 changes the checklist selected, or else the one under the
-	// cursor, on the bottom row.
-	r.key(go3270.AIDPF4, clFirstRow, map[string]string{"sel:1": "", "sel:2": "S"})
-	if r.c.editing != 2 || r.rows[21] != " Change name ===> Evening" || r.crow != 21 {
-		t.Fatalf("PF4 with Evening selected: editing %d, row 21 %q, cursor row %d", r.c.editing, r.rows[21], r.crow)
+	// PF4 on the list only says how to change a name.
+	r.key(go3270.AIDPF4, clFirstRow, map[string]string{"sel:1": "", "sel:2": ""})
+	if r.c.editing != 0 || !strings.Contains(r.rows[22], "Type over a name") {
+		t.Errorf("PF4 on the list: editing %d, message %q", r.c.editing, r.rows[22])
 	}
-	r.key(go3270.AIDPF3, 0, map[string]string{"name:2": "nope"})
-	if r.c.editing != 0 || r.lists()[1].Name != "Evening" {
-		t.Errorf("PF3 while renaming: editing %d, name %q; want cancelled", r.c.editing, r.lists()[1].Name)
-	}
-	r.key(go3270.AIDPF4, clFirstRow, nil)
+
+	// A rename is confirmed before it is saved; Enter is not confirmation.
 	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": "Mornings"})
-	if r.c.open != 0 || r.lists()[0].Name != "Mornings" {
-		t.Errorf("rename: open %d, lists %+v", r.c.open, r.lists())
+	text := strings.Join(r.rows, "\n")
+	if r.c.held == nil || r.lists()[0].Name != "Morning" {
+		t.Fatalf("rename: confirming %v, lists %+v; want asked, not saved", r.c.held != nil, r.lists())
 	}
-	r.key(go3270.AIDPF4, 21, nil)
-	if !strings.Contains(r.rows[22], "Type S beside a checklist, or put the cursor on one, then press PF4.") {
-		t.Errorf("PF4 off the list: message %q", r.rows[22])
+	for _, want := range []string{"Rename 1 checklist?", "Rename Morning to Mornings", "PF4=Save"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rename confirmation lacks %q:\n%s", want, text)
+		}
+	}
+	r.key(go3270.AIDEnter, 0, nil)
+	if r.c.held == nil || r.lists()[0].Name != "Morning" {
+		t.Errorf("Enter on the confirmation saved or left it")
+	}
+	// PF3 goes back with the name still typed; Enter asks again.
+	r.key(go3270.AIDPF3, 0, nil)
+	if r.c.held != nil || r.lists()[0].Name != "Morning" || !strings.HasPrefix(r.rows[clFirstRow], "     Mornings") {
+		t.Errorf("PF3 on the confirmation: confirming %v, saved %q, row %q; want back with the name typed",
+			r.c.held != nil, r.lists()[0].Name, r.rows[clFirstRow])
+	}
+	r.key(go3270.AIDEnter, 0, nil)
+	if r.c.held == nil {
+		t.Fatalf("Enter with the rename still typed did not ask again")
+	}
+	r.key(go3270.AIDPF4, 0, nil)
+	if r.c.held != nil || r.lists()[0].Name != "Mornings" || !strings.Contains(r.rows[22], "Renamed 1 checklist.") {
+		t.Errorf("PF4 on the confirmation: lists %+v, message %q", r.lists(), r.rows[22])
+	}
+	// PF12 discards everything typed with it, star and all.
+	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": "Nope", "star:2": "*"})
+	r.key(go3270.AIDPF12, 0, nil)
+	if l := r.lists(); r.c.held != nil || l[0].Name != "Mornings" || l[1].Active || !strings.HasPrefix(r.rows[clFirstRow], "     Mornings") {
+		t.Errorf("PF12 on the confirmation: lists %+v, row %q", l, r.rows[clFirstRow])
 	}
 
 	// PF10 and PF11 move the checklist selected or under the cursor, with
@@ -164,7 +189,7 @@ func TestChecklistList(t *testing.T) {
 		t.Errorf("PF11: %q, %q, cursor row %d", l[0].Name, l[1].Name, r.crow)
 	}
 	r.key(go3270.AIDPF10, 0, map[string]string{"sel:1": "S"})
-	if l := r.lists(); l[0].Name != "Mornings" || r.crow != clFirstRow || !strings.HasPrefix(r.rows[clFirstRow], "   Mornings ") || !strings.HasSuffix(r.rows[clFirstRow], " 0/0") {
+	if l := r.lists(); l[0].Name != "Mornings" || r.crow != clFirstRow || !strings.HasPrefix(r.rows[clFirstRow], "     Mornings ") || !strings.HasSuffix(r.rows[clFirstRow], " 0/0") {
 		t.Errorf("PF10 with Mornings selected: first %q, cursor row %d, row %q", l[0].Name, r.crow, r.rows[clFirstRow])
 	}
 	r.key(go3270.AIDPF10, clFirstRow, nil)
@@ -172,15 +197,160 @@ func TestChecklistList(t *testing.T) {
 		t.Errorf("PF10 at the top: message %q", r.rows[22])
 	}
 
-	// Blanking a name removes the checklist.
-	r.key(go3270.AIDPF4, clFirstRow, nil)
-	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": ""})
-	if l := r.lists(); len(l) != 1 || l[0].Name != "Evening" || !strings.Contains(r.rows[22], "Removed 1 checklist.") {
+	// Blanking a name removes the checklist, once confirmed, with what was
+	// typed alongside: a checklist added and one renamed.
+	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": "", "name:2": "Evenings", clNewField: "Noon"})
+	text = strings.Join(r.rows, "\n")
+	for _, want := range []string{"Rename 1 checklist and remove 1 checklist?", "Remove Mornings (0 items, 0 done)", "Rename Evening to Evenings"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("remove confirmation lacks %q:\n%s", want, text)
+		}
+	}
+	r.key(go3270.AIDPF4, 0, nil)
+	if l := r.lists(); len(l) != 2 || l[0].Name != "Evenings" || l[1].Name != "Noon" ||
+		!strings.Contains(r.rows[22], "Renamed 1 checklist. Removed 1 checklist.") {
 		t.Errorf("remove: lists %+v, message %q", l, r.rows[22])
 	}
 
-	if !r.key(go3270.AIDPF3, 0, nil) {
-		t.Errorf("PF3 on the list did not leave")
+	// Enter on a name typed over, with nothing selected, asks first, then
+	// saves it and stays on the list.
+	r.keyAt(go3270.AIDEnter, clFirstRow, 5, map[string]string{"name:2": "Evenings!"})
+	if r.c.held == nil || r.c.open != 0 {
+		t.Fatalf("Enter on a renamed name: confirming %v, open %d; want asked first", r.c.held != nil, r.c.open)
+	}
+	r.key(go3270.AIDPF4, 0, nil)
+	if r.c.open != 0 || r.lists()[0].Name != "Evenings!" {
+		t.Errorf("PF4 after Enter on a name: open %d, lists %+v", r.c.open, r.lists())
+	}
+	// With it selected too, PF4 saves it, then opens it.
+	r.keyAt(go3270.AIDEnter, clFirstRow, 5, map[string]string{"name:2": "Evenings", "sel:2": "X"})
+	r.key(go3270.AIDPF4, 0, nil)
+	if r.c.open != 2 || r.lists()[0].Name != "Evenings" || !strings.HasPrefix(r.rows[clHeaderRow], " Evenings ") {
+		t.Errorf("PF4 after Enter with a renamed checklist selected: open %d, lists %+v, header %q", r.c.open, r.lists(), r.rows[clHeaderRow])
+	}
+	r.key(go3270.AIDPF3, 0, nil)
+	// PF12 discards the rename, and opens nothing.
+	r.keyAt(go3270.AIDEnter, clFirstRow, 5, map[string]string{"name:2": "nope", "sel:2": "X"})
+	r.key(go3270.AIDPF12, 0, nil)
+	if r.c.open != 0 || r.lists()[0].Name != "Evenings" {
+		t.Errorf("PF12 after Enter on a name: open %d, lists %+v", r.c.open, r.lists())
+	}
+	// A checklist selected with its name blanked is removed once
+	// confirmed, and not opened.
+	r.keyAt(go3270.AIDEnter, clFirstRow+1, 5, map[string]string{"name:3": "", "sel:3": "X"})
+	r.key(go3270.AIDPF4, 0, nil)
+	if l := r.lists(); r.c.open != 0 || len(l) != 1 || r.c.isError {
+		t.Errorf("Enter with a blanked name selected, confirmed: open %d, lists %+v, message %q", r.c.open, l, r.rows[22])
+	}
+
+	// PF3 with nothing typed but a selection goes straight back.
+	if !r.key(go3270.AIDPF3, 0, map[string]string{"sel:2": "S"}) || r.c.held != nil {
+		t.Errorf("PF3 with only a selection typed did not leave")
+	}
+}
+
+// TestChecklistBackUnsaved checks that PF3 with anything typed asks whether
+// to save it before going back.
+func TestChecklistBackUnsaved(t *testing.T) {
+	r := newChecklistRig(t)
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "Trip"})
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "Gym"})
+
+	// On the list: a star, a rename and a checklist to add.
+	typed := map[string]string{"star:1": "*", "name:2": "Gym bag", clNewField: "Work"}
+	if r.key(go3270.AIDPF3, 0, typed) || r.c.held == nil {
+		t.Fatalf("PF3 with changes typed left, or did not ask")
+	}
+	text := strings.Join(r.rows, "\n")
+	for _, want := range []string{"SAVE CHANGES", "Save these changes before going back?", "Star Trip", "Rename Gym to Gym bag", "Add Work", "PF12=Discard"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("confirmation lacks %q:\n%s", want, text)
+		}
+	}
+	// PF3 there returns to the list with it all still typed.
+	if r.key(go3270.AIDPF3, 0, nil) || r.c.held != nil || !strings.HasPrefix(r.rows[clFirstRow], "   * Trip") ||
+		!strings.HasPrefix(r.rows[clFirstRow+1], "     Gym bag") || !strings.HasPrefix(r.rows[clFirstRow+2], "     Work") {
+		t.Errorf("PF3 on the confirmation: rows %q, %q, %q", r.rows[clFirstRow], r.rows[clFirstRow+1], r.rows[clFirstRow+2])
+	}
+	if l := r.lists(); len(l) != 2 || l[0].Active || l[1].Name != "Gym" {
+		t.Errorf("PF3 on the confirmation saved: %+v", l)
+	}
+	// PF12 discards it and goes back.
+	r.key(go3270.AIDPF3, 0, nil)
+	if !r.key(go3270.AIDPF12, 0, nil) {
+		t.Errorf("PF12 on the confirmation did not go back")
+	}
+	if l := r.lists(); len(l) != 2 || l[0].Active || l[1].Name != "Gym" {
+		t.Errorf("PF12 saved: %+v", l)
+	}
+	// PF4 saves it and goes back.
+	r = newChecklistRigOn(t, r.store)
+	r.key(go3270.AIDPF3, 0, typed)
+	if !r.key(go3270.AIDPF4, 0, nil) {
+		t.Errorf("PF4 on the confirmation did not go back")
+	}
+	if l := r.lists(); len(l) != 3 || !l[0].Active || l[1].Name != "Gym bag" || l[2].Name != "Work" {
+		t.Errorf("PF4 did not save it all: %+v", l)
+	}
+
+	// On a checklist, a mark and an item typed; PF12 goes back to the list
+	// without them.
+	r = newChecklistRigOn(t, r.store)
+	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "passport"})
+	id := r.lists()[0].Items[0].ID
+	typed = map[string]string{fmt.Sprint(clDoneField, id): "X", clNewField: "charger"}
+	r.key(go3270.AIDPF3, 0, typed)
+	text = strings.Join(r.rows, "\n")
+	if r.c.held == nil || !strings.Contains(text, "Check passport") || !strings.Contains(text, "Add charger") {
+		t.Fatalf("PF3 on a checklist with changes typed:\n%s", text)
+	}
+	if r.key(go3270.AIDPF12, 0, nil) || r.c.open != 0 || len(r.lists()[0].Items) != 1 || r.lists()[0].Items[0].Done {
+		t.Errorf("PF12: open %d, items %+v; want back on the list, nothing saved", r.c.open, r.lists()[0].Items)
+	}
+	// PF4 saves them and goes back to the list.
+	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
+	r.key(go3270.AIDPF3, 0, typed)
+	if r.key(go3270.AIDPF4, 0, nil) || r.c.open != 0 || len(r.lists()[0].Items) != 2 || !r.lists()[0].Items[0].Done {
+		t.Errorf("PF4: open %d, items %+v; want back on the list, both saved", r.c.open, r.lists()[0].Items)
+	}
+	// A bad mark is shown; PF4 then leaves it on the checklist to fix.
+	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
+	r.key(go3270.AIDPF3, 0, map[string]string{fmt.Sprint(clDoneField, id): "y"})
+	if text := strings.Join(r.rows, "\n"); !strings.Contains(text, `not "y"`) {
+		t.Errorf("bad mark not shown on the confirmation:\n%s", text)
+	}
+	r.key(go3270.AIDPF4, 0, nil)
+	if r.c.open != 1 || !r.c.isError || !strings.HasPrefix(r.rows[clFirstRow], " y passport") {
+		t.Errorf("PF4 with a bad mark: open %d, message %q, row %q", r.c.open, r.rows[22], r.rows[clFirstRow])
+	}
+	// Put back as saved, it is nothing typed: PF3 goes straight back.
+	r.key(go3270.AIDPF3, 0, map[string]string{fmt.Sprint(clDoneField, id): "X"})
+	if r.c.open != 0 || r.c.held != nil {
+		t.Errorf("PF3 with nothing typed: open %d, asking %v", r.c.open, r.c.held != nil)
+	}
+}
+
+// TestChecklistListPages checks that the blank row for adding follows the
+// last checklist, on a page of its own if need be.
+func TestChecklistListPages(t *testing.T) {
+	r := newChecklistRig(t)
+	perPage := checklistRows(24) + 1
+	for i := range perPage {
+		r.key(go3270.AIDEnter, 0, map[string]string{clNewField: fmt.Sprint("list ", i+1)})
+	}
+	if r.c.listPage != 1 || r.crow != clFirstRow || r.rows[clFirstRow] != "" || !strings.Contains(r.rows[clHeaderRow], "page 2/2") {
+		t.Errorf("a full page: page %d, cursor row %d, header %q; want the blank row alone on page 2", r.c.listPage, r.crow, r.rows[clHeaderRow])
+	}
+	r.key(go3270.AIDPF7, 0, nil)
+	last := clFirstRow + perPage - 1
+	if !strings.HasPrefix(r.rows[last], fmt.Sprint("     list ", perPage)) || r.rows[last+1] != "" {
+		t.Errorf("page 1 ends %q, %q", r.rows[last], r.rows[last+1])
+	}
+	for _, f := range r.screen {
+		if f.Name == clNewField {
+			t.Errorf("page 1 has the blank row for adding: %+v", f)
+		}
 	}
 }
 
@@ -354,7 +524,6 @@ func TestChecklistLongText(t *testing.T) {
 	r := newChecklistRig(t)
 	long := strings.Repeat("abcdefghij", 12)
 	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: long})
-	r.key(go3270.AIDPF4, clFirstRow, nil)
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
 	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: long})
 	r.key(go3270.AIDPF4, clFirstRow, nil)
@@ -488,8 +657,8 @@ func TestChecklistStars(t *testing.T) {
 
 	// Starring C and B moves them to the top, in their own order, with the
 	// star shown and the name red or green by whether everything is done.
-	// Typing a star, with the cursor in that column, does not open it.
-	r.keyAt(go3270.AIDEnter, clFirstRow+2, 1, map[string]string{"sel:3": "*", "sel:2": "*"})
+	// Any character stars; typing one does not open the checklist.
+	r.keyAt(go3270.AIDEnter, clFirstRow+2, 3, map[string]string{"star:3": "*", "star:2": "x"})
 	if r.c.open != 0 {
 		t.Fatalf("starring opened %d", r.c.open)
 	}
@@ -499,31 +668,34 @@ func TestChecklistStars(t *testing.T) {
 	if !r.lists()[1].Active || r.lists()[1].Name != "B" {
 		t.Errorf("stars are not saved in place: %+v", r.lists())
 	}
-	if f := field(clFirstRow, clItemCol); f.Content != "B" || f.Color != go3270.Red {
+	// The star is in its own column, the selection column left blank.
+	if !strings.HasPrefix(r.rows[clFirstRow], "   * B ") || field(clFirstRow, 0).Content != "" || field(clFirstRow, clStarCol).Content != "*" {
+		t.Errorf("starred B's row is %q; want the star in column 3 and nothing to select", r.rows[clFirstRow])
+	}
+	if f := field(clFirstRow, clNameCol); f.Content != "B" || f.Color != go3270.Red {
 		t.Errorf("starred B, not done, is %+v; want red", f)
 	}
-	if f := field(clFirstRow+1, clItemCol); f.Content != "C" || f.Color != go3270.Green {
+	if f := field(clFirstRow+1, clNameCol); f.Content != "C" || f.Color != go3270.Green {
 		t.Errorf("starred C, all done, is %+v; want green", f)
 	}
-	if f := field(clFirstRow+2, clItemCol); f.Color != go3270.Turquoise {
+	if f := field(clFirstRow+2, clNameCol); f.Color != go3270.Turquoise {
 		t.Errorf("unstarred A is %v; want turquoise", f.Color)
 	}
 
-	// A starred checklist is opened by selecting it over its star, which
-	// stays, or by Enter in its column.
+	// A starred checklist is opened by selecting it, which leaves its star,
+	// and not by Enter in its column with nothing typed.
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:3": "S"})
 	if r.c.open != 3 {
-		t.Errorf("S over C's star opened %d", r.c.open)
+		t.Errorf("S beside C's star opened %d", r.c.open)
 	}
 	r.key(go3270.AIDPF3, 0, nil)
 	if !r.lists()[2].Active {
 		t.Errorf("selecting C unstarred it")
 	}
 	r.keyAt(go3270.AIDEnter, clFirstRow, 1, nil)
-	if r.c.open != 2 {
+	if r.c.open != 0 {
 		t.Errorf("Enter in B's column opened %d", r.c.open)
 	}
-	r.key(go3270.AIDPF3, 0, nil)
 
 	// Starred checklists cannot be moved; an unstarred one moves past them.
 	r.key(go3270.AIDPF11, clFirstRow, nil)
@@ -541,11 +713,11 @@ func TestChecklistStars(t *testing.T) {
 	r.key(go3270.AIDPF10, clFirstRow+3, nil)
 
 	// Unstarring puts a checklist back where it was.
-	r.key(go3270.AIDEnter, 0, map[string]string{"sel:3": ""})
+	r.key(go3270.AIDEnter, 0, map[string]string{"star:3": ""})
 	if got := fmt.Sprint(names()); got != "[*B A C D]" {
 		t.Errorf("after unstarring C: order %s", got)
 	}
-	r.key(go3270.AIDEnter, 0, map[string]string{"sel:2": ""})
+	r.key(go3270.AIDEnter, 0, map[string]string{"star:2": ""})
 	if got := fmt.Sprint(names()); got != "[A B C D]" {
 		t.Errorf("after unstarring B: order %s", got)
 	}

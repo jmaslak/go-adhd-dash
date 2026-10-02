@@ -25,15 +25,6 @@ func calcFloat(f float64) calcValue { return calcValue{f: f} }
 func (v calcValue) isInt() bool     { return v.i != nil }
 func (v calcValue) isZero() bool    { return (v.isInt() && v.i.Sign() == 0) || (!v.isInt() && v.f == 0) }
 func (v calcValue) String() string  { return v.decimal() }
-func (v calcValue) equal(w calcValue) bool {
-	if v.isInt() != w.isInt() {
-		return false
-	}
-	if v.isInt() {
-		return v.i.Cmp(w.i) == 0
-	}
-	return v.f == w.f
-}
 
 // float is v as a float, which may be infinite for a huge integer.
 func (v calcValue) float() float64 {

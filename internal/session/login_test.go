@@ -3,10 +3,10 @@ package session
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,7 +74,7 @@ func TestLoginScreen(t *testing.T) {
 		}
 		b := bands[r-2]
 		want := []go3270.Color{b, b, b, b, go3270.White, go3270.Yellow, go3270.Yellow, go3270.Yellow, go3270.Yellow}
-		if fmt.Sprint(got) != fmt.Sprint(want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("banner row %d colors %v, want %v", r, got, want)
 		}
 	}

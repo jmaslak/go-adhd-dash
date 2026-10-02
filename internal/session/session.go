@@ -227,9 +227,20 @@ func Handle(rawConn net.Conn, cfg Config) {
 	if consoleLoggedIn {
 		cfg.Audit.Record(audit.Login, auditFields(auditName(user))...)
 	}
+	// tint colors screen's title row for the busy indicator, on every
+	// screen but the login screen, unless the user is restricted.
+	tint := func(screen go3270.Screen) go3270.Screen {
+		if mode == modeLogin || (user != nil && user.Restricted) {
+			return screen
+		}
+		if color, ok := headerColor(cfg.Busy); ok {
+			return tintTitle(screen, rows, cols, color)
+		}
+		return screen
+	}
 	// bye leaves text on the terminal as the session disconnects.
 	bye := func(text string) {
-		_, _ = go3270.ShowScreenOpts(sanitizeScreen(buildFarewell(cols, time.Now(), text), cp), nil, conn, go3270.ScreenOpts{
+		_, _ = go3270.ShowScreenOpts(sanitizeScreen(tint(buildFarewell(cols, time.Now(), text)), cp), nil, conn, go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, NoResponse: true,
 		})
 	}
@@ -394,6 +405,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
 		}
+
+		screen = tint(screen)
 
 		// A timed redraw of the dashboard, calendar, chat or activity viewer
 		// writes over the screen without erasing it, and leaves the input

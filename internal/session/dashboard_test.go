@@ -51,18 +51,22 @@ func screenText(t *testing.T, s go3270.Screen, rows, cols int) []string {
 		if f.Row < 0 || f.Row >= rows || f.Col < 0 || f.Col >= cols {
 			t.Fatalf("field off screen: %+v", f)
 		}
+		// As on a terminal, a field running off the last row wraps to the
+		// first, but no further.
 		start := f.Row*cols + f.Col
 		end := start + 1 + utf8.RuneCountInString(f.Content)
-		if end > len(buf) {
+		if end > 2*len(buf) || (end > len(buf) && end-len(buf) > start) {
 			t.Fatalf("field runs off the screen: row %d col %d %q", f.Row, f.Col, f.Content)
 		}
 		for a := start; a < end; a++ {
-			if used[a] {
-				t.Fatalf("field overlaps another at row %d col %d: %q", a/cols, a%cols, f.Content)
+			if used[a%len(buf)] {
+				t.Fatalf("field overlaps another at row %d col %d: %q", a%len(buf)/cols, a%cols, f.Content)
 			}
-			used[a] = true
+			used[a%len(buf)] = true
 		}
-		copy(buf[start+1:], []rune(f.Content))
+		for i, r := range []rune(f.Content) {
+			buf[(start+1+i)%len(buf)] = r
+		}
 	}
 	out := make([]string, rows)
 	for i := range out {
@@ -494,3 +498,88 @@ func TestDashboardTaskFetchStatus(t *testing.T) {
 		t.Errorf("stale tasks should still be listed, noted as stale:\n%s", text)
 	}
 }
+
+func TestTintTitle(t *testing.T) {
+	// A screen with nothing at the start of row 1: a field is added to end
+	// the title there, and the help line is cut short of the last column.
+	screen, _, _ := buildAdmin(24, 80, now, "", false, 1)
+	screen = append(screen, go3270.Field{Row: 23, Col: 40, Content: strings.Repeat("x", 39)})
+	plain := screenText(t, screen, 24, 80)
+	tinted := tintTitle(screen, 24, 80, go3270.Red)
+	rows := screenText(t, tinted, 24, 80)
+	if rows[0] != plain[0] {
+		t.Errorf("title row %q, want %q", rows[0], plain[0])
+	}
+	if want := plain[23][:78] + ">"; rows[23] != want {
+		t.Errorf("last row %q, want %q", rows[23], want)
+	}
+	title := tinted[len(tinted)-1]
+	if title.Row != 23 || title.Col != 79 || len(title.Content) != 80 || title.Color != go3270.Red || title.Highlighting != go3270.ReverseVideo {
+		t.Errorf("title field %+v", title)
+	}
+	ended := false
+	for _, f := range tinted {
+		if f.Row == 0 && f.Col < 79 {
+			t.Errorf("title field left behind: %+v", f)
+		}
+		ended = ended || (f.Row == 1 && f.Col == 0)
+	}
+	if !ended {
+		t.Error("nothing ends the title at the start of row 1")
+	}
+
+	// The dashboard's busy banner, the same color, has its attribute byte
+	// in row 0's last column: it becomes part of the title's field, which
+	// then runs over both rows.
+	v := sampleView(3)
+	v.Busy.Light = "red"
+	screen, _, _, _ = buildDashboard(24, 80, v, 0, "")
+	tinted = tintTitle(screen, 24, 80, go3270.Red)
+	rows = screenText(t, tinted, 24, 80)
+	if title := tinted[len(tinted)-1]; len(title.Content) != 160 || !strings.HasPrefix(rows[0], " EXECUTIVE FUNCTION DASHBOARD") {
+		t.Errorf("dashboard title %q, row %q", title.Content, rows[0])
+	}
+	if !strings.Contains(rows[1], "IN MEETING") {
+		t.Errorf("banner row %q", rows[1])
+	}
+	for _, f := range tinted {
+		if f.Row == 0 && f.Col == 79 {
+			t.Errorf("banner field left in row 0: %+v", f)
+		}
+	}
+	// A timed redraw of it still covers the whole screen.
+	filled := fillScreen(tinted, 24, 80)
+	screenText(t, filled, 24, 80)
+
+	// A banner another color, as when the state changed between reading
+	// it for the banner and for the title, is left as it is.
+	tinted = tintTitle(screen, 24, 80, go3270.Green)
+	if title := tinted[len(tinted)-1]; len(title.Content) != 79 {
+		t.Errorf("title over a banner another color is %d long", len(title.Content))
+	}
+}
+
+func TestHeaderColor(t *testing.T) {
+	for _, c := range []struct {
+		status busy.Status
+		color  go3270.Color
+		ok     bool
+	}{
+		{busy.Status{Connected: true, Light: "red"}, go3270.Red, true},
+		{busy.Status{Connected: true, Light: "green"}, go3270.Green, true},
+		{busy.Status{Connected: true, Light: "off"}, 0, false},
+		{busy.Status{Connected: false, Light: "red"}, 0, false},
+	} {
+		if color, ok := headerColor(staticBusy(c.status)); color != c.color || ok != c.ok {
+			t.Errorf("%+v: %v %v", c.status, color, ok)
+		}
+	}
+	if _, ok := headerColor(nil); ok {
+		t.Error("no indicator tinted")
+	}
+}
+
+// staticBusy is a busy indicator always in one state.
+type staticBusy busy.Status
+
+func (s staticBusy) Status() busy.Status { return busy.Status(s) }
