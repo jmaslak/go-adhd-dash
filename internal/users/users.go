@@ -42,6 +42,10 @@ type User struct {
 	// login screen.
 	Console bool `json:"console,omitempty"`
 
+	// Flag is set for a user who controls the busy light: their calendar's
+	// meetings light it, and they can set it by hand.
+	Flag bool `json:"flag,omitempty"`
+
 	Password string `json:"password"` // Argon2id, in PHC string format
 
 	// Google is the user's connected Google calendar; nil for none.
@@ -173,12 +177,12 @@ func NewStore(path string) *Store {
 }
 
 // DefaultPath is where the users are kept unless told otherwise:
-// .adhd-dash-users.json in the home directory.
+// adhd-dash-users.json in the home directory.
 func DefaultPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".adhd-dash-users.json")
+		return filepath.Join(home, "adhd-dash-users.json")
 	}
-	return ".adhd-dash-users.json"
+	return "adhd-dash-users.json"
 }
 
 // Path is the file the Store keeps.
@@ -347,7 +351,8 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 
 // Validate reports why list is not a valid set of users: a name empty,
 // holding a space, or used twice (ignoring case), a user both an admin and
-// restricted, no admin, or not exactly one user the console's.
+// restricted, or both restricted and controlling the busy light, no admin,
+// or not exactly one user the console's.
 func Validate(list []User) error {
 	seen := map[string]bool{}
 	admins, consoles := 0, 0
@@ -366,6 +371,9 @@ func Validate(list []User) error {
 		}
 		if u.Admin && u.Restricted {
 			return fmt.Errorf("%s cannot be both an admin and restricted", u.Name)
+		}
+		if u.Flag && u.Restricted {
+			return fmt.Errorf("%s cannot both control the busy light and be restricted", u.Name)
 		}
 		if u.Admin {
 			admins++

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,13 +42,17 @@ type Config struct {
 	// Tests replace it.
 	TrelloBaseURL string
 
-	// Busy supplies the busy indicator's status; nil when none is
-	// configured.
+	// Busy supplies the busy light's status; nil for none.
 	Busy busy.Source
 
-	// BusyControl sends keys to the busy indicator; nil when its control
-	// port is not configured.
-	BusyControl *busy.Control
+	// BusyKeys sets the busy light by hand, for the users who control it
+	// (see users.User.Flag): b busy, g green, o off; nil for none.
+	BusyKeys interface{ Key(rune) error }
+
+	// Personal keeps the busy state of each user who does not control the
+	// light, from their own calendar and keys, shown to them in its place;
+	// nil for none, when they see the light's.
+	Personal *busy.Personal
 
 	// Agenda is a calendar shown to every user, for trying the dashboard
 	// without Google (-agenda-file); nil normally, when each user sees
@@ -234,13 +239,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 	if consoleLoggedIn {
 		cfg.Audit.Record(audit.Login, auditFields(auditName(user))...)
 	}
-	// tint colors screen's title row for the busy indicator, on every
-	// screen but the login screen, unless the user is restricted.
+	// tint colors screen's title row for the user's busy state (see
+	// lightFor), on every screen but the login screen, unless the user is
+	// restricted.
 	tint := func(screen go3270.Screen) go3270.Screen {
 		if mode == modeLogin || (user != nil && user.Restricted) {
 			return screen
 		}
-		if color, ok := headerColor(cfg.Busy); ok {
+		src, _ := cfg.lightFor(user)
+		if color, ok := headerColor(src); ok {
 			return tintTitle(screen, rows, cols, color)
 		}
 		return screen
@@ -300,10 +307,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "checklist":
 			mode, cl = modeChecklist, checklistState{owner: ownerOf(user)}
 		case "busy", "green", "off":
-			if cfg.BusyControl == nil {
-				message = "No busy indicator control port (-busy-control)."
-			} else {
-				message = sendBusyKey(cfg, rune(c.name[0]))
+			if _, keys := cfg.lightFor(user); keys == nil {
+				message = "There is no busy light."
+			} else if err := keys.Key(rune(c.name[0])); err != nil {
+				message = "Could not set the busy light: " + err.Error()
 			}
 		case "auto":
 			autoRefresh = !autoRefresh
@@ -459,8 +466,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildShutdownConfirm(rows, cols, now, cfg.Shutdown.Sessions()), rows-1, 0
 			redrawOnTimer = false
 		default:
-			v := gather(cfg, now, cfg.agendaFor(user), cfg.tasksFor(user), ownerOf(user))
-			v.AutoRefresh, v.BusyControl, v.Message = autoRefresh, cfg.BusyControl != nil, message
+			light, keys := cfg.lightFor(user)
+			v := gather(cfg, now, cfg.agendaFor(user), cfg.tasksFor(user), ownerOf(user), light)
+			v.AutoRefresh, v.BusyKeys, v.Message = autoRefresh, keys != nil, message
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
 		}
@@ -703,7 +711,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 				break
 			}
 			if resp.AID != go3270.AIDEnter {
-				typed = pfCommand(resp.AID, cfg.BusyControl != nil)
+				_, keys := cfg.lightFor(user)
+				typed = pfCommand(resp.AID, keys != nil)
 			}
 			if typed != "" && runCommand(typed) {
 				return
@@ -793,33 +802,73 @@ var pfKeys = map[string]go3270.AID{
 	"PF10": go3270.AIDPF10, "PF11": go3270.AIDPF11,
 }
 
-// busyKeyWait is how long to wait for the indicator's feed to report the
-// change a key caused, so that the redraw after it shows the new state.
-const busyKeyWait = time.Second
+// controlsLight reports whether u controls the busy light, and so can set it
+// by hand: a user marked so, or a console with no user database, which has
+// everything.
+func controlsLight(u *users.User) bool {
+	return u == nil || u.Flag
+}
 
-// sendBusyKey sends key to the busy indicator's control port, then waits
-// for its feed to publish, as it does after every key. It returns a message
-// for the screen when something went wrong, empty otherwise.
-func sendBusyKey(cfg Config, key rune) string {
-	if cfg.BusyControl == nil {
-		return ""
-	}
-	var before time.Time
-	if cfg.Busy != nil {
-		before = cfg.Busy.Status().Updated
-	}
-	if err := cfg.BusyControl.Send(key); err != nil {
-		return "Could not send to busy indicator: " + err.Error()
-	}
-	if cfg.Busy == nil {
-		return ""
-	}
-	for deadline := time.Now().Add(busyKeyWait); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
-		if !cfg.Busy.Status().Updated.Equal(before) {
-			return ""
+// lightFor is the busy state u sees and sets: the light, for a user who
+// controls it, by their entry as it is now; else their own (see Personal).
+// Either is nil for none.
+func (cfg Config) lightFor(u *users.User) (busy.Source, interface{ Key(rune) error }) {
+	if u != nil && cfg.Users != nil {
+		if list, _, err := cfg.Users.Load(); err == nil {
+			if i := slices.IndexFunc(list, func(x users.User) bool { return x.ID == u.ID }); i >= 0 {
+				u = &list[i]
+			}
 		}
 	}
-	return "No change seen from " + cfg.BusyControl.Addr + "."
+	if !controlsLight(u) && cfg.Personal != nil {
+		p := cfg.Personal.For(u.ID)
+		return p, p
+	}
+	if cfg.Busy == nil || cfg.BusyKeys == nil {
+		return cfg.Busy, nil
+	}
+	return cfg.Busy, cfg.BusyKeys
+}
+
+// UserMeetings are the meetings on the calendar of the user with id, by the
+// agenda's rules (no all-day or out-of-office events), for their busy state.
+func (cfg Config) UserMeetings(id int) []agenda.Event {
+	if cfg.Users == nil {
+		return nil
+	}
+	c := cfg.agendaFor(&users.User{ID: id})
+	if c == nil {
+		return nil
+	}
+	var out []agenda.Event
+	for _, e := range c.Snapshot().Events {
+		if isMeeting(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// FlagEvents are the meetings that light the busy light, and how many users
+// control it: those marked so, with each one's calendar's meetings, by the
+// agenda's rules (no all-day or out-of-office events). Reading them keeps
+// their calendars' agendas refreshing, whether or not anyone is looking.
+func (cfg Config) FlagEvents() (meetings []agenda.Event, controllers int) {
+	if cfg.Users == nil {
+		return nil, 0
+	}
+	list, _, err := cfg.Users.Load()
+	if err != nil {
+		return nil, 0
+	}
+	for _, u := range list {
+		if !u.Flag || u.Restricted {
+			continue
+		}
+		controllers++
+		meetings = append(meetings, cfg.UserMeetings(u.ID)...)
+	}
+	return meetings, controllers
 }
 
 // view is everything one redraw shows, gathered up front so that building
@@ -827,12 +876,12 @@ func sendBusyKey(cfg Config, key rune) string {
 type view struct {
 	Now time.Time
 
-	// AutoRefresh is whether the session redraws on its own, BusyControl
+	// AutoRefresh is whether the session redraws on its own, BusyKeys
 	// whether the busy indicator's keys are offered, and Message what the
 	// last key reported; they are the session's, not gathered from a
 	// source.
 	AutoRefresh bool
-	BusyControl bool
+	BusyKeys    bool
 	Message     string
 
 	BusyEnabled bool
@@ -859,13 +908,13 @@ type view struct {
 }
 
 // gather reads the current state of every source: the agenda from
-// agendaCache and the tasks from taskCache, nil for none, and the
-// checklists owner's.
-func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tasks.Cache, owner int) view {
+// agendaCache, the tasks from taskCache and the busy state from light, nil
+// for none, and the checklists owner's.
+func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tasks.Cache, owner int, light busy.Source) view {
 	v := view{Now: now}
-	if cfg.Busy != nil {
-		v.BusyEnabled = true
-		v.Busy = cfg.Busy.Status()
+	if light != nil {
+		v.Busy = light.Status()
+		v.BusyEnabled = v.Busy.Enabled
 	}
 	if agendaCache != nil {
 		v.AgendaEnabled = true

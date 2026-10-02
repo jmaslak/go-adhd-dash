@@ -3,8 +3,9 @@
 `adhd-dash` serves a dashboard to TN3270 (mainframe) terminal clients. One
 screen shows:
 
-- the **busy indicator**: whether the light is red, green or off, from
-  [go-busy-indicator](../go-busy-indicator)'s WebSocket status feed, and,
+- the **busy light**: whether it is red, green or off, as this server
+  drives the Luxafor flags attached to it (see [Busy light](#busy-light)),
+  and,
   for a user with a calendar connected, their meeting under way or how long
   until their next one (or "No meetings in next 24 hours");
 - the **agenda**: every meeting under way or starting in the next 24 hours,
@@ -25,12 +26,49 @@ shows `AUTO-REFRESH` while it is on.
 
 ```
 go build -o adhd-dash .
-./adhd-dash -busy-url ws://localhost:3334/feed
+./adhd-dash
 ```
 
 Then connect a TN3270 emulator (c3270, x3270, s3270, ...) to `host:port`.
 Any screen size the client reports is used: Model 2's 24x80 up through
 Model 5's 27x132 or larger.
+
+The three files are kept in the home directory, under names `ls` shows.
+They were once dotfiles (`~/.adhd-dash-users.json` and so on): at startup,
+a file left at its default name that is missing, where its old dotfile is
+there, is given the dotfile, renamed, and the server logs it. With both,
+the new one is used and the old one left alone.
+
+### Installing on Ubuntu
+
+`install-ubuntu.sh` installs the server as a systemd service. Run again,
+it reinstalls it, to upgrade or repair it, and restarts it on the new
+program; the program is replaced while the old one runs, so a failure on
+the way leaves the server running, and the restart comes only once all is
+in place:
+
+```
+sudo ./install-ubuntu.sh                      # builds it here, with Go 1.27+
+sudo ./install-ubuntu.sh --binary adhd-dash   # or one built elsewhere:
+                                              # GOOS=linux GOARCH=amd64 go build
+```
+
+It makes a system user, `adhd-dash`, whose home, `/var/lib/adhd-dash`,
+holds the server's files; installs `/usr/local/bin/adhd-dash`; writes the
+options to `/etc/default/adhd-dash` the first time only (`--host`, `--port`
+and `--http-port` set them then; by default only this machine can
+connect); writes a sandboxed systemd unit, restarting the server only
+after a failure (shutting it down from the admin menu stops it); and
+enables and starts it. Logs go to the journal: `journalctl -u adhd-dash`.
+
+It also writes `/etc/udev/rules.d/60-adhd-dash.rules`, giving the server's
+user the Luxafor flag and the Stream Deck Mini, and first sets aside any
+other rules for them, which would fight over their permissions: files of
+nothing but such rules are moved to `/var/backups/adhd-dash-<date>/`, and in
+files with other rules too, those rules are commented out (a copy goes to
+the same place). Busy-indicator's old usbhid quirk
+(`/etc/modprobe.d/luxafor.conf`), which leaves the flag no `/dev/hidraw`
+node, is set aside likewise; the flag must then be plugged in again.
 
 ### Flags
 
@@ -39,28 +77,29 @@ Model 5's 27x132 or larger.
 | `-host` | `localhost` | address to listen on |
 | `-port` | `3270` | TCP port to listen on |
 | `-refresh` | `10s` | how often an idle screen is redrawn |
-| `-busy-url` | (none) | busy indicator feed, `ws://host:port/feed` |
-| `-busy-file` | (none) | read the busy status from a JSON file instead of a feed |
-| `-busy-control` | `localhost:3333` | busy indicator UDP control port, `host:port` (its `--port`), for `PF1` / `PF2`; empty to turn them off |
+| `-flag` | `true` | drive the Luxafor flags attached to this machine as the busy light; `-flag=false` for none (`-externalrgb` and the banner still work) |
+| `-streamdeck` | `true` | use a Stream Deck Mini attached to this machine as the busy light's buttons (see [Busy light](#busy-light)); `-streamdeck=false` for none |
+| `-control-port` | `0` (none) | UDP port, on `-host`, for go-busy-indicator's `busy` command to set the busy light; unauthenticated, so firewall it |
+| `-externalrgb` | (none) | command run with red, green and blue arguments (0–255) at each change of the busy light's color |
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
-| `-checklist-file` | `~/.adhd-dash-checklists.json` | JSON file the checklists are kept in |
-| `-users-file` | `~/.adhd-dash-users.json` | JSON file the users are kept in |
+| `-checklist-file` | `~/adhd-dash-checklists.json` | JSON file the checklists are kept in |
+| `-users-file` | `~/adhd-dash-users.json` | JSON file the users are kept in |
 | `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
 | `-max-connections-per-ip` | `16` | most open at once from one address (an IPv6 one by its /64); `0` for no limit |
 | `-login-timeout` | `60s` | how long the login screen waits for a login |
-| `-audit-log` | `~/.adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
+| `-audit-log` | `~/adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
 
-Leaving `-busy-url` empty leaves that section showing "not configured"
-rather than failing. The calendars are each user's own, chosen with the
+The calendars are each user's own, chosen with the
 `google` command and kept in `-users-file`; a user with none sees no
 calendar information at all.
 
 ## Keys
 
-- `PF1` / `PF2`: set the busy indicator to busy / turn it off until the
-  next meeting, as `busy b` / `busy o` do (not offered with `-busy-control=`)
+- `PF1` / `PF2`: mark yourself busy (red) / not busy until the meetings
+  under way end: the busy light, for a user who controls it, else your own
+  busy state (see [Busy light](#busy-light))
 - `PF4`: calculator
 - `PF5`: turn auto-refresh off / on (on at connect)
 - `PF7` / `PF8`: previous / next page of tasks
@@ -152,8 +191,8 @@ random salt), in PHC string format, so the parameters can be raised later
 without breaking the hashes already stored.
 
 Admin menu option `4` lists the users, a page at a time (`PF7` / `PF8`),
-each with a one-character command field and `Admin`, `Restricted` and
-`Console` fields:
+each with a one-character command field and `Admin`, `Restricted`,
+`Console` and `Flag` fields:
 
 - type `D` beside a user to delete them (a confirmation lists them first,
   and saves nothing until `PF4`; `PF3` goes back with what was typed left
@@ -168,6 +207,9 @@ each with a one-character command field and `Admin`, `Restricted` and
   `Restricted` to restrict them or not (see below);
 - type `Y` under `Console` to make a user the one the console logs in as
   (see below), taking it from whoever had it;
+- type `Y` or `N` under `Flag` for a user to control the busy light or
+  not: their calendar's meetings light it, and they can set it by hand
+  (see [Busy light](#busy-light)). A restricted user cannot;
 - on the bottom rows, type a new user's name, `Y` or `N` for `Admin` and
   `Restricted` (blank is `N`), and their password, to add them. There is
   no room there for `Console`: add the user, then type `Y` on their row.
@@ -405,40 +447,80 @@ each other's work, except where both typed over the same entry.
 
 ## Where the data comes from
 
-### Busy indicator
+### Busy light
 
-Run `busy-indicator` with `--ws-port=<port>` and point `-busy-url` at
-`ws://<host>:<port>/feed`. The busy indicator's feed listens on localhost
-unless it is also given `--ws-host`, e.g. `--ws-host=0.0.0.0`, so
-`adhd-dash` on another machine needs that (the feed is unauthenticated,
-so firewall it) or a tunnel.
+The server drives the Luxafor flags attached to its machine itself, with
+go-busy-indicator's logic brought in (`busy-indicator` is no longer needed,
+and should not run beside it, or the two will fight over the flag). The
+light is lit by the users marked with `Y` under `Flag` in the user editor:
 
-The indicator publishes on its own `--interval` (60 seconds by default). Its
-`minutes-to-next` counts to its own owner's calendar, so the dashboard does
-not show it: the line under the light is the user's own next meeting, from
-their calendar, and is blank for a user with none. A dropped feed is
-redialed every 5 seconds; while it is down the screen says so and shows the
-last state received.
+- **red** from two minutes before one of their meetings to two minutes
+  after, by their calendar's agenda (see [Agenda](#agenda)): all-day and
+  out-of-office events do not count, nor do meetings of more than four hours
+  (day-blockers) or under two minutes (spam);
+- set by hand by any of those users: `busy` (`red`, `PF1`) forces it red,
+  `green` forces it green, until another of these; `off` (`PF2`) turns it
+  off until the meetings under way end. On `-control-port`, `KEY b`,
+  `KEY g`, `KEY o` and `KEY .` do the same (`.` decides afresh), as
+  go-busy-indicator's `busy` command sends them; anything else is ignored.
+
+Every other user has a **busy state of their own**, by the same rules from
+their own calendar, and set by their own `busy`, `green` and `off` (`PF1`,
+`PF2`), which touch nothing but it. It is what their banner and title row
+show; it is kept, in memory, across their sessions until the server
+restarts. Whether a user controls the light is read afresh at every redraw,
+so a change in the user editor applies at once.
+
+With no user marked, the light is kept off, and its controllers' banner
+with it. The
+light is decided every 15 seconds, and at every key; the calendars are read
+every `-agenda-refresh`, so a meeting added to one shows within that. The
+flag is driven dimly (red is `20,0,0`), and an unchanged color is sent twice
+and then not again until it changes. A flag can be plugged in and out while
+the server runs; with none, the server logs it once, and the banner's line,
+for users who control the light, says `(busy light: no Luxafor flag
+attached)`. `-externalrgb` runs a command for another light at each change,
+at full brightness (`255 0 0` red, `0 255 0` green, `250 0 250` off),
+given ten seconds.
+
+**A Stream Deck Mini** (six keys, the original or the MK.2) attached to the
+server's machine is the light's buttons, as the `sd` program's were, but
+setting the light directly rather than running `busy.raku`:
+
+| Key | Sets the light |
+|---|---|
+| Busy | red, as `busy` / `PF1` |
+| Free | off until the meetings under way end, as `off` / `PF2` |
+| Green | green, as `green` |
+| (blank) | |
+| (blank) | (was Agenda) |
+| Remind | nothing: each press turns its picture between "no reminder" and "reminder", a reminder to oneself |
+
+The keys show `sd`'s pictures, built into the server, with their labels
+under them (in Go Mono, for Liberation Mono). The deck is set to full
+brightness when found, can be plugged in and out while the server runs
+(it is looked for every 5 seconds, and its absence logged once), and is
+blanked when the server stops. Remind's picture starts as "no reminder"
+each time the deck is found.
+
+On Linux the flag and the deck need udev rules, for the server's user to
+open them:
+
+    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="f372", MODE="0660", GROUP="plugdev"
+    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0063", MODE="0660", GROUP="plugdev"
+    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0090", MODE="0660", GROUP="plugdev"
+
+The `sd` program should not run beside the server, or both will drive the
+deck.
 
 Every screen but the login screen also shows the state in its title row:
 black on red across the whole row while the light is red, black on green
-while it is green, and unchanged while it is off or the feed is down. (On
-the dashboard it runs on into the busy banner below, the same color, with
-no gap.) A restricted user's title row is never colored. A screen
+while it is green, and unchanged while it is off or no one controls it.
+(On the dashboard it runs on into the busy banner below, the same color,
+with no gap.) A restricted user's title row is never colored. A screen
 that does not redraw on a timer shows a change of state at the next key.
-
-`-busy-file` takes the feed's message as a JSON file instead, for trying the
-dashboard without an indicator:
-
-```json
-{"status": "red", "minutes-to-next": 20}
-```
-
-`status` is `red` (busy), `green` (available) or `off` (not busy); leave out
-`minutes-to-next` for no more meetings today. The file is re-read at every
-redraw, and its modification time counts as when the status arrived, so the
-countdown runs down from when the file was last saved (`touch` it to
-restart it).
+For every user, the line under the banner is their own next meeting, from
+their calendar alone, and is blank for a user with none.
 
 ### Agenda
 
@@ -672,7 +754,11 @@ whoever reads it. User names may not hold control characters at all.
 
 - `main.go`: flags, background watchers, and the accept loop.
 - `internal/session`: per-connection TN3270 session and dashboard rendering.
-- `internal/busy`: busy indicator WebSocket feed client.
+- `internal/busy`: the busy light's logic and control port, and each
+  other user's busy state.
+- `internal/luxafor`: the Luxafor flag's USB driver.
+- `internal/streamdeck`: the Stream Deck Mini's USB driver, its keys'
+  images, and the busy light's buttons.
 - `internal/agenda`: each user's periodically refreshed calendar cache.
 - `internal/google`: connecting a Google calendar: the OAuth flow and the
   calendar list.

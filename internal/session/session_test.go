@@ -1,89 +1,188 @@
 package session
 
 import (
-	"net"
+	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/racingmars/go3270"
+
+	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
+	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
-// fakeIndicator is a busy indicator: a UDP control port that records the
-// keys it is sent and, when publish is set, reports each as a new status.
-type fakeIndicator struct {
-	conn    net.PacketConn
-	publish bool
-
-	mu     sync.Mutex
-	keys   []string
-	status busy.Status
+func TestControlsLight(t *testing.T) {
+	if !controlsLight(nil) {
+		t.Errorf("a console with no user database cannot set the light")
+	}
+	if controlsLight(&users.User{Name: "a", Admin: true}) || !controlsLight(&users.User{Name: "b", Flag: true}) {
+		t.Errorf("light control not by the flag setting")
+	}
 }
 
-func newFakeIndicator(t *testing.T, publish bool) *fakeIndicator {
-	t.Helper()
-	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
+func TestFlagEvents(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { conn.Close() }) //nolint:errcheck
-	f := &fakeIndicator{conn: conn, publish: publish, status: busy.Status{Connected: true, Light: "off", Updated: time.Now().Add(-time.Minute)}}
-	go func() {
-		buf := make([]byte, 64)
-		for {
-			n, _, err := conn.ReadFrom(buf)
-			if err != nil {
-				return
+	cfg := Config{Users: store}
+	if _, n := cfg.FlagEvents(); n != 0 {
+		t.Errorf("%d controllers with none marked", n)
+	}
+
+	// The light's meetings are the agenda's, for each user marked, less
+	// all-day and out-of-office events.
+	src := &staticAgenda{events: []agenda.Event{
+		{Summary: "Standup", Start: now, End: now.Add(15 * time.Minute)},
+		{Summary: "Holiday", Start: dayOf(now), End: dayOf(now).AddDate(0, 0, 1), AllDay: true},
+		{Summary: "OOO", Start: now, End: now.Add(time.Hour)},
+	}}
+	cfg.Agenda = agenda.NewCache(src)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go cfg.Agenda.Run(ctx, time.Hour)
+	for deadline := time.Now().Add(5 * time.Second); cfg.Agenda.Snapshot().Fetched.IsZero() && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+	}
+	if err := store.Update(func(list *[]users.User, nextID func() int) error {
+		(*list)[0].Flag = true
+		*list = append(*list, users.User{ID: nextID(), Name: "other"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	meetings, n := cfg.FlagEvents()
+	if n != 1 || len(meetings) != 1 || meetings[0].Summary != "Standup" {
+		t.Errorf("controllers %d, meetings %+v", n, meetings)
+	}
+}
+
+// staticAgenda is an agenda source with fixed events.
+type staticAgenda struct{ events []agenda.Event }
+
+func (s *staticAgenda) Events(context.Context, time.Time, time.Time) ([]agenda.Event, error) {
+	return s.events, nil
+}
+
+func TestLightFor(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(list *[]users.User, nextID func() int) error {
+		(*list)[0].Flag = true
+		*list = append(*list, users.User{ID: nextID(), Name: "bob"}, users.User{ID: nextID(), Name: "carol"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	light := busy.New(nil, func() ([]agenda.Event, int) { return nil, 1 })
+	cfg := Config{Users: store, Busy: light, BusyKeys: light}
+	cfg.Personal = busy.NewPersonal(func(id int) []agenda.Event { return cfg.UserMeetings(id) })
+	admin, bob, carol := &users.User{ID: 1, Flag: true}, &users.User{ID: 2}, &users.User{ID: 3}
+
+	// The flag user sees and sets the light; the others, each their own.
+	if src, keys := cfg.lightFor(admin); src != busy.Source(light) || keys == nil {
+		t.Errorf("flag user does not get the light")
+	}
+	bobSrc, bobKeys := cfg.lightFor(bob)
+	carolSrc, _ := cfg.lightFor(carol)
+	if bobSrc == busy.Source(light) || bobSrc == carolSrc || bobKeys == nil {
+		t.Fatalf("other users do not get states of their own")
+	}
+	bobKeys.Key('b') //nolint:errcheck
+	if bobSrc.Status().Light != "red" || carolSrc.Status().Light != "off" || light.Status().Light != "off" {
+		t.Errorf("bob's key: bob %s, carol %s, light %s", bobSrc.Status().Light, carolSrc.Status().Light, light.Status().Light)
+	}
+	if !bobSrc.Status().Enabled {
+		t.Errorf("a user's own state is not shown")
+	}
+
+	// Made a flag user, bob gets the light at once, though his session's
+	// copy of him says otherwise.
+	if err := store.Update(func(list *[]users.User, _ func() int) error {
+		(*list)[1].Flag = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if src, _ := cfg.lightFor(bob); src != busy.Source(light) {
+		t.Errorf("bob, made a flag user, does not get the light")
+	}
+}
+
+// TestSimulatedFlag checks the banner and title color each user sees: a
+// flag user's follow the light, another user's their own simulated flag,
+// and neither one's keys touch the other's.
+func TestSimulatedFlag(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(list *[]users.User, nextID func() int) error {
+		(*list)[0].Flag = true
+		*list = append(*list, users.User{ID: nextID(), Name: "bob"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	light := busy.New(nil, func() ([]agenda.Event, int) { return nil, 1 })
+	cfg := Config{Users: store, Busy: light, BusyKeys: light}
+	cfg.Personal = busy.NewPersonal(func(id int) []agenda.Event { return cfg.UserMeetings(id) })
+	flagUser, bob := &users.User{ID: 1, Flag: true}, &users.User{ID: 2}
+
+	// sees is the user's banner, and their title row's color.
+	sees := func(u *users.User) string {
+		t.Helper()
+		src, keys := cfg.lightFor(u)
+		v := gather(cfg, now, nil, nil, u.ID, src)
+		v.BusyKeys = keys != nil
+		s, _, _, _ := buildDashboard(24, 80, v, 0, "")
+		banner := "none"
+		for _, b := range []string{"IN MEETING", "AVAILABLE", "NOT IN MEETING"} {
+			if strings.Contains(strings.Join(screenText(t, s, 24, 80), "\n"), "** "+b+" **") {
+				banner = b
 			}
-			f.mu.Lock()
-			f.keys = append(f.keys, string(buf[:n]))
-			if f.publish {
-				f.status = busy.Status{Connected: true, Light: "red", Updated: time.Now()}
-			}
-			f.mu.Unlock()
 		}
-	}()
-	return f
-}
-
-func (f *fakeIndicator) Status() busy.Status {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.status
-}
-
-func (f *fakeIndicator) sent() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.keys...)
-}
-
-func TestSendBusyKey(t *testing.T) {
-	ind := newFakeIndicator(t, true)
-	cfg := Config{Busy: ind, BusyControl: &busy.Control{Addr: ind.conn.LocalAddr().String()}}
-	if msg := sendBusyKey(cfg, 'b'); msg != "" {
-		t.Errorf("message %q, want none", msg)
+		color, ok := headerColor(src)
+		if !ok {
+			return banner + "/untinted"
+		}
+		return fmt.Sprintf("%s/%v", banner, color)
 	}
-	if got := ind.Status().Light; got != "red" {
-		t.Errorf("returned before the feed reported the change: light %q", got)
-	}
-	if got := ind.sent(); len(got) != 1 || got[0] != "KEY b" {
-		t.Errorf("sent %q", got)
+	key := func(u *users.User, k rune) {
+		t.Helper()
+		_, keys := cfg.lightFor(u)
+		if err := keys.Key(k); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	silent := newFakeIndicator(t, false)
-	cfg = Config{Busy: silent, BusyControl: &busy.Control{Addr: silent.conn.LocalAddr().String()}}
-	if msg := sendBusyKey(cfg, 'o'); !strings.Contains(msg, "No change seen") {
-		t.Errorf("no feed update: message %q", msg)
+	untinted := "NOT IN MEETING/untinted"
+	red, green := fmt.Sprintf("IN MEETING/%v", go3270.Red), fmt.Sprintf("AVAILABLE/%v", go3270.Green)
+	for _, step := range []struct {
+		who       *users.User
+		key       rune
+		flag, bob string
+	}{
+		{flagUser, 'b', red, untinted},   // the flag user's red is not bob's
+		{bob, 'g', red, green},           // bob's green is not the flag's
+		{flagUser, 'o', untinted, green}, // the flag off leaves bob green
+		{bob, 'b', untinted, red},        // bob red leaves the flag off
+		{bob, 'o', untinted, untinted},
+	} {
+		key(step.who, step.key)
+		if got := sees(flagUser); got != step.flag {
+			t.Errorf("after %c by user %d: the flag user sees %s, want %s", step.key, step.who.ID, got, step.flag)
+		}
+		if got := sees(bob); got != step.bob {
+			t.Errorf("after %c by user %d: bob sees %s, want %s", step.key, step.who.ID, got, step.bob)
+		}
 	}
-
-	cfg = Config{BusyControl: &busy.Control{Addr: "no-such-host.invalid:1"}}
-	if msg := sendBusyKey(cfg, 'o'); !strings.Contains(msg, "Could not send") {
-		t.Errorf("unresolvable host: message %q", msg)
-	}
-
-	if msg := sendBusyKey(Config{}, 'b'); msg != "" {
-		t.Errorf("without a control port: message %q", msg)
+	if light.Status().Light != "off" {
+		t.Errorf("the light ended %s", light.Status().Light)
 	}
 }

@@ -58,8 +58,8 @@ func TestUsersScreen(t *testing.T) {
 	r := newUsersRig(t)
 	for i, want := range map[int]string{
 		usHeaderRow: " USERS 1 user, 1 admin",
-		usColumnRow: " S Name                      Admin Restricted Console",
-		usFirstRow:  "   admin                     Y     N          Y",
+		usColumnRow: " S Name                      Admin Restricted Console Flag",
+		usFirstRow:  "   admin                     Y     N          Y       N",
 		20:          " New user ===>                       Admin ===>   Restricted ===>",
 		21:          " Password ===>",
 	} {
@@ -74,7 +74,7 @@ func TestUsersScreen(t *testing.T) {
 		switch {
 		case f.Name == usNewPassword && !f.Hidden:
 			t.Error("password field shows what is typed")
-		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol || f.Col == usConEndCol) && !f.Autoskip:
+		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol || f.Col == usConEndCol || f.Col == usFlagEndCol) && !f.Autoskip:
 			t.Errorf("field at col %d does not skip on", f.Col)
 		}
 	}
@@ -356,5 +356,29 @@ func TestUsersRemoveWithCalendar(t *testing.T) {
 	fake.mu.Unlock()
 	if len(r.list()) != 1 || n != 1 {
 		t.Errorf("removing bob: users %+v, %d revoked", r.list(), n)
+	}
+}
+
+func TestUsersFlag(t *testing.T) {
+	r := newUsersRig(t)
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
+
+	// Y under Flag gives a user control of the busy light.
+	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "y"})
+	if !r.list()[0].Flag || r.u.message != "Changed 1 flag setting." || !strings.HasSuffix(r.rows[usFirstRow], "Y       Y") {
+		t.Errorf("flag: message %q, row %q", r.u.message, r.rows[usFirstRow])
+	}
+	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "z"})
+	if !strings.Contains(r.u.message, `under Flag, not "Z"`) {
+		t.Errorf("bad flag: %q", r.u.message)
+	}
+	// Not for a restricted user.
+	r.key(go3270.AIDEnter, map[string]string{"uflag:2": "Y"})
+	if !strings.Contains(r.u.message, "cannot both control the busy light and be restricted") || r.list()[1].Flag {
+		t.Errorf("flag a restricted user: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "N"})
+	if r.list()[0].Flag {
+		t.Errorf("flag not cleared")
 	}
 }

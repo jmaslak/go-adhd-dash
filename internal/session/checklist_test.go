@@ -859,7 +859,7 @@ func TestChecklistOwners(t *testing.T) {
 	a.key(go3270.AIDEnter, 0, map[string]string{"star:1": "*"})
 	b.key(go3270.AIDEnter, 0, map[string]string{"star:2": "*"})
 	cfg := Config{Checklists: a.store}
-	if got := names(gather(cfg, now, nil, nil, 2).Checklists); fmt.Sprint(got) != "[B1]" {
+	if got := names(gather(cfg, now, nil, nil, 2, nil).Checklists); fmt.Sprint(got) != "[B1]" {
 		t.Errorf("user 2's dashboard checklists: %v", got)
 	}
 }

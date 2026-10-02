@@ -1,6 +1,7 @@
 // Command adhd-dash serves a dashboard to TN3270 (mainframe) terminal
-// clients: the busy indicator's state, the calendar's next 24 hours, and the
-// open tasks from Trello.
+// clients, each user's: the busy light's state, their calendar's next 24
+// hours, and their open tasks from Trello. It also drives the busy light,
+// Luxafor flags lit by the meetings of the users who control it.
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -20,7 +22,9 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/audit"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/luxafor"
 	"github.com/jmaslak/go-adhd-dash/internal/session"
+	"github.com/jmaslak/go-adhd-dash/internal/streamdeck"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 	"github.com/jmaslak/go-adhd-dash/internal/web"
@@ -30,9 +34,10 @@ func main() {
 	host := flag.String("host", "localhost", "address to listen on")
 	port := flag.Int("port", 3270, "TCP port to listen on")
 	refresh := flag.Duration("refresh", 10*time.Second, "how often an idle screen is redrawn")
-	busyURL := flag.String("busy-url", "", "busy indicator status feed, e.g. ws://localhost:3334/feed (empty: none)")
-	busyFile := flag.String("busy-file", "", "read the busy indicator's status from this JSON file instead of a feed")
-	busyControl := flag.String("busy-control", "localhost:3333", "busy indicator UDP control port as host:port, for PF1 (busy) and PF2 (off) (empty: none)")
+	useFlag := flag.Bool("flag", true, "drive the Luxafor flags attached to this machine as the busy light")
+	useDeck := flag.Bool("streamdeck", true, "use a Stream Deck Mini attached to this machine as the busy light's buttons")
+	controlPort := flag.Int("control-port", 0, "UDP port, on -host, for go-busy-indicator's busy command to set the busy light (0: none; unauthenticated)")
+	externalRGB := flag.String("externalrgb", "", "command run with red, green and blue arguments (0-255) at each change of the busy light's color")
 	agendaFile := flag.String("agenda-file", "", "show every user the agenda in this JSON file instead of their Google calendars")
 	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
@@ -43,6 +48,23 @@ func main() {
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often a calendar is read")
 	httpPort := flag.Int("http-port", 3280, "TCP port the web pages (home, privacy policy, terms) are served on over HTTP, on -host (0: none)")
 	flag.Parse()
+
+	// The files kept at their defaults were dotfiles once; those are
+	// moved to their visible names.
+	for _, f := range []struct{ path, def string }{
+		{*usersFile, users.DefaultPath()},
+		{*checklistFile, checklist.DefaultPath()},
+		{*auditFile, defaultAuditPath()},
+	} {
+		if f.path != f.def {
+			continue
+		}
+		if said, err := moveLegacy(f.path); err != nil {
+			log.Fatalf("moving the old %s: %v", f.path, err)
+		} else if said != "" {
+			log.Print(said)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -99,20 +121,6 @@ func main() {
 		Chat:         session.NewChat(),
 	}
 
-	switch {
-	case *busyURL != "" && *busyFile != "":
-		log.Fatal("-busy-url and -busy-file cannot both be given")
-	case *busyURL != "":
-		watcher := busy.NewWatcher(*busyURL)
-		go watcher.Run(ctx)
-		cfg.Busy = watcher
-	case *busyFile != "":
-		cfg.Busy = busy.File{Path: *busyFile}
-	}
-	if *busyControl != "" {
-		cfg.BusyControl = &busy.Control{Addr: *busyControl}
-	}
-
 	// Each user's Google calendars are read while they are in use; a file
 	// stands in for them all.
 	if *agendaFile != "" {
@@ -120,6 +128,40 @@ func main() {
 		go cfg.Agenda.Run(ctx, *agendaRefresh)
 	} else {
 		cfg.Agendas = agenda.NewPool(ctx, *agendaRefresh)
+	}
+
+	// The busy light: lit by the meetings of the users who control it, read
+	// at each decision so that it follows changes to them and their
+	// calendars.
+	var light busy.Light
+	if *useFlag {
+		f := luxafor.New()
+		defer f.Close() //nolint:errcheck
+		light = f
+	}
+	indicator := busy.New(light, func() ([]agenda.Event, int) { return cfg.FlagEvents() })
+	indicator.External = *externalRGB
+	cfg.Busy, cfg.BusyKeys = indicator, indicator
+	go indicator.Run(ctx, busyInterval)
+
+	// The Stream Deck's keys set the light, as the sd program's did.
+	deckDone := make(chan struct{})
+	if *useDeck {
+		deck := streamdeck.New(streamdeck.BusyButtons(indicator.Key, log.Printf))
+		go func() { deck.Run(ctx); close(deckDone) }()
+	} else {
+		close(deckDone)
+	}
+	// Everyone else sees a busy state of their own, by the same rules.
+	cfg.Personal = busy.NewPersonal(func(id int) []agenda.Event { return cfg.UserMeetings(id) })
+	if *controlPort != 0 {
+		addr := net.JoinHostPort(*host, fmt.Sprint(*controlPort))
+		go func() {
+			if err := indicator.ListenControl(ctx, addr); err != nil {
+				log.Fatal(err)
+			}
+		}()
+		log.Printf("busy light control port on udp %s", addr)
 	}
 
 	// The web pages, for a web server in front to give their public HTTPS
@@ -178,18 +220,51 @@ func main() {
 		log.Printf("shutting down: waiting for %d sessions to disconnect", n)
 	}
 	shutdown.Wait(shutdownGrace)
+	// Stopped, the Stream Deck is blanked; it is given a moment for that.
+	cancel()
+	select {
+	case <-deckDone:
+	case <-time.After(2 * time.Second):
+	}
 	log.Printf("shut down")
 }
+
+// busyInterval is how often the busy light is decided afresh: often enough
+// that it comes on close to two minutes before a meeting.
+const busyInterval = 15 * time.Second
 
 // shutdownGrace is how long sessions have to say goodbye and disconnect on
 // shutdown before their connections are closed under them.
 const shutdownGrace = 5 * time.Second
 
 // defaultAuditPath is where the audit log goes unless told otherwise:
-// .adhd-dash-audit.log in the home directory.
+// adhd-dash-audit.log in the home directory.
 func defaultAuditPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".adhd-dash-audit.log")
+		return filepath.Join(home, "adhd-dash-audit.log")
 	}
-	return ".adhd-dash-audit.log"
+	return "adhd-dash-audit.log"
+}
+
+// moveLegacy gives path the file that was kept, before the files were
+// visible, under its name with a dot before it, if there is one and path
+// has none yet, reporting what it did. With both, path is left as it is,
+// and the old one too, for someone to look at.
+func moveLegacy(path string) (string, error) {
+	old := filepath.Join(filepath.Dir(path), "."+filepath.Base(path))
+	if _, err := os.Lstat(old); errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	switch _, err := os.Lstat(path); {
+	case err == nil:
+		return fmt.Sprintf("both %s and %s exist; using %s, and leaving %s alone", path, old, path, old), nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
+	}
+	if err := os.Rename(old, path); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("moved %s to %s", old, path), nil
 }

@@ -23,15 +23,9 @@ json.dump([
 ], open("agenda.json", "w"), indent=1)
 EOF
 
-    if [ \! -d tasks ] ; then
-        mkdir tasks
-    fi
-    printf 'Title: Write the quarterly report\nTags: work\n' > tasks/1-report.task
-    printf 'Title: Grocery shopping\nTags: personal\n' > tasks/2-shopping.task
-
-    echo '{"status": "red", "minutes-to-next": 12}' > busy.json
-
-    go build -o adhd-dash . && ./adhd-dash -agenda-file agenda.json -port 3299 -busy-file busy.json
+    # The busy light is decided in the server, from the agenda file for
+    # the users marked Flag; the real flag and Stream Deck are left alone.
+    go build -o adhd-dash . && ./adhd-dash -agenda-file agenda.json -port 3299 -flag=false -streamdeck=false
 }
 
 doit "$@"

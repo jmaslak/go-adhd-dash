@@ -110,7 +110,7 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	screen = append(screen, commandLine(commandRow, cols, v.Message)...)
 
 	help := "PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks"
-	if v.BusyControl {
+	if v.BusyKeys {
 		help = "PF1=Busy PF2=Off " + help
 	}
 	// PF11, Enter and the LU name are left off, in that order of
@@ -182,15 +182,15 @@ func tintTitle(screen go3270.Screen, rows, cols int, color go3270.Color) go3270.
 	})
 }
 
-// headerColor is the color the title row is tinted for the busy indicator:
-// red while busy, green while available, and none (false) while off,
-// unknown, or with no indicator.
+// headerColor is the color the title row is tinted for the busy light: red
+// while busy, green while available, and none (false) while off, or with no
+// one controlling it.
 func headerColor(src busy.Source) (go3270.Color, bool) {
 	if src == nil {
 		return 0, false
 	}
 	switch s := src.Status(); {
-	case !s.Connected:
+	case !s.Enabled:
 	case s.Light == "red":
 		return go3270.Red, true
 	case s.Light == "green":
@@ -225,23 +225,19 @@ func placeLineAt(row, col, cols int, l line) []go3270.Field {
 	return out
 }
 
-// busyState is the busy indicator's state: a badge naming it, shown as a
-// banner, and a detail line to go under it. The badge is empty when there is
-// no indicator, and the detail line then says so.
+// busyState is the busy light's state, a badge naming it, shown as a
+// banner, and a detail line to go under it: the user's next meeting, from
+// their calendar, and for a user who controls the light, anything wrong
+// with the flag. The badge is empty when no one controls the light.
 func busyState(v view) (badge go3270.Field, detail line) {
+	detail = line{{Content: nextMeetingText(v)}}
 	if !v.BusyEnabled {
-		return go3270.Field{}, line{{Content: "Busy indicator not configured (-busy-url)", Color: go3270.Blue}}
+		return go3270.Field{}, detail
 	}
 	s := v.Busy
-	if !s.Connected {
-		msg := "Busy indicator " + s.Problem
-		if !s.Updated.IsZero() {
-			msg += fmt.Sprintf(" (was %s at %s)", s.Light, s.Updated.Format("15:04"))
-		}
-		return go3270.Field{Content: "????", Color: go3270.Yellow, Highlighting: go3270.ReverseVideo},
-			line{{Content: msg, Color: go3270.Yellow}}
+	if v.BusyKeys && s.Problem != "" {
+		detail = append(detail, go3270.Field{Content: "(busy light: " + s.Problem + ")", Color: go3270.Yellow})
 	}
-
 	switch s.Light {
 	case "red":
 		badge = go3270.Field{Content: "** IN MEETING **", Color: go3270.Red, Highlighting: go3270.ReverseVideo}
@@ -250,7 +246,7 @@ func busyState(v view) (badge go3270.Field, detail line) {
 	default:
 		badge = go3270.Field{Content: "** NOT IN MEETING **", Color: go3270.Green}
 	}
-	return badge, line{{Content: nextMeetingText(v)}}
+	return badge, detail
 }
 
 // banner fills all of row with f's content centered. Its attribute byte goes

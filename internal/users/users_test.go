@@ -433,3 +433,14 @@ func TestTrello(t *testing.T) {
 		t.Errorf("no such user: %v", err)
 	}
 }
+
+func TestFlagNotRestricted(t *testing.T) {
+	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "calc", Restricted: true, Flag: true}}
+	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "busy light") {
+		t.Errorf("restricted user controlling the light: %v", err)
+	}
+	list[1].Restricted = false
+	if err := Validate(list); err != nil {
+		t.Errorf("flag user: %v", err)
+	}
+}

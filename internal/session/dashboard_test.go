@@ -20,12 +20,11 @@ import (
 var now = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 
 func sampleView(nTasks int) view {
-	minutes := 20
 	v := view{
 		Now:           now,
 		AutoRefresh:   true,
 		BusyEnabled:   true,
-		Busy:          busy.Status{Connected: true, Light: "off", MinutesToNext: &minutes, Updated: now.Add(-5 * time.Minute)},
+		Busy:          busy.Status{Enabled: true, Light: "off", Updated: now.Add(-5 * time.Minute)},
 		AgendaEnabled: true,
 		Agenda: agenda.Snapshot{Fetched: now, Events: []agenda.Event{
 			{Summary: "Holiday", Start: now.Add(-10 * time.Hour), End: now.Add(14 * time.Hour), AllDay: true},
@@ -162,44 +161,38 @@ func TestDashboardBusyBanner(t *testing.T) {
 }
 
 func TestNextMeetingText(t *testing.T) {
-	at := func(minutes int) *int { return &minutes }
 	tomorrow := dayOf(now).AddDate(0, 0, 1)
 	for _, c := range []struct {
-		name    string
-		minutes *int // the feed's, reported five minutes ago
-		events  []agenda.Event
-		agenda  bool
-		want    string
+		name   string
+		events []agenda.Event
+		agenda bool
+		want   string
 	}{
-		{"in progress", at(20), nil, true, "Meeting now: Running"},
-		{"next", at(20), []agenda.Event{
+		{"in progress", nil, true, "Meeting now: Running"},
+		{"next", []agenda.Event{
 			{Summary: "Soon", Start: now.Add(15 * time.Minute), End: now.Add(45 * time.Minute)},
 		}, true, "Next meeting in 15m: Soon"},
 		{
-			// The feed counts to tomorrow's all-day event at midnight; the
+			// An all-day event and out-of-office are passed over; the
 			// next meeting is the one the next morning.
-			"feed counting to an all-day event", at(14*60 + 5), []agenda.Event{
+			"past an all-day event", []agenda.Event{
 				{Summary: "Home", Start: tomorrow, End: tomorrow.AddDate(0, 0, 1), AllDay: true},
 				{Summary: "OOO", Start: tomorrow.Add(8 * time.Hour), End: tomorrow.Add(9 * time.Hour)},
 				{Summary: "Standup", Start: tomorrow.Add(9 * time.Hour), End: tomorrow.Add(10 * time.Hour)},
 			}, true, "Next meeting in 23h00: Standup",
 		},
-		{"calendar empty", at(20), []agenda.Event{}, true, "No meetings in next 24 hours"},
-		{"next past 24 hours", at(20), []agenda.Event{
+		{"calendar empty", []agenda.Event{}, true, "No meetings in next 24 hours"},
+		{"next past 24 hours", []agenda.Event{
 			{Summary: "Later", Start: now.Add(25 * time.Hour), End: now.Add(26 * time.Hour)},
 		}, true, "No meetings in next 24 hours"},
-		// With no calendar of their own, nothing: the feed counts to its
-		// owner's meetings, not the user's.
-		{"no calendar", at(20), nil, false, ""},
-		{"no calendar, the feed's under way", at(-25), nil, false, ""},
-		{"no calendar, none left", nil, nil, false, ""},
+		// With no calendar of their own, nothing.
+		{"no calendar", nil, false, ""},
 	} {
 		v := sampleView(0)
 		if c.events != nil {
 			v.Agenda.Events = c.events
 		}
 		v.AgendaEnabled = c.agenda
-		v.Busy.MinutesToNext = c.minutes
 		if got := nextMeetingText(v); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
@@ -329,7 +322,7 @@ func TestNextMeetingMatchesAgenda(t *testing.T) {
 	}
 }
 
-func TestBusyControlKeys(t *testing.T) {
+func TestBusyKeysKeys(t *testing.T) {
 	v := sampleView(0)
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "AD000001")
 	if help := screenText(t, s, 24, 80)[23]; help != " PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks PF11=Chat" {
@@ -340,7 +333,7 @@ func TestBusyControlKeys(t *testing.T) {
 		t.Errorf("at 132 columns, help row is %q; want the LU name", help)
 	}
 
-	v.BusyControl = true
+	v.BusyKeys = true
 	v.Message = "Could not send to busy indicator: " + strings.Repeat("x", 100)
 	s, _, _, _ = buildDashboard(24, 80, v, 0, "AD000001")
 	rows := screenText(t, s, 24, 80)
@@ -358,7 +351,8 @@ func TestDashboardDegraded(t *testing.T) {
 	v := view{
 		Now:           now,
 		BusyEnabled:   true,
-		Busy:          busy.Status{Err: errors.New("connection refused"), Problem: "not reachable at ws://x/feed"},
+		BusyKeys:      true,
+		Busy:          busy.Status{Enabled: true, Light: "off", Problem: "no Luxafor flag attached"},
 		AgendaEnabled: true,
 		Agenda:        agenda.Snapshot{Err: errors.New("no Google credentials")},
 		TasksErr:      errors.New("reading task directory: no such file"),
@@ -366,7 +360,7 @@ func TestDashboardDegraded(t *testing.T) {
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{
-		"Busy indicator not reachable at ws://x/feed",
+		"(busy light: no Luxafor flag attached)",
 		"calendar unavailable: no Google credentials",
 		"TASKS reading task directory",
 	} {
@@ -380,7 +374,7 @@ func TestDashboardDegraded(t *testing.T) {
 	s, _, _, _ = buildDashboard(24, 80, view{Now: now}, 0, "")
 	rows := screenText(t, s, 24, 80)
 	text = strings.Join(rows, "\n")
-	for _, want := range []string{"not configured (-busy-url)", "All tasks completed!"} {
+	for _, want := range []string{"All tasks completed!"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
@@ -587,10 +581,10 @@ func TestHeaderColor(t *testing.T) {
 		color  go3270.Color
 		ok     bool
 	}{
-		{busy.Status{Connected: true, Light: "red"}, go3270.Red, true},
-		{busy.Status{Connected: true, Light: "green"}, go3270.Green, true},
-		{busy.Status{Connected: true, Light: "off"}, 0, false},
-		{busy.Status{Connected: false, Light: "red"}, 0, false},
+		{busy.Status{Enabled: true, Light: "red"}, go3270.Red, true},
+		{busy.Status{Enabled: true, Light: "green"}, go3270.Green, true},
+		{busy.Status{Enabled: true, Light: "off"}, 0, false},
+		{busy.Status{Enabled: false, Light: "red"}, 0, false},
 	} {
 		if color, ok := headerColor(staticBusy(c.status)); color != c.color || ok != c.ok {
 			t.Errorf("%+v: %v %v", c.status, color, ok)
@@ -607,13 +601,10 @@ type staticBusy busy.Status
 func (s staticBusy) Status() busy.Status { return busy.Status(s) }
 
 // TestNoCalendarNoMeetingLine checks that a user with no calendar sees the
-// busy indicator, but nothing of the meetings its feed counts to, which are
-// its owner's: not "Meeting now" under a banner saying otherwise.
+// busy indicator, but no meeting line: not "Meeting now" under a banner
+// saying otherwise.
 func TestNoCalendarNoMeetingLine(t *testing.T) {
-	minutes := -30 // the feed's entry began 25 minutes ago
-	v := view{Now: now, BusyEnabled: true, Busy: busy.Status{
-		Connected: true, Light: "off", MinutesToNext: &minutes, Updated: now.Add(-5 * time.Minute),
-	}}
+	v := view{Now: now, BusyEnabled: true, Busy: busy.Status{Enabled: true, Light: "off", Updated: now.Add(-5 * time.Minute)}}
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	if !strings.Contains(text, "NOT IN MEETING") || strings.Contains(text, "Meeting now") || strings.Contains(text, "meeting in") {

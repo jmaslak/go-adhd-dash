@@ -22,29 +22,32 @@ import (
 // and the message and help rows.
 //
 // Each user's row is a one-character command field (D deletes the user, P
-// changes their password), the name, and one-character admin, restricted
-// and console fields, Y or N. Autoskip after each input field sends the
-// cursor on to the next.
+// changes their password), the name, and one-character admin, restricted,
+// console and flag (controls the busy light) fields, Y or N. Autoskip after
+// each input field sends the cursor on to the next.
 //
-// The rows for adding a user have no console field, as there is no room:
-// a user is made the console's once added.
+// The rows for adding a user have no console or flag field, as there is no
+// room: a user is given them once added.
 const (
-	usHeaderRow = 2
-	usColumnRow = 3
-	usFirstRow  = 4
-	usNameCol   = 2  // the name's attribute byte, after the command field
-	usNameWidth = 25 // the name, as shown
-	usAdminCol  = usNameCol + 1 + usNameWidth
-	usEndCol    = usAdminCol + 2 // the attribute byte ending the admin field
-	usResCol    = usAdminCol + 6 // the restricted field, under "Restricted"
-	usResEndCol = usResCol + 2
-	usConCol    = usResCol + 11 // the console field, under "Console"
-	usConEndCol = usConCol + 2
+	usHeaderRow  = 2
+	usColumnRow  = 3
+	usFirstRow   = 4
+	usNameCol    = 2  // the name's attribute byte, after the command field
+	usNameWidth  = 25 // the name, as shown
+	usAdminCol   = usNameCol + 1 + usNameWidth
+	usEndCol     = usAdminCol + 2 // the attribute byte ending the admin field
+	usResCol     = usAdminCol + 6 // the restricted field, under "Restricted"
+	usResEndCol  = usResCol + 2
+	usConCol     = usResCol + 11 // the console field, under "Console"
+	usConEndCol  = usConCol + 2
+	usFlagCol    = usConCol + 8 // the flag field, under "Flag"
+	usFlagEndCol = usFlagCol + 2
 
 	usSelField      = "usel:"
 	usAdminField    = "uadm:"
 	usResField      = "ures:"
 	usConField      = "ucon:"
+	usFlagField     = "uflag:"
 	usPasswordField = "upw:" // then the ID of the user whose password is changing
 	usNewName       = "unew"
 	usNewAdmin      = "unewadm"
@@ -58,7 +61,7 @@ const (
 	// (see users.MaxConcurrentHashes) before giving up.
 	usersHashWait = 30 * time.Second
 
-	usPrompt         = "D deletes, P changes password; Y or N under Admin, Restricted, Console."
+	usPrompt         = "D deletes, P password; Y or N under Admin, Restricted, Console, Flag."
 	usPasswordPrompt = "Type the new password and press Enter. PF3 cancels."
 )
 
@@ -151,9 +154,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 
 	if end > start {
 		// Aligned with a user's row: the command in column 1, the name
-		// from column 3, the admin, restricted and console fields under
-		// their headings. The first command field stops the underline.
-		headings := fmt.Sprintf("%-2s%-*s%-*s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", usResCol-usAdminCol, "Admin", usConCol-usResCol, "Restricted", "Console")
+		// from column 3, the admin, restricted, console and flag fields
+		// under their headings. The first command field stops the
+		// underline.
+		headings := fmt.Sprintf("%-2s%-*s%-*s%-*s%-*s%s", "S", usAdminCol+1-usNameCol-1, "Name", usResCol-usAdminCol, "Admin",
+			usConCol-usResCol, "Restricted", usFlagCol-usConCol, "Console", "Flag")
 		screen = append(screen, go3270.Field{
 			Row: usColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
 			Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
@@ -191,6 +196,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
 			go3270.Field{Row: row, Col: usConEndCol, Autoskip: true},
+			go3270.Field{
+				Row: row, Col: usFlagCol, Write: true, Name: usFlagField + id, Content: u.fieldValue(usFlagField+id, yesNo(x.Flag)),
+				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+			},
+			go3270.Field{Row: row, Col: usFlagEndCol, Autoskip: true},
 		)
 	}
 
@@ -277,6 +287,7 @@ type usersEdit struct {
 	admin       map[int]bool // new admin flags, by ID
 	restricted  map[int]bool // new restricted flags, by ID
 	console     map[int]bool // new console flags, by ID
+	flag        map[int]bool // new busy light flags, by ID
 	passwordFor int          // a user picked, with P, to change the password of
 	newName     string
 	newAdmin    bool
@@ -288,7 +299,7 @@ type usersEdit struct {
 // parse checks what was typed over the fields drawn last, returning why it
 // cannot be used when it cannot.
 func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
-	e.deletes, e.admin, e.restricted, e.console = map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}
+	e.deletes, e.admin, e.restricted, e.console, e.flag = map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for name, shown := range u.shown {
 		v, ok := values[name]
 		if !ok || v == shown {
@@ -336,6 +347,15 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 				}
 			default:
 				return e, fmt.Sprintf("Type Y or N under Console, not %q.", v)
+			}
+		case usFlagField:
+			switch v {
+			case "Y", "N":
+				if v != shown {
+					e.flag[id] = v == "Y"
+				}
+			default:
+				return e, fmt.Sprintf("Type Y or N under Flag, not %q.", v)
 			}
 		}
 	}
@@ -388,7 +408,7 @@ func (e usersEdit) consoleTo() int {
 
 // changesFlags reports whether e changes any user's flags.
 func (e usersEdit) changesFlags() bool {
-	return len(e.admin) > 0 || len(e.restricted) > 0 || len(e.console) > 0
+	return len(e.admin) > 0 || len(e.restricted) > 0 || len(e.console) > 0 || len(e.flag) > 0
 }
 
 // usersPending is a save holding deletions, awaiting confirmation: the
@@ -451,6 +471,9 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 		}
 		if restricted, ok := e.restricted[x.ID]; ok {
 			x.Restricted = restricted
+		}
+		if flag, ok := e.flag[x.ID]; ok {
+			x.Flag = flag
 		}
 		if x.ID == passwordFor && hash != "" {
 			x.Password, r.changedPassword = hash, x.Name
@@ -662,6 +685,12 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 			logf("user %d restricted set to %v", id, restricted)
 		}
 		said = append(said, "Changed "+countText(n, "restricted setting", 0, 1)+".")
+	}
+	if n := len(e.flag); n > 0 {
+		for id, flag := range e.flag {
+			logf("user %d busy light control set to %v", id, flag)
+		}
+		said = append(said, "Changed "+countText(n, "flag setting", 0, 1)+".")
 	}
 	if r.console != "" {
 		logf("console user set to %q", r.console)

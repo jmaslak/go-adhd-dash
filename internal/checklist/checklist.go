@@ -69,12 +69,12 @@ func NewStore(path string) *Store {
 }
 
 // DefaultPath is where checklists are kept unless told otherwise:
-// .adhd-dash-checklists.json in the home directory.
+// adhd-dash-checklists.json in the home directory.
 func DefaultPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".adhd-dash-checklists.json")
+		return filepath.Join(home, "adhd-dash-checklists.json")
 	}
-	return ".adhd-dash-checklists.json"
+	return "adhd-dash-checklists.json"
 }
 
 // Path is the file the Store keeps.
