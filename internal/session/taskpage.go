@@ -66,7 +66,7 @@ func taskRows(rows int) int {
 // clamped to the pages that exist, and the page shown is returned with the
 // page count.
 func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskPageState) (screen go3270.Screen, shownPage, totalPages, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "ALL TASKS", now, false)
+	screen = titleFields(cols, "ALL TASKS", now)
 	all := snap.Tasks
 
 	perPage := taskRows(rows)
@@ -142,7 +142,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 
 // buildArchiveConfirm renders the confirmation for archiving ts.
 func buildArchiveConfirm(rows, cols int, now time.Time, ts []tasks.Task) go3270.Screen {
-	screen := titleFields(cols, "ARCHIVE TASKS", now, false)
+	screen := titleFields(cols, "ARCHIVE TASKS", now)
 
 	noun := "tasks"
 	if len(ts) == 1 {

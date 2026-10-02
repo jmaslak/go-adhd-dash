@@ -264,3 +264,66 @@ func TestPersonal(t *testing.T) {
 		t.Errorf("next meeting: %s", one.Status().Light)
 	}
 }
+
+func TestWatch(t *testing.T) {
+	r := newRig()
+	r.decided()
+	var mu sync.Mutex
+	told := 0
+	stop := r.Watch(func() { mu.Lock(); told++; mu.Unlock() })
+	count := func() int { mu.Lock(); defer mu.Unlock(); return told }
+
+	r.Key('b') //nolint:errcheck
+	if count() != 1 {
+		t.Errorf("told %d times of going red, want 1", count())
+	}
+	r.Key('b') //nolint:errcheck
+	r.Key('.') //nolint:errcheck
+	if count() != 1 {
+		t.Errorf("told %d times with nothing changed, want 1", count())
+	}
+	r.controllers = 0
+	r.Key('.') //nolint:errcheck
+	if count() != 2 {
+		t.Errorf("told %d times, after being disabled, want 2", count())
+	}
+	stop()
+	r.controllers = 1
+	r.Key('g') //nolint:errcheck
+	if count() != 2 {
+		t.Errorf("told after stopping")
+	}
+}
+
+func TestPersonalRunTells(t *testing.T) {
+	var mu sync.Mutex
+	at := base
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return at }
+	p := NewPersonal(func(int) []agenda.Event { return []agenda.Event{meeting(time.Hour, 2*time.Hour, "Later")} })
+	i := p.For(1)
+	i.now = clock
+	i.Status()
+	told := make(chan struct{}, 4)
+	i.Watch(func() { told <- struct{}{} })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx, 10*time.Millisecond)
+	select {
+	case <-told:
+		t.Fatalf("told with nothing changed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	// The meeting begins: the clock alone changes it, and Run tells.
+	mu.Lock()
+	at = base.Add(time.Hour)
+	mu.Unlock()
+	select {
+	case <-told:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("not told of the meeting beginning")
+	}
+	if i.Status().Light != "red" {
+		t.Errorf("light %s", i.Status().Light)
+	}
+}

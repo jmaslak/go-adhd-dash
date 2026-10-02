@@ -167,7 +167,7 @@ type loginState struct {
 // for a client without TN3270E), and where the cursor goes: the user name,
 // or after a wrong try with one typed, the password.
 func buildLogin(rows, cols int, now time.Time, lu string, l *loginState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "LOGIN", now, false)
+	screen = titleFields(cols, "LOGIN", now)
 	bannerCol := max((cols-len(loginBanner)*bannerGlyphWidth)/2, 0)
 	for i, l := range bannerLines() {
 		screen = append(screen, placeLineAt(loginBannerRow+i, bannerCol, cols, l)...)
@@ -265,7 +265,7 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 // buildFarewell is the screen left on a terminal as it is disconnected,
 // saying why.
 func buildFarewell(cols int, now time.Time, text string) go3270.Screen {
-	screen := titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", now, false)
+	screen := titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", now)
 	return append(screen, placeLine(2, cols, line{{Content: text, Color: go3270.Yellow, Intense: true}})...)
 }
 

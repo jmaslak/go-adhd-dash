@@ -33,7 +33,7 @@ import (
 func main() {
 	host := flag.String("host", "localhost", "address to listen on")
 	port := flag.Int("port", 3270, "TCP port to listen on")
-	refresh := flag.Duration("refresh", 10*time.Second, "how often an idle screen is redrawn")
+	refresh := flag.Duration("refresh", time.Second, "how often a screen that redraws itself (the dashboard, calendar, chat, activity viewer) is redrawn")
 	useFlag := flag.Bool("flag", true, "drive the Luxafor flags attached to this machine as the busy light")
 	useDeck := flag.Bool("streamdeck", true, "use a Stream Deck Mini attached to this machine as the busy light's buttons")
 	controlPort := flag.Int("control-port", 0, "UDP port, on -host, for go-busy-indicator's busy command to set the busy light (0: none; unauthenticated)")

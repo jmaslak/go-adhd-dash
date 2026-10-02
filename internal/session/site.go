@@ -46,7 +46,7 @@ type siteState struct {
 // buildSite renders the web site screen; listen is where the pages are
 // served, "" for nowhere.
 func buildSite(rows, cols int, now time.Time, site *users.Site, loadErr error, listen string, s *siteState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "WEB SITE", now, false)
+	screen = titleFields(cols, "WEB SITE", now)
 	header := line{{Content: "Web site", Color: go3270.Turquoise, Intense: true}}
 	switch {
 	case loadErr != nil:

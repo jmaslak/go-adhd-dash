@@ -99,8 +99,7 @@ func (c *calendarState) load(cache *agenda.Cache, maxAge time.Duration, now time
 
 // calendarView is everything one calendar redraw shows.
 type calendarView struct {
-	Now         time.Time
-	AutoRefresh bool
+	Now time.Time
 
 	// AgendaEnabled is false when the user has no calendar to show.
 	AgendaEnabled bool
@@ -115,9 +114,9 @@ type calendarView struct {
 }
 
 // view is what the state shows at now.
-func (c *calendarState) view(now time.Time, autoRefresh, agendaEnabled bool) calendarView {
+func (c *calendarState) view(now time.Time, agendaEnabled bool) calendarView {
 	return calendarView{
-		Now: now, AutoRefresh: autoRefresh, AgendaEnabled: agendaEnabled,
+		Now: now, AgendaEnabled: agendaEnabled,
 		Month: c.month, Selected: c.selected, Events: c.events, Err: c.err,
 	}
 }
@@ -126,7 +125,7 @@ func (c *calendarState) view(now time.Time, autoRefresh, agendaEnabled bool) cal
 // where the cursor goes: on the selected day. Every field is protected, so a
 // timed redraw can write it over the last one without erasing the screen.
 func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "CALENDAR", v.Now, v.AutoRefresh)
+	screen = titleFields(cols, "CALENDAR", v.Now)
 
 	heading := v.Month.Format("January 2006")
 	screen = append(screen, go3270.Field{
@@ -174,7 +173,7 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 	}
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
-		Content: truncate("PF3=Back PF4=Today PF5=Auto PF7=Prev month PF8=Next month Enter=Pick day", cols-1),
+		Content: truncate("PF3=Back PF4=Today PF7=Prev month PF8=Next month Enter=Pick day", cols-1),
 	})
 	return screen, cursorRow, cursorCol
 }

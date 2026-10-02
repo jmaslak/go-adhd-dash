@@ -29,7 +29,6 @@ var commands = []command{
 	{name: "busy", aliases: []string{"red"}, key: "PF1", what: "Mark yourself busy (red)"},
 	{name: "green", what: "Mark yourself available (green)"},
 	{name: "off", key: "PF2", what: "Not busy until the meetings under way end"},
-	{name: "auto", key: "PF5", what: "Turn auto-refresh off or on"},
 	{name: "up", aliases: []string{"prev"}, key: "PF7", what: "Previous page of tasks"},
 	{name: "down", aliases: []string{"next"}, key: "PF8", what: "Next page of tasks"},
 	{name: "refresh", key: "Enter", what: "Redraw the dashboard now"},
@@ -83,7 +82,7 @@ func commandLine(row, cols int, message string) []go3270.Field {
 // buildHelp renders the list of commands, with a command line to run one,
 // and where the cursor goes: the command field.
 func buildHelp(rows, cols int, now time.Time, message string) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "COMMANDS", now, false)
+	screen = titleFields(cols, "COMMANDS", now)
 
 	format := func(name, key, what string) string {
 		return truncate(name+strings.Repeat(" ", max(22-utf8.RuneCountInString(name), 1))+key+strings.Repeat(" ", max(7-len(key), 1))+what, cols-1)

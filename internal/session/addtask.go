@@ -64,7 +64,7 @@ type addTaskState struct {
 // buildAddTask renders the add-task screen, and where the cursor goes: the
 // title, unless the board is what needs fixing.
 func buildAddTask(rows, cols int, now time.Time, adder TaskAdder, a *addTaskState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "ADD TASK", now, false)
+	screen = titleFields(cols, "ADD TASK", now)
 	screen = append(screen, placeLine(1, cols, line{{Content: "Added as a card at the bottom of the Trello list picked.", Color: go3270.Blue}})...)
 
 	titleCol := len(atTitleLabel) + 1

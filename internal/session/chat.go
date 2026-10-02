@@ -268,7 +268,7 @@ func buildChat(rows, cols int, now time.Time, chat *Chat, name string, c *chatSt
 	end := len(lines) - c.scroll
 	start := max(end-perPage, 0)
 
-	screen = titleFields(cols, "CHAT", now, false)
+	screen = titleFields(cols, "CHAT", now)
 	info := fmt.Sprintf("as %s; %d here: %s", name, len(here), strings.Join(here, " "))
 	if c.scroll > 0 {
 		info += fmt.Sprintf("; %d newer lines, PF8", c.scroll)

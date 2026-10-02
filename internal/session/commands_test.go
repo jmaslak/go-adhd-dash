@@ -29,7 +29,7 @@ func TestLookupCommand(t *testing.T) {
 func TestPFCommand(t *testing.T) {
 	for aid, want := range map[go3270.AID]string{
 		go3270.AIDPF1: "busy", go3270.AIDPF2: "off", go3270.AIDPF3: "exit", go3270.AIDPF4: "calc",
-		go3270.AIDPF5: "auto", go3270.AIDPF7: "up", go3270.AIDPF8: "down", go3270.AIDPF9: "cal",
+		go3270.AIDPF5: "", go3270.AIDPF7: "up", go3270.AIDPF8: "down", go3270.AIDPF9: "cal",
 		go3270.AIDPF10: "tasks", go3270.AIDPF6: "", go3270.AIDPF12: "", go3270.AIDClear: "",
 	} {
 		if got := pfCommand(aid, true); got != want {

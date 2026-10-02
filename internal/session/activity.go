@@ -254,7 +254,7 @@ func activityFormat(self, lu, user, screen, connected, idle, addr string) string
 // marked *, and where the cursor goes: the first mark field. The page is
 // clamped to the pages there are, and the page count returned.
 func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, self uint64, a *activityState) (screen go3270.Screen, totalPages, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "ACTIVITY", now, false)
+	screen = titleFields(cols, "ACTIVITY", now)
 	shown, totalPages, start, end := pageRange(len(sessions), activityRows(rows), a.page)
 	a.page = shown
 	connected := 0
@@ -338,7 +338,7 @@ func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, se
 // buildTerminateConfirm renders the confirmation for terminating a's
 // sessions awaiting it, noting when self is among them.
 func buildTerminateConfirm(rows, cols int, now time.Time, self uint64, a *activityState) go3270.Screen {
-	screen := titleFields(cols, "TERMINATE SESSIONS", now, false)
+	screen := titleFields(cols, "TERMINATE SESSIONS", now)
 	question := "Terminate this session?"
 	if len(a.confirming) != 1 {
 		question = "Terminate these " + countText(len(a.confirming), "session", 0, 1) + "?"

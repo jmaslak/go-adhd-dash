@@ -276,7 +276,7 @@ func (g *googleState) handle(resp go3270.Response, store *users.Store, logf func
 
 // buildGoogleConnect renders the steps for connecting, on the web site.
 func buildGoogleConnect(rows, cols int, now time.Time, g *googleState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "CONNECT GOOGLE CALENDAR", now, false)
+	screen = titleFields(cols, "CONNECT GOOGLE CALENDAR", now)
 	header := line{{Content: "Connect your Google calendar", Color: go3270.Turquoise, Intense: true}}
 	if g.reconnecting {
 		header = append(header, go3270.Field{Content: "(connected now; this connects it again)", Color: go3270.Blue})
@@ -398,7 +398,7 @@ func googlePages(cals []googleCalendar, perPage, cols int) [][]googleEntry {
 
 // buildGoogleChoose renders one page of the calendars to choose from.
 func buildGoogleChoose(rows, cols int, now time.Time, g *googleState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "GOOGLE CALENDARS", now, false)
+	screen = titleFields(cols, "GOOGLE CALENDARS", now)
 	pages := googlePages(g.calendars, max(rows-gFirstRow-3, 2), cols)
 	g.page = min(max(g.page, 0), len(pages)-1)
 
@@ -565,7 +565,7 @@ func (g *googleState) handleChoose(resp go3270.Response, store *users.Store, log
 
 // buildGoogleDisconnect renders the confirmation for disconnecting.
 func buildGoogleDisconnect(rows, cols int, now time.Time) go3270.Screen {
-	screen := titleFields(cols, "DISCONNECT GOOGLE", now, false)
+	screen := titleFields(cols, "DISCONNECT GOOGLE", now)
 	screen = append(screen, placeLine(2, cols, line{{Content: "Disconnect your Google calendar?", Color: go3270.Yellow, Intense: true}})...)
 	screen = append(screen, placeLine(4, cols, line{{Content: "This removes your authorization and your choice of calendars from this"}})...)
 	screen = append(screen, placeLine(5, cols, line{{Content: "server, asks Google to withdraw it, and stops showing your calendar."}})...)
@@ -666,7 +666,7 @@ func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client 
 	if g.confirming {
 		return buildGoogleClientConfirm(rows, cols, now, connectedCount(list, client), g.pending == nil), rows - 1, 0
 	}
-	screen = titleFields(cols, "GOOGLE CLIENT", now, false)
+	screen = titleFields(cols, "GOOGLE CLIENT", now)
 	header := line{{Content: "Google OAuth client", Color: go3270.Turquoise, Intense: true}}
 	switch {
 	case loadErr != nil:
@@ -725,7 +725,7 @@ func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client 
 // buildGoogleClientConfirm renders the confirmation for replacing (or with
 // remove, removing) the client, which n users are connected through.
 func buildGoogleClientConfirm(rows, cols int, now time.Time, n int, remove bool) go3270.Screen {
-	screen := titleFields(cols, "GOOGLE CLIENT", now, false)
+	screen := titleFields(cols, "GOOGLE CLIENT", now)
 	question, key := "Replace the Google client?", "PF4=Replace"
 	if remove {
 		question, key = "Remove the Google client?", "PF4=Remove"

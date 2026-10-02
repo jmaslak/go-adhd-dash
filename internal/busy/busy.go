@@ -108,6 +108,12 @@ type Indicator struct {
 	ignores map[string]bool // the meetings "off" was pressed during, until they end
 	status  Status
 
+	// watchers are told of each change of the status's light, or of
+	// whether it is enabled; changed is set when a decision makes one.
+	watchers  map[int]func()
+	nextWatch int
+	changed   bool
+
 	lastColor     [3]byte
 	haveLast      bool
 	sentTimes     int
@@ -127,20 +133,57 @@ func New(light Light, events Events) *Indicator {
 // Status is the light as last decided, or for a personal one, as decided
 // now.
 func (i *Indicator) Status() Status {
+	var s Status
+	i.locked(func() {
+		if i.live {
+			i.decide(modeAuto)
+		}
+		s = i.status
+	})
+	return s
+}
+
+// Watch has changed called, from whatever goroutine makes the change, each
+// time the light changes, or it is enabled or not; changed must not call
+// back into the Indicator, nor block. The function returned stops it.
+func (i *Indicator) Watch(changed func()) (stop func()) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.live {
-		i.decide(modeAuto)
+	if i.watchers == nil {
+		i.watchers = map[int]func(){}
 	}
-	return i.status
+	id := i.nextWatch
+	i.nextWatch++
+	i.watchers[id] = changed
+	return func() {
+		i.mu.Lock()
+		defer i.mu.Unlock()
+		delete(i.watchers, id)
+	}
+}
+
+// locked runs f with i.mu held, then, unlocked, tells the watchers of any
+// change it made.
+func (i *Indicator) locked(f func()) {
+	i.mu.Lock()
+	f()
+	var tell []func()
+	if i.changed {
+		i.changed = false
+		for _, w := range i.watchers {
+			tell = append(tell, w)
+		}
+	}
+	i.mu.Unlock()
+	for _, w := range tell {
+		w()
+	}
 }
 
 // Run decides the light now and every interval until ctx is canceled.
 func (i *Indicator) Run(ctx context.Context, interval time.Duration) {
 	for {
-		i.mu.Lock()
-		i.decide(modeAuto)
-		i.mu.Unlock()
+		i.locked(func() { i.decide(modeAuto) })
 		select {
 		case <-ctx.Done():
 			return
@@ -168,9 +211,7 @@ func (i *Indicator) Key(key rune) error {
 	default:
 		return fmt.Errorf("%w %q", ErrUnknownKey, key)
 	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.decide(m)
+	i.locked(func() { i.decide(m) })
 	return nil
 }
 
@@ -242,7 +283,7 @@ func (i *Indicator) decide(m mode) {
 		light = "red"
 	}
 	if light != i.status.Light || controllers > 0 != i.status.Enabled {
-		i.status.Updated = now
+		i.status.Updated, i.changed = now, true
 	}
 	i.status.Enabled, i.status.Light = controllers > 0, light
 
@@ -325,6 +366,28 @@ type Personal struct {
 // gives.
 func NewPersonal(meetings func(userID int) []agenda.Event) *Personal {
 	return &Personal{meetings: meetings, by: map[int]*Indicator{}}
+}
+
+// Run decides every user's busy state every interval until ctx is
+// canceled, so that a change by the clock alone (a meeting beginning or
+// ending) reaches their watchers.
+func (p *Personal) Run(ctx context.Context, interval time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+		p.mu.Lock()
+		all := make([]*Indicator, 0, len(p.by))
+		for _, i := range p.by {
+			all = append(all, i)
+		}
+		p.mu.Unlock()
+		for _, i := range all {
+			i.Status()
+		}
+	}
 }
 
 // For is the busy state of the user with userID, kept for as long as the

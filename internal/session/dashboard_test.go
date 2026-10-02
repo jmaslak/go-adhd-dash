@@ -22,7 +22,6 @@ var now = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 func sampleView(nTasks int) view {
 	v := view{
 		Now:           now,
-		AutoRefresh:   true,
 		BusyEnabled:   true,
 		Busy:          busy.Status{Enabled: true, Light: "off", Updated: now.Add(-5 * time.Minute)},
 		AgendaEnabled: true,
@@ -206,18 +205,28 @@ func TestNextMeetingText(t *testing.T) {
 	}
 }
 
-func TestAutoRefreshMarker(t *testing.T) {
-	for _, on := range []bool{true, false} {
-		v := sampleView(0)
-		v.AutoRefresh = on
-		s, _, _, _ := buildDashboard(24, 80, v, 0, "")
-		title := screenText(t, s, 24, 80)[titleRow]
-		if got := strings.Contains(title, "AUTO-REFRESH"); got != on {
-			t.Errorf("auto-refresh %v: title row is %q", on, title)
+func TestTitleClock(t *testing.T) {
+	s, _, _, _ := buildDashboard(24, 80, sampleView(0), 0, "")
+	if title := screenText(t, s, 24, 80)[titleRow]; !strings.HasSuffix(title, "Sun Sep 27 10:00:00") || strings.Contains(title, "AUTO") {
+		t.Errorf("title row %q", title)
+	}
+}
+
+func TestNextRedraw(t *testing.T) {
+	at := time.Date(2026, 10, 2, 9, 0, 0, 300*int(time.Millisecond), time.UTC)
+	for interval, want := range map[time.Duration]time.Time{
+		0:               time.Date(2026, 10, 2, 9, 0, 1, 5*int(time.Millisecond), time.UTC),
+		time.Second:     time.Date(2026, 10, 2, 9, 0, 1, 5*int(time.Millisecond), time.UTC),
+		5 * time.Second: time.Date(2026, 10, 2, 9, 0, 5, 5*int(time.Millisecond), time.UTC),
+	} {
+		if got := nextRedraw(at, interval); !got.Equal(want) {
+			t.Errorf("every %v from %v: %v, want %v", interval, at, got, want)
 		}
-		if !strings.HasSuffix(title, "Sun Sep 27 10:00:00") {
-			t.Errorf("auto-refresh %v: clock missing from title row %q", on, title)
-		}
+	}
+	// On a second exactly, the next one.
+	on := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	if got := nextRedraw(on, time.Second); !got.Equal(on.Add(time.Second + 5*time.Millisecond)) {
+		t.Errorf("on the second: %v", got)
 	}
 }
 
@@ -325,11 +334,11 @@ func TestNextMeetingMatchesAgenda(t *testing.T) {
 func TestBusyKeysKeys(t *testing.T) {
 	v := sampleView(0)
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "AD000001")
-	if help := screenText(t, s, 24, 80)[23]; help != " PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks PF11=Chat" {
-		t.Errorf("without a control port, help row is %q", help)
+	if help := screenText(t, s, 24, 80)[23]; help != " PF3=Exit PF4=Calc PF7=Up PF8=Dn PF9=Cal PF10=Tasks PF11=Chat   LU AD000001" {
+		t.Errorf("without the busy keys, help row is %q", help)
 	}
 	s, _, _, _ = buildDashboard(27, 132, v, 0, "AD000001")
-	if help := screenText(t, s, 27, 132)[26]; !strings.HasSuffix(help, "Enter=Rfrsh   LU AD000001") {
+	if help := screenText(t, s, 27, 132)[26]; !strings.HasSuffix(help, "PF11=Chat   LU AD000001") {
 		t.Errorf("at 132 columns, help row is %q; want the LU name", help)
 	}
 
@@ -337,8 +346,8 @@ func TestBusyKeysKeys(t *testing.T) {
 	v.Message = "Could not send to busy indicator: " + strings.Repeat("x", 100)
 	s, _, _, _ = buildDashboard(24, 80, v, 0, "AD000001")
 	rows := screenText(t, s, 24, 80)
-	if want := " PF1=Busy PF2=Off PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks"; rows[23] != want {
-		t.Errorf("help row is %q, want %q (neither PF11, Enter nor the LU name fits)", rows[23], want)
+	if want := " PF1=Busy PF2=Off PF3=Exit PF4=Calc PF7=Up PF8=Dn PF9=Cal PF10=Tasks PF11=Chat"; rows[23] != want {
+		t.Errorf("help row is %q, want %q (the LU name does not fit)", rows[23], want)
 	}
 	// The message follows the command field, stopping short of the bottom
 	// banner's attribute byte at the end of the row.

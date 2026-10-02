@@ -348,7 +348,7 @@ func calcInputRow(rows int) int { return rows - 3 }
 // the input field.
 func buildCalc(rows, cols int, now time.Time, c *calcState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	m := c.mode()
-	screen = titleFields(cols, m.title, now, false)
+	screen = titleFields(cols, m.title, now)
 
 	// Level, then the first column right aligned, then the second. The two
 	// columns split the width right of the level evenly, so the gap between

@@ -186,3 +186,36 @@ func TestSimulatedFlag(t *testing.T) {
 		t.Errorf("the light ended %s", light.Status().Light)
 	}
 }
+
+func TestLightWatch(t *testing.T) {
+	a := busy.New(nil, func() ([]agenda.Event, int) { return nil, 1 })
+	b := busy.New(nil, func() ([]agenda.Event, int) { return nil, 1 })
+	a.Key('.') //nolint:errcheck
+	b.Key('.') //nolint:errcheck
+	woken := 0
+	wake := func() { woken++ }
+
+	var w lightWatch
+	w.follow(a, wake)
+	w.follow(a, wake) // the same: watched once
+	a.Key('b')        //nolint:errcheck
+	if woken != 1 {
+		t.Errorf("woken %d times by a's change, want 1", woken)
+	}
+	if !w.differs(busy.Status{Enabled: true, Light: "off"}) || w.differs(a.Status()) {
+		t.Errorf("differs wrong")
+	}
+
+	// Following b instead: a no longer wakes.
+	w.follow(b, wake)
+	a.Key('o') //nolint:errcheck
+	b.Key('g') //nolint:errcheck
+	if woken != 2 {
+		t.Errorf("woken %d times, want 2: once by b, none by a", woken)
+	}
+	w.stop()
+	b.Key('b') //nolint:errcheck
+	if woken != 2 || w.differs(busy.Status{}) {
+		t.Errorf("woken after stopping, or differs with nothing followed")
+	}
+}

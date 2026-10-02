@@ -15,7 +15,7 @@ import (
 func sampleCalendar() calendarView {
 	v := sampleView(0)
 	return calendarView{
-		Now: now, AutoRefresh: true, AgendaEnabled: true,
+		Now: now, AgendaEnabled: true,
 		Month: monthOf(now), Selected: dayOf(now), Events: v.Agenda.Events,
 	}
 }
@@ -25,7 +25,7 @@ func TestCalendarScreen(t *testing.T) {
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
 	for _, want := range []string{
-		"CALENDAR", "AUTO-REFRESH", "September 2026", "Su Mo Tu We Th Fr Sa",
+		"CALENDAR", "September 2026", "Su Mo Tu We Th Fr Sa",
 		"Sunday, September 27, 2026 (today)",
 		"all day     Holiday", "09:30-10:30 Running", "10:15-10:45 Soon",
 		"PF3=Back",

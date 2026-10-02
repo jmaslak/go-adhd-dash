@@ -95,7 +95,8 @@ type Config struct {
 	// defaultLoginTimeout.
 	LoginTimeout time.Duration
 
-	// Refresh is how often an idle screen is redrawn.
+	// Refresh is how often an idle screen that redraws itself is redrawn;
+	// zero for every second.
 	Refresh time.Duration
 
 	// HTTPListen is where the web pages are served, for the admin to see;
@@ -176,7 +177,6 @@ func Handle(rawConn net.Conn, cfg Config) {
 		cp = go3270.Codepage1047()
 	}
 	page := 0
-	autoRefresh := true
 	mode := modeDashboard
 	// Every session logs in first but the console, which is logged in as
 	// the user marked as the console's. user is who is logged in: nil until
@@ -271,6 +271,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var tk trelloKeyState
 	var site siteState
 	defer cfg.Chat.unwatch(sessionID)
+	var lights lightWatch // the busy state the dashboard shows, to redraw when it changes
+	defer lights.stop()
+	var drawnBusy busy.Status      // that state, as the dashboard last drew it
+	shownMode := -1                // the screen last sent to the terminal
 	var allTasks []tasks.Task      // the task screen's tasks, as last shown
 	var sessions []SessionActivity // the activity viewer's sessions, as last shown
 	var checklistAt map[int]int    // the dashboard's checklists, as last shown, by row
@@ -312,8 +316,6 @@ func Handle(rawConn net.Conn, cfg Config) {
 			} else if err := keys.Key(rune(c.name[0])); err != nil {
 				message = "Could not set the busy light: " + err.Error()
 			}
-		case "auto":
-			autoRefresh = !autoRefresh
 		case "up":
 			page = max(page-1, 0)
 		case "down":
@@ -364,7 +366,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		// A timed redraw would wipe marks typed on the task screen, a line
 		// typed on the calculator, or changes typed on a checklist, before
 		// they were sent, so those only ever redraw when a key is pressed.
-		redrawOnTimer := autoRefresh
+		redrawOnTimer := true
 		viewing := 0
 		if mode == modeChecklist {
 			viewing = cl.open
@@ -381,6 +383,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 			cfg.Chat.watch(sessionID, chatName(user, neg.LUName), rawConn)
 		} else {
 			cfg.Chat.unwatch(sessionID)
+		}
+		// So too the dashboard, for a change of the user's busy state, which
+		// its title row and banner show: it is redrawn at once, as a timed
+		// redraw is, over the screen, keeping a command half typed.
+		if mode == modeDashboard {
+			src, _ := cfg.lightFor(user)
+			lights.follow(src, func() { _ = rawConn.SetReadDeadline(time.Now()) })
+		} else {
+			lights.stop()
 		}
 		switch mode {
 		case modeLogin:
@@ -406,7 +417,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeCalendar:
 			cache := cfg.agendaFor(user)
 			cal.load(cache, cfg.AgendaRefresh, now)
-			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, autoRefresh, cache != nil))
+			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, cache != nil))
 		case modeTasks:
 			snap := cfg.tasksFor(user).Snapshot()
 			allTasks = snap.Tasks
@@ -468,7 +479,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 		default:
 			light, keys := cfg.lightFor(user)
 			v := gather(cfg, now, cfg.agendaFor(user), cfg.tasksFor(user), ownerOf(user), light)
-			v.AutoRefresh, v.BusyKeys, v.Message = autoRefresh, keys != nil, message
+			v.BusyKeys, v.Message = keys != nil, message
+			drawnBusy = v.Busy
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
 		}
@@ -493,7 +505,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case mode == modeLogin:
 			deadline = login.expires
 		case redrawOnTimer:
-			deadline = time.Now().Add(cfg.Refresh)
+			deadline = nextRedraw(time.Now(), cfg.Refresh)
 		}
 		_ = conn.SetReadDeadline(deadline)
 
@@ -521,6 +533,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 		if mode == modeChat && cfg.Chat.latest() != ch.shown {
 			continue
 		}
+		// Likewise a change of the busy state since the dashboard was drawn.
+		// Drawn over the screen, keeping what is typed, if the dashboard is
+		// what is there; else, as nothing is typed yet, afresh.
+		if mode == modeDashboard && lights.differs(drawnBusy) {
+			timedOut = shownMode == modeDashboard
+			continue
+		}
+		shownMode = mode
 		resp, err := go3270.ShowScreenOpts(sanitizeScreen(screen, cp), nil, conn, opts)
 		if timedOut = isTimeout(err); timedOut {
 			continue
@@ -541,8 +561,6 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeDashboard
 			case go3270.AIDPF4:
 				cal.goTo(time.Now())
-			case go3270.AIDPF5:
-				autoRefresh = !autoRefresh
 			case go3270.AIDPF7:
 				cal.changeMonth(-1, time.Now())
 			case go3270.AIDPF8:
@@ -802,6 +820,56 @@ var pfKeys = map[string]go3270.AID{
 	"PF10": go3270.AIDPF10, "PF11": go3270.AIDPF11,
 }
 
+// nextRedraw is when a screen drawn at now, redrawn every interval (zero
+// for a second), is next redrawn: at the next whole multiple of a second,
+// just after it, so that the clock's seconds tick evenly.
+func nextRedraw(now time.Time, interval time.Duration) time.Time {
+	interval = max(interval, time.Second)
+	next := now.Add(interval).Truncate(time.Second)
+	if !next.After(now) {
+		next = next.Add(time.Second)
+	}
+	return next.Add(5 * time.Millisecond)
+}
+
+// lightWatch is the busy state a session's dashboard follows, to be woken
+// when it changes.
+type lightWatch struct {
+	src    busy.Source
+	stopFn func()
+}
+
+// follow watches src, calling wake at each change, in place of whatever it
+// watched before; it does nothing if it watches src already. A source that
+// cannot be watched is followed, but wakes nothing.
+func (w *lightWatch) follow(src busy.Source, wake func()) {
+	if src == w.src && src != nil {
+		return
+	}
+	w.stop()
+	w.src = src
+	if ws, ok := src.(interface{ Watch(func()) func() }); ok {
+		w.stopFn = ws.Watch(wake)
+	}
+}
+
+// stop stops watching.
+func (w *lightWatch) stop() {
+	if w.stopFn != nil {
+		w.stopFn()
+	}
+	w.src, w.stopFn = nil, nil
+}
+
+// differs reports whether the state followed now shows otherwise than drawn.
+func (w *lightWatch) differs(drawn busy.Status) bool {
+	if w.src == nil {
+		return false
+	}
+	s := w.src.Status()
+	return s.Light != drawn.Light || s.Enabled != drawn.Enabled
+}
+
 // controlsLight reports whether u controls the busy light, and so can set it
 // by hand: a user marked so, or a console with no user database, which has
 // everything.
@@ -876,13 +944,11 @@ func (cfg Config) FlagEvents() (meetings []agenda.Event, controllers int) {
 type view struct {
 	Now time.Time
 
-	// AutoRefresh is whether the session redraws on its own, BusyKeys
-	// whether the busy indicator's keys are offered, and Message what the
+	// BusyKeys is whether the busy keys are offered, and Message what the
 	// last key reported; they are the session's, not gathered from a
 	// source.
-	AutoRefresh bool
-	BusyKeys    bool
-	Message     string
+	BusyKeys bool
+	Message  string
 
 	BusyEnabled bool
 	Busy        busy.Status

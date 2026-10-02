@@ -73,7 +73,7 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	end := min(start+taskRows, len(entries))
 	pageEntries := entries[start:end]
 
-	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now, v.AutoRefresh)
+	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now)
 	badge, detail := busyState(v)
 	if badge.Content != "" {
 		screen = append(screen, banner(busyRow, cols, badge), banner(bottomBannerRow, cols, badge))
@@ -109,15 +109,14 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 
 	screen = append(screen, commandLine(commandRow, cols, v.Message)...)
 
-	help := "PF3=Exit PF4=Calc PF5=Auto PF7=Up PF8=Dn PF9=Cal PF10=Tasks"
+	help := "PF3=Exit PF4=Calc PF7=Up PF8=Dn PF9=Cal PF10=Tasks"
 	if v.BusyKeys {
 		help = "PF1=Busy PF2=Off " + help
 	}
-	// PF11, Enter and the LU name are left off, in that order of
-	// preference, when they would not fit: chat is also on the help
-	// screen, Enter needs no telling, since any key redraws, and the LU
-	// name is only for reference.
-	for _, extra := range []string{" PF11=Chat", " Enter=Rfrsh", "   LU " + luName} {
+	// PF11 and the LU name are left off, in that order of preference, when
+	// they would not fit: chat is also on the help screen, and the LU name
+	// is only for reference.
+	for _, extra := range []string{" PF11=Chat", "   LU " + luName} {
 		if extra != "   LU " && len(help)+len(extra) <= cols-1 {
 			help += extra
 		}
@@ -128,21 +127,14 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	return screen, shownPage, totalPages, checklistAt
 }
 
-// titleFields is the title row: title on the left, the clock on the right,
-// and while auto-refresh is on a marker left of the clock, when there is room
-// for it after the title.
-func titleFields(cols int, title string, now time.Time, autoRefresh bool) go3270.Screen {
+// titleFields is the title row: title on the left, the clock on the right.
+func titleFields(cols int, title string, now time.Time) go3270.Screen {
 	clock := now.Format("Mon Jan 2 15:04:05")
 	clockCol := max(cols-len(clock)-2, len(title)+2)
-	screen := go3270.Screen{
+	return go3270.Screen{
 		{Row: titleRow, Col: 0, Intense: true, Color: go3270.White, Content: title},
 		{Row: titleRow, Col: clockCol, Intense: true, Color: go3270.White, Content: clock},
 	}
-	const autoMarker = "AUTO-REFRESH"
-	if autoCol := clockCol - len(autoMarker) - 2; autoRefresh && autoCol > len(title) {
-		screen = append(screen, go3270.Field{Row: titleRow, Col: autoCol, Color: go3270.Turquoise, Content: autoMarker})
-	}
-	return screen
 }
 
 // tintTitle turns screen's title row, as made by titleFields, into one

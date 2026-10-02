@@ -18,9 +18,11 @@ screen shows:
 - the **tasks**: the cards on the Trello lists the user has linked (see
   [Tasks](#tasks)), then their starred checklists.
 
-The screen redraws itself every `-refresh`, so it can be left up on a spare
-terminal. `PF5` turns that off and on again for the session; the title row
-shows `AUTO-REFRESH` while it is on.
+The screen redraws itself every second (`-refresh`), keeping its clock
+current, so it can be left up on a spare terminal; each redraw writes over
+the screen without erasing it, so a command half typed survives it. A
+change of the user's busy state (see [Busy light](#busy-light)) redraws it
+at once.
 
 ## Usage
 
@@ -76,7 +78,7 @@ node, is set aside likewise; the flag must then be plugged in again.
 |---|---|---|
 | `-host` | `localhost` | address to listen on |
 | `-port` | `3270` | TCP port to listen on |
-| `-refresh` | `10s` | how often an idle screen is redrawn |
+| `-refresh` | `1s` | how often the screens that redraw themselves (the dashboard, calendar, chat and activity viewer) do, at whole seconds |
 | `-flag` | `true` | drive the Luxafor flags attached to this machine as the busy light; `-flag=false` for none (`-externalrgb` and the banner still work) |
 | `-streamdeck` | `true` | use a Stream Deck Mini attached to this machine as the busy light's buttons (see [Busy light](#busy-light)); `-streamdeck=false` for none |
 | `-control-port` | `0` (none) | UDP port, on `-host`, for go-busy-indicator's `busy` command to set the busy light; unauthenticated, so firewall it |
@@ -101,7 +103,6 @@ calendar information at all.
   under way end: the busy light, for a user who controls it, else your own
   busy state (see [Busy light](#busy-light))
 - `PF4`: calculator
-- `PF5`: turn auto-refresh off / on (on at connect)
 - `PF7` / `PF8`: previous / next page of tasks
 - `PF9`: calendar
 - `PF10`: every open task, for archiving
@@ -121,7 +122,7 @@ does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
 `checklist`, `chat`, `google` (connect your Google calendar), `trello`
 (link your Trello account), `busy`,
-`green`, `off`, `auto`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
+`green`, `off`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
 in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`,
 `next`, `prev`, `quit`, `logoff`, `?`). The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
@@ -162,7 +163,7 @@ The admin menu (`admin`) lists its options by number; type one on the
   its connection closed. Until it is gone its screen shows as
   `Terminating`. `PF7` / `PF8` page, `Enter` refreshes (keeping the marks),
   and `PF3` goes back to the menu. It also redraws every `-refresh`, like
-  the dashboard (unless auto-refresh is off), writing over the screen
+  the dashboard, writing over the screen
   without erasing what is typed. Until a key is pressed, each session stays
   in its row, so that a mark stays beside the session it was typed for: one
   that has disconnected shows as `Disconnected`, and new ones are added at
@@ -291,7 +292,6 @@ On the calendar, a month is shown with the selected day's events beside it. Move
 
 - `PF7` / `PF8`: previous / next month
 - `PF4`: back to today
-- `PF5`: turn auto-refresh off / on
 - `PF3`: back to the dashboard
 
 The calendar reads each month from Google as it is shown and reuses it for

@@ -231,7 +231,7 @@ func (t *trelloState) handle(resp go3270.Response, store *users.Store, logf func
 
 // buildTrelloConnect renders the steps for linking, on the web site.
 func buildTrelloConnect(rows, cols int, now time.Time, t *trelloState) go3270.Screen {
-	screen := titleFields(cols, "LINK TRELLO", now, false)
+	screen := titleFields(cols, "LINK TRELLO", now)
 	header := line{{Content: "Link your Trello account", Color: go3270.Turquoise, Intense: true}}
 	if t.reconnecting {
 		header = append(header, go3270.Field{Content: "(linked now; this links it again)", Color: go3270.Blue})
@@ -292,7 +292,7 @@ func (t *trelloState) handleConnect(resp go3270.Response, store *users.Store, lo
 
 // buildTrelloChoose renders one page of the lists to choose from.
 func buildTrelloChoose(rows, cols int, now time.Time, t *trelloState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "TRELLO LISTS", now, false)
+	screen = titleFields(cols, "TRELLO LISTS", now)
 	perPage := max(rows-tFirstRow-3, 1)
 	shown, total, start, end := pageRange(len(t.lists), perPage, t.page)
 	t.page = shown
@@ -425,7 +425,7 @@ func (t *trelloState) handleChoose(resp go3270.Response, store *users.Store, log
 
 // buildTrelloDisconnect renders the confirmation for unlinking.
 func buildTrelloDisconnect(rows, cols int, now time.Time) go3270.Screen {
-	screen := titleFields(cols, "UNLINK TRELLO", now, false)
+	screen := titleFields(cols, "UNLINK TRELLO", now)
 	screen = append(screen, placeLine(2, cols, line{{Content: "Unlink your Trello account?", Color: go3270.Yellow, Intense: true}})...)
 	screen = append(screen, placeLine(4, cols, line{{Content: "This removes your Trello token and your choice of lists from this server,"}})...)
 	screen = append(screen, placeLine(5, cols, line{{Content: "asks Trello to withdraw the token, and stops showing your Trello tasks."}})...)
@@ -515,7 +515,7 @@ func buildTrelloKey(rows, cols int, now time.Time, list []users.User, client *us
 	if k.confirming {
 		return buildTrelloKeyConfirm(rows, cols, now, linkedCount(list, client), k.pending == nil), rows - 1, 0
 	}
-	screen = titleFields(cols, "TRELLO API KEY", now, false)
+	screen = titleFields(cols, "TRELLO API KEY", now)
 	header := line{{Content: "Trello API key", Color: go3270.Turquoise, Intense: true}}
 	switch {
 	case loadErr != nil:
@@ -559,7 +559,7 @@ func buildTrelloKey(rows, cols int, now time.Time, list []users.User, client *us
 // buildTrelloKeyConfirm renders the confirmation for replacing (or with
 // remove, removing) the key, which n users are linked through.
 func buildTrelloKeyConfirm(rows, cols int, now time.Time, n int, remove bool) go3270.Screen {
-	screen := titleFields(cols, "TRELLO API KEY", now, false)
+	screen := titleFields(cols, "TRELLO API KEY", now)
 	question, key := "Replace the Trello API key?", "PF4=Replace"
 	if remove {
 		question, key = "Remove the Trello API key?", "PF4=Remove"

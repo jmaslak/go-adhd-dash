@@ -175,7 +175,7 @@ func buildChecklist(rows, cols int, now time.Time, lists []checklist.Checklist, 
 // buildChecklistList renders one page of the checklists, the last page
 // filled out with blank entries for adding more.
 func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checklist, loadErr error, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "CHECKLISTS", now, false)
+	screen = titleFields(cols, "CHECKLISTS", now)
 	lists = listOrder(lists)
 	perPage := checklistRows(rows)
 	followed := slices.IndexFunc(lists, func(l checklist.Checklist) bool { return l.ID == c.follow })
@@ -313,7 +313,7 @@ func listOrder(lists []checklist.Checklist) []checklist.Checklist {
 // filled out with blank entries for adding more.
 func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	c.openName = l.Name
-	screen = titleFields(cols, "CHECKLIST", now, false)
+	screen = titleFields(cols, "CHECKLIST", now)
 	perPage := checklistRows(rows)
 	followed := slices.IndexFunc(l.Items, func(it checklist.Item) bool { return it.ID == c.follow })
 	if followed >= 0 {
@@ -400,7 +400,7 @@ func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c
 // buildResetConfirm renders the confirmation for unchecking every item of
 // l, listing those checked.
 func buildResetConfirm(rows, cols int, now time.Time, l checklist.Checklist) go3270.Screen {
-	screen := titleFields(cols, "RESET CHECKLIST", now, false)
+	screen := titleFields(cols, "RESET CHECKLIST", now)
 	var checked []string
 	for _, it := range l.Items {
 		if it.Done {
@@ -468,7 +468,7 @@ func buildHeldConfirm(rows, cols int, now time.Time, lists []checklist.Checklist
 			question = strings.ToUpper(q[:1]) + q[1:] + "?"
 		}
 	}
-	screen := titleFields(cols, title, now, false)
+	screen := titleFields(cols, title, now)
 	screen = append(screen, placeLine(clHeaderRow, cols, line{{Content: question, Color: go3270.Yellow, Intense: true}})...)
 
 	// The list runs from below the heading to above the prompt.

@@ -132,7 +132,7 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 		return buildDeleteUsersConfirm(rows, cols, now, u.pending), rows - 1, 0
 	}
 	u.shown, u.rowIDs = map[string]string{}, map[int]int{}
-	screen = titleFields(cols, "USERS", now, false)
+	screen = titleFields(cols, "USERS", now)
 	shown, totalPages, start, end := pageRange(len(list), usersRows(rows), u.page)
 	u.page = shown
 
@@ -711,7 +711,7 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 
 // buildDeleteUsersConfirm renders the confirmation for p's deletions.
 func buildDeleteUsersConfirm(rows, cols int, now time.Time, p *usersPending) go3270.Screen {
-	screen := titleFields(cols, "DELETE USERS", now, false)
+	screen := titleFields(cols, "DELETE USERS", now)
 	question := "Delete this user?"
 	if len(p.deleting) != 1 {
 		question = "Delete these " + countText(len(p.deleting), "user", 0, 1) + "?"

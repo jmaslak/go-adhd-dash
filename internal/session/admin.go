@@ -31,7 +31,7 @@ var adminOptions = []struct{ number, what string }{
 // in green if ok says it reports something done, and where the cursor goes:
 // the option field. sessions is how many are connected.
 func buildAdmin(rows, cols int, now time.Time, message string, ok bool, sessions int) (screen go3270.Screen, cursorRow, cursorCol int) {
-	screen = titleFields(cols, "ADMIN", now, false)
+	screen = titleFields(cols, "ADMIN", now)
 	screen = append(screen, placeLine(2, cols, line{
 		{Content: "ADMIN MENU", Color: go3270.Turquoise, Intense: true},
 		{Content: countText(sessions, "session", 0, 1) + " connected", Color: go3270.Blue},
@@ -114,7 +114,7 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 // buildShutdownConfirm renders the confirmation for shutting the server
 // down, which disconnects sessions sessions, this one among them.
 func buildShutdownConfirm(rows, cols int, now time.Time, sessions int) go3270.Screen {
-	screen := titleFields(cols, "SHUT DOWN", now, false)
+	screen := titleFields(cols, "SHUT DOWN", now)
 	screen = append(screen, placeLine(2, cols, line{{Content: "Shut down the server?", Color: go3270.Yellow, Intense: true}})...)
 	others := countText(max(sessions-1, 0), "other", 0, 1)
 	screen = append(screen, placeLine(4, cols, line{{
@@ -128,7 +128,7 @@ func buildShutdownConfirm(rows, cols int, now time.Time, sessions int) go3270.Sc
 // buildClearChatConfirm renders the confirmation for clearing the chat,
 // which holds n messages.
 func buildClearChatConfirm(rows, cols int, now time.Time, n int) go3270.Screen {
-	screen := titleFields(cols, "CLEAR CHAT", now, false)
+	screen := titleFields(cols, "CLEAR CHAT", now)
 	screen = append(screen, placeLine(2, cols, line{{Content: "Clear the chat?", Color: go3270.Yellow, Intense: true}})...)
 	screen = append(screen, placeLine(4, cols, line{{
 		Content: "This deletes " + countText(n, "message", 0, 1) + ", for everyone. It cannot be undone.",
