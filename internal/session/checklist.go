@@ -17,8 +17,9 @@ import (
 
 // Checklist screen layout, for both the list of checklists and one
 // checklist's items: the heading, the column headings, one entry per row,
-// the last page filled out with blank entries, typed in to add more, then
-// a blank row and the message and help rows.
+// then blank entries, typed in to add more (on the list, one after the last
+// checklist; on a checklist, filling out the last page), then a blank row
+// and the message and help rows.
 //
 // On the list, each row is a one-character selection field, a one-character
 // star field, the checklist's name, then how many of its items are done.
@@ -173,7 +174,7 @@ func buildChecklist(rows, cols int, now time.Time, lists []checklist.Checklist, 
 }
 
 // buildChecklistList renders one page of the checklists, the last page
-// filled out with blank entries for adding more.
+// ending with one blank entry for adding another.
 func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checklist, loadErr error, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "CHECKLISTS", now)
 	lists = listOrder(lists)
@@ -185,9 +186,6 @@ func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checkli
 	c.follow = 0
 	shownPage, totalPages, start, end := pageRange(len(lists)+1, perPage, c.listPage)
 	c.listPage = shownPage
-	if end > len(lists) {
-		end = start + perPage // the last page, filled out with blank entries
-	}
 
 	header := line{{Content: "CHECKLISTS", Color: go3270.Turquoise, Intense: true}}
 	if loadErr != nil {

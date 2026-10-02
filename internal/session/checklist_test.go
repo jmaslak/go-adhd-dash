@@ -264,19 +264,21 @@ func TestChecklistAddSeveral(t *testing.T) {
 		}
 		return n
 	}
-	if n := blanks(); n != perPage {
-		t.Errorf("empty list has %d blank entries, want %d", n, perPage)
+	// The list has just one blank entry, after the last checklist.
+	if n := blanks(); n != 1 {
+		t.Errorf("empty list has %d blank entries, want 1", n)
 	}
-
-	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "A", clNewField + "2": "C", clNewField + "3": "D"})
+	for _, name := range []string{"A", "C", "D"} {
+		r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": name})
+	}
 	if got := fmt.Sprint(names(r.lists())); got != "[A C D]" {
 		t.Errorf("added %s, want [A C D]", got)
 	}
-	if n := blanks(); n != perPage-3 || r.crow != clFirstRow+3 {
-		t.Errorf("after adding 3: %d blank entries, cursor on row %d; want %d, on the first blank", n, r.crow, perPage-3)
+	if n := blanks(); n != 1 || r.crow != clFirstRow+3 {
+		t.Errorf("after adding 3: %d blank entries, cursor on row %d; want 1, on the blank", n, r.crow)
 	}
 
-	// Each blank checklist has a star field.
+	// The blank checklist has a star field.
 	stars := 0
 	for _, f := range r.screen {
 		if strings.HasPrefix(f.Name, clNewStar) {
@@ -286,21 +288,24 @@ func TestChecklistAddSeveral(t *testing.T) {
 			}
 		}
 	}
-	if stars != perPage-3 {
-		t.Errorf("%d star fields on blank checklists, want %d", stars, perPage-3)
+	if stars != 1 {
+		t.Errorf("%d star fields on blank checklists, want 1", stars)
 	}
 
-	// PF3 lists each one to add, and which are starred.
-	typed := map[string]string{clNewField + "0": "E", clNewStar + "0": "*", clNewField + "1": "F", clNewStar + "2": "*"}
-	r.key(go3270.AIDPF3, 0, typed)
-	if text := strings.Join(r.rows, "\n"); !strings.Contains(text, "Add E (starred)") || !strings.Contains(text, "Add F\n") {
-		t.Errorf("confirmation lacks the adds:\n%s", text)
+	// PF3 lists the one to add, starred.
+	r.key(go3270.AIDPF3, 0, map[string]string{clNewField + "0": "E", clNewStar + "0": "*"})
+	if text := strings.Join(r.rows, "\n"); !strings.Contains(text, "Add E (starred)") {
+		t.Errorf("confirmation lacks the add:\n%s", text)
 	}
-	// Saved, E is starred, F is not, and the star beside no name adds
-	// nothing.
 	r.key(go3270.AIDPF4, 0, nil)
-	if l := r.lists(); len(l) != 5 || l[3].Name != "E" || !l[3].Active || l[4].Name != "F" || l[4].Active {
+	if l := r.lists(); len(l) != 4 || l[3].Name != "E" || !l[3].Active {
 		t.Errorf("after adding starred: %+v", l)
+	}
+	// A star beside no name adds nothing.
+	r = newChecklistRigOn(t, r.store)
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewStar + "0": "*"})
+	if l := r.lists(); len(l) != 4 {
+		t.Errorf("a star alone added: %+v", l)
 	}
 	r = newChecklistRigOn(t, r.store)
 

@@ -395,12 +395,14 @@ column, to star it, then its name. On a checklist, each item's row has an
 `X` column, to check it off, then the item. Names and items can be typed
 over.
 
-- type names, or items, on the blank rows that fill out the last page
+- on the list, type a name on the blank row after the last checklist and
+  press `Enter` to add it; the row has a `*` column too: type in it to add
+  the checklist starred (it does nothing without a name beside it). A full
+  last page is followed by a page with just the blank row;
+- on a checklist, type items on the blank rows that fill out the last page
   after the last one, and press `Enter` to add them, in order (rows left
   blank are skipped); the cursor goes to the first blank row after them,
-  to add more. A full last page is followed by a page of blank rows. On
-  the list, each blank row has a `*` column too: type in it to add the
-  checklist starred (it does nothing without a name beside it);
+  to add more. A full last page is followed by a page of blank rows;
 - on the list, type `S` (or any character) in a checklist's `S` column
   and press `Enter` to open it, wherever the cursor is. Without one typed,
   `Enter` opens nothing;
