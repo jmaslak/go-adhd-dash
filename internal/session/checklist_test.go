@@ -86,8 +86,8 @@ func TestChecklistList(t *testing.T) {
 
 	// A name typed on the blank row is added, with the blank row after it
 	// and the cursor there to add another.
-	r.key(go3270.AIDEnter, clFirstRow, map[string]string{clNewField: "Morning"})
-	r.key(go3270.AIDEnter, clFirstRow+1, map[string]string{clNewField: "Evening"})
+	r.key(go3270.AIDEnter, clFirstRow, map[string]string{clNewField + "0": "Morning"})
+	r.key(go3270.AIDEnter, clFirstRow+1, map[string]string{clNewField + "0": "Evening"})
 	if l := r.lists(); len(l) != 2 || l[0].Name != "Morning" || l[1].Name != "Evening" {
 		t.Fatalf("after adding: %+v", l)
 	}
@@ -142,8 +142,8 @@ func TestChecklistList(t *testing.T) {
 
 	// PF4 on the list only says how to change a name.
 	r.key(go3270.AIDPF4, clFirstRow, map[string]string{"sel:1": "", "sel:2": ""})
-	if r.c.editing != 0 || !strings.Contains(r.rows[22], "Type over a name") {
-		t.Errorf("PF4 on the list: editing %d, message %q", r.c.editing, r.rows[22])
+	if !strings.Contains(r.rows[22], "Type over a name") {
+		t.Errorf("PF4 on the list: message %q", r.rows[22])
 	}
 
 	// A rename is confirmed before it is saved; Enter is not confirmation.
@@ -199,7 +199,7 @@ func TestChecklistList(t *testing.T) {
 
 	// Blanking a name removes the checklist, once confirmed, with what was
 	// typed alongside: a checklist added and one renamed.
-	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": "", "name:2": "Evenings", clNewField: "Noon"})
+	r.key(go3270.AIDEnter, 0, map[string]string{"name:1": "", "name:2": "Evenings", clNewField + "0": "Noon"})
 	text = strings.Join(r.rows, "\n")
 	for _, want := range []string{"Rename 1 checklist and remove 1 checklist?", "Remove Mornings (0 items, 0 done)", "Rename Evening to Evenings"} {
 		if !strings.Contains(text, want) {
@@ -249,15 +249,99 @@ func TestChecklistList(t *testing.T) {
 	}
 }
 
+// TestChecklistAddSeveral checks that the last page is filled out with
+// blank entries, and that several typed at once are added in the order
+// shown, skipping those left blank.
+func TestChecklistAddSeveral(t *testing.T) {
+	r := newChecklistRig(t)
+	perPage := checklistRows(24)
+	blanks := func() int {
+		n := 0
+		for _, f := range r.screen {
+			if strings.HasPrefix(f.Name, clNewField) {
+				n++
+			}
+		}
+		return n
+	}
+	if n := blanks(); n != perPage {
+		t.Errorf("empty list has %d blank entries, want %d", n, perPage)
+	}
+
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "A", clNewField + "2": "C", clNewField + "3": "D"})
+	if got := fmt.Sprint(names(r.lists())); got != "[A C D]" {
+		t.Errorf("added %s, want [A C D]", got)
+	}
+	if n := blanks(); n != perPage-3 || r.crow != clFirstRow+3 {
+		t.Errorf("after adding 3: %d blank entries, cursor on row %d; want %d, on the first blank", n, r.crow, perPage-3)
+	}
+
+	// Each blank checklist has a star field.
+	stars := 0
+	for _, f := range r.screen {
+		if strings.HasPrefix(f.Name, clNewStar) {
+			stars++
+			if !f.Write || f.Col != clStarCol {
+				t.Errorf("blank checklist's star field is %+v", f)
+			}
+		}
+	}
+	if stars != perPage-3 {
+		t.Errorf("%d star fields on blank checklists, want %d", stars, perPage-3)
+	}
+
+	// PF3 lists each one to add, and which are starred.
+	typed := map[string]string{clNewField + "0": "E", clNewStar + "0": "*", clNewField + "1": "F", clNewStar + "2": "*"}
+	r.key(go3270.AIDPF3, 0, typed)
+	if text := strings.Join(r.rows, "\n"); !strings.Contains(text, "Add E (starred)") || !strings.Contains(text, "Add F\n") {
+		t.Errorf("confirmation lacks the adds:\n%s", text)
+	}
+	// Saved, E is starred, F is not, and the star beside no name adds
+	// nothing.
+	r.key(go3270.AIDPF4, 0, nil)
+	if l := r.lists(); len(l) != 5 || l[3].Name != "E" || !l[3].Active || l[4].Name != "F" || l[4].Active {
+		t.Errorf("after adding starred: %+v", l)
+	}
+	r = newChecklistRigOn(t, r.store)
+
+	// On a checklist too, without stars.
+	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
+	if n := blanks(); n != perPage {
+		t.Errorf("empty checklist has %d blank entries, want %d", n, perPage)
+	}
+	for _, f := range r.screen {
+		if strings.HasPrefix(f.Name, clNewStar) {
+			t.Errorf("blank item has a star field: %+v", f)
+		}
+	}
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "1": "socks", clNewField + "0": "passport"})
+	var items []string
+	for _, it := range r.lists()[0].Items {
+		items = append(items, it.Text)
+	}
+	if fmt.Sprint(items) != "[passport socks]" || r.crow != clFirstRow+2 {
+		t.Errorf("items %v, cursor on row %d; want [passport socks], on the first blank", items, r.crow)
+	}
+}
+
+// names are the names of lists, in order.
+func names(lists []checklist.Checklist) []string {
+	var out []string
+	for _, l := range lists {
+		out = append(out, l.Name)
+	}
+	return out
+}
+
 // TestChecklistBackUnsaved checks that PF3 with anything typed asks whether
 // to save it before going back.
 func TestChecklistBackUnsaved(t *testing.T) {
 	r := newChecklistRig(t)
-	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "Trip"})
-	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "Gym"})
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "Trip"})
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "Gym"})
 
 	// On the list: a star, a rename and a checklist to add.
-	typed := map[string]string{"star:1": "*", "name:2": "Gym bag", clNewField: "Work"}
+	typed := map[string]string{"star:1": "*", "name:2": "Gym bag", clNewField + "0": "Work"}
 	if r.key(go3270.AIDPF3, 0, typed) || r.c.held == nil {
 		t.Fatalf("PF3 with changes typed left, or did not ask")
 	}
@@ -297,9 +381,9 @@ func TestChecklistBackUnsaved(t *testing.T) {
 	// without them.
 	r = newChecklistRigOn(t, r.store)
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
-	r.key(go3270.AIDEnter, 0, map[string]string{clNewField: "passport"})
+	r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "passport"})
 	id := r.lists()[0].Items[0].ID
-	typed = map[string]string{fmt.Sprint(clDoneField, id): "X", clNewField: "charger"}
+	typed = map[string]string{fmt.Sprint(clDoneField, id): "X", clNewField + "0": "charger"}
 	r.key(go3270.AIDPF3, 0, typed)
 	text = strings.Join(r.rows, "\n")
 	if r.c.held == nil || !strings.Contains(text, "Check passport") || !strings.Contains(text, "Add charger") {
@@ -335,9 +419,9 @@ func TestChecklistBackUnsaved(t *testing.T) {
 // last checklist, on a page of its own if need be.
 func TestChecklistListPages(t *testing.T) {
 	r := newChecklistRig(t)
-	perPage := checklistRows(24) + 1
+	perPage := checklistRows(24)
 	for i := range perPage {
-		r.key(go3270.AIDEnter, 0, map[string]string{clNewField: fmt.Sprint("list ", i+1)})
+		r.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": fmt.Sprint("list ", i+1)})
 	}
 	if r.c.listPage != 1 || r.crow != clFirstRow || r.rows[clFirstRow] != "" || !strings.Contains(r.rows[clHeaderRow], "page 2/2") {
 		t.Errorf("a full page: page %d, cursor row %d, header %q; want the blank row alone on page 2", r.c.listPage, r.crow, r.rows[clHeaderRow])
@@ -348,7 +432,7 @@ func TestChecklistListPages(t *testing.T) {
 		t.Errorf("page 1 ends %q, %q", r.rows[last], r.rows[last+1])
 	}
 	for _, f := range r.screen {
-		if f.Name == clNewField {
+		if strings.HasPrefix(f.Name, clNewField) {
 			t.Errorf("page 1 has the blank row for adding: %+v", f)
 		}
 	}
@@ -356,13 +440,16 @@ func TestChecklistListPages(t *testing.T) {
 
 func TestChecklistItems(t *testing.T) {
 	r := newChecklistRig(t)
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Trip"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "Trip"})
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
 	if r.c.open != 1 {
 		t.Fatalf("did not open the checklist")
 	}
 	for i := range 20 {
-		r.key(go3270.AIDEnter, 21, map[string]string{clNewField: fmt.Sprint("item ", i+1)})
+		r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": fmt.Sprint("item ", i+1)})
+	}
+	if r.crow != clFirstRow+3 || r.rows[clFirstRow+3] != "" {
+		t.Errorf("after adding, cursor on row %d, row %q; want on the blank item after item 20", r.crow, r.rows[clFirstRow+3])
 	}
 	// Enter with nothing changed, wherever the cursor, stays on the
 	// checklist.
@@ -373,17 +460,19 @@ func TestChecklistItems(t *testing.T) {
 		}
 	}
 
-	// 16 items a page: the one just added is shown, on the second page.
-	if r.c.itemPage != 1 || !strings.Contains(r.rows[clHeaderRow], "0 of 20 done, page 2/2") || r.rows[clFirstRow+3] != "   item 20" {
-		t.Errorf("after adding 20: page %d, header %q, row %q", r.c.itemPage, r.rows[clHeaderRow], r.rows[clFirstRow+3])
+	// 17 rows a page, the last ending with the blank item: the one just
+	// added is shown, on the second page.
+	if r.c.itemPage != 1 || !strings.Contains(r.rows[clHeaderRow], "0 of 20 done, page 2/2") || r.rows[clFirstRow+2] != "   item 20" || r.rows[21] != "" {
+		t.Errorf("after adding 20: page %d, header %q, row %q, row 21 %q; want no row for adding at the bottom",
+			r.c.itemPage, r.rows[clHeaderRow], r.rows[clFirstRow+2], r.rows[21])
 	}
 	r.key(go3270.AIDPF7, 0, nil)
 	if r.rows[clColumnRow] != " S Item" || r.rows[clFirstRow] != "   item 1" || r.crow != clFirstRow {
 		t.Errorf("first page: headings %q, first row %q, cursor row %d", r.rows[clColumnRow], r.rows[clFirstRow], r.crow)
 	}
 	for _, f := range r.screen {
-		if f.Row >= clFirstRow && f.Row < clFirstRow+16 && f.Col == clItemCol && !f.Autoskip {
-			t.Errorf("item after the done field on row %d does not skip on: %+v", f.Row, f)
+		if strings.HasPrefix(f.Name, clNewField) {
+			t.Errorf("first page has the blank item for adding: %+v", f)
 		}
 	}
 
@@ -394,46 +483,48 @@ func TestChecklistItems(t *testing.T) {
 	done := func(text string) string { return fmt.Sprint(clDoneField, ids[text]) }
 	item := func(text string) string { return fmt.Sprint(clItemField, ids[text]) }
 
-	// Items are protected, so that tabbing goes down the done fields.
+	// Items can be typed over.
+	items := 0
 	for _, f := range r.screen {
 		if f.Write && strings.HasPrefix(f.Name, clItemField) {
-			t.Errorf("item field %q can be typed in", f.Name)
+			items++
 		}
 	}
-
-	// PF4 puts the item under the cursor on the bottom row to change, while
-	// the marks typed are saved.
-	r.key(go3270.AIDPF4, clFirstRow+3, map[string]string{done("item 1"): "x", done("item 2"): "X"})
-	if r.c.editing != ids["item 4"] || r.crow != 21 || r.rows[21] != " Change item ===> item 4" {
-		t.Fatalf("PF4: editing %d, cursor row %d, row 21 %q", r.c.editing, r.crow, r.rows[21])
+	if items != 17 {
+		t.Errorf("%d item fields can be typed in, want 17", items)
 	}
-	r.key(go3270.AIDEnter, 0, map[string]string{item("item 4"): "item four"})
-	// Blanked, the item is removed.
-	r.key(go3270.AIDPF4, clFirstRow+2, nil)
-	r.key(go3270.AIDEnter, 0, map[string]string{item("item 3"): ""})
+
+	// An item typed over or blanked is confirmed before anything typed is
+	// saved.
+	r.key(go3270.AIDEnter, 0, map[string]string{done("item 1"): "x", done("item 2"): "X", item("item 4"): "item four", item("item 3"): ""})
+	text := strings.Join(r.rows, "\n")
+	if r.c.held == nil || r.lists()[0].Items[0].Done {
+		t.Fatalf("change and remove: asking %v, items %+v; want asked, nothing saved", r.c.held != nil, r.lists()[0].Items[:4])
+	}
+	for _, want := range []string{"CHANGE ITEMS", "Change 1 item and remove 1 item?", "Check item 1", "Check item 2", "Remove item 3", "Change item 4 to item four"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("confirmation lacks %q:\n%s", want, text)
+		}
+	}
+	r.key(go3270.AIDPF4, 0, nil)
 	got := r.lists()[0].Items
 	if len(got) != 19 || !got[0].Done || !got[1].Done || got[2].Text != "item four" || got[2].Done {
 		t.Fatalf("after marking, removing and changing: %+v", got[:4])
 	}
-	if r.c.editing != 0 || r.rows[clFirstRow] != " X item 1" || !strings.Contains(r.rows[22], "Removed 1 item.") ||
-		!strings.HasPrefix(r.rows[21], " New item ===>") {
-		t.Errorf("editing %d, first row %q, message %q, bottom row %q", r.c.editing, r.rows[clFirstRow], r.rows[22], r.rows[21])
+	if r.c.open != 1 || r.rows[clFirstRow] != " X item 1" || !strings.Contains(r.rows[22], "Changed 1 item. Removed 1 item.") {
+		t.Errorf("open %d, first row %q, message %q", r.c.open, r.rows[clFirstRow], r.rows[22])
+	}
+	// PF12 discards a change, and the marks typed with it.
+	r.key(go3270.AIDEnter, 0, map[string]string{item("item 4"): "nope", done("item 5"): "X"})
+	r.key(go3270.AIDPF12, 0, nil)
+	if got := r.lists()[0].Items; got[2].Text != "item four" || got[3].Done || r.c.open != 1 {
+		t.Errorf("after discarding: %+v, open %d", got[2:4], r.c.open)
 	}
 
-	// PF3 cancels a change, still saving the marks, and stays.
-	r.key(go3270.AIDPF4, clFirstRow+2, nil)
-	if r.key(go3270.AIDPF3, 0, map[string]string{item("item 4"): "nope", done("item 4"): "X"}) || r.c.open == 0 || r.c.editing != 0 {
-		t.Fatalf("PF3 while changing left the checklist, or stayed changing")
-	}
-	if got := r.lists()[0].Items[2]; got.Text != "item four" || !got.Done {
-		t.Errorf("after cancelling: %+v; want the text kept and the mark saved", got)
-	}
-	r.key(go3270.AIDEnter, 0, map[string]string{done("item 4"): ""})
-
-	// PF4 off the items does nothing but say so.
-	r.key(go3270.AIDPF4, 21, nil)
-	if r.c.editing != 0 || !strings.Contains(r.rows[22], "Put the cursor on an item") {
-		t.Errorf("PF4 off the items: editing %d, message %q", r.c.editing, r.rows[22])
+	// PF4 does nothing but say how to change an item.
+	r.key(go3270.AIDPF4, clFirstRow, nil)
+	if !strings.Contains(r.rows[22], "Type over an item") {
+		t.Errorf("PF4 on the items: message %q", r.rows[22])
 	}
 
 	// A bad mark saves nothing and is left to fix, with the rest typed.
@@ -451,11 +542,10 @@ func TestChecklistItems(t *testing.T) {
 	}
 
 	// PF6 saves what was typed, then asks before unchecking everything.
-	r.key(go3270.AIDPF4, clFirstRow+4, nil)
-	r.key(go3270.AIDPF6, 0, map[string]string{item("item 6"): "item six", done("item 1"): "X"})
-	text := strings.Join(r.rows, "\n")
-	if !r.c.confirmReset || r.lists()[0].Items[4].Text != "item six" || !r.lists()[0].Items[0].Done {
-		t.Fatalf("PF6: confirming %v, items %+v; want the change and mark saved, and a confirmation", r.c.confirmReset, r.lists()[0].Items[:5])
+	r.key(go3270.AIDPF6, 0, map[string]string{done("item 1"): "X"})
+	text = strings.Join(r.rows, "\n")
+	if !r.c.confirmReset || !r.lists()[0].Items[0].Done {
+		t.Fatalf("PF6: confirming %v, items %+v; want the mark saved, and a confirmation", r.c.confirmReset, r.lists()[0].Items[:5])
 	}
 	for _, want := range []string{"Uncheck every item of Trip?", "3 items of 19 checked:", "  item 1", "  item 2", "  item 5", "PF4=Uncheck all"} {
 		if !strings.Contains(text, want) {
@@ -523,10 +613,9 @@ func TestChecklistItems(t *testing.T) {
 func TestChecklistLongText(t *testing.T) {
 	r := newChecklistRig(t)
 	long := strings.Repeat("abcdefghij", 12)
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: long})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": long})
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: long})
-	r.key(go3270.AIDPF4, clFirstRow, nil)
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": long})
 	r.key(go3270.AIDEnter, 0, map[string]string{"done:2": "X"})
 	l := r.lists()[0]
 	if l.Name != long || l.Items[0].Text != long || !l.Items[0].Done {
@@ -538,10 +627,10 @@ func TestChecklistLongText(t *testing.T) {
 // on it: a change another session made since it drew its screen stays.
 func TestChecklistSessionsMerge(t *testing.T) {
 	a := newChecklistRig(t)
-	a.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Trip"})
+	a.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "Trip"})
 	a.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
-	a.key(go3270.AIDEnter, 21, map[string]string{clNewField: "passport"})
-	a.key(go3270.AIDEnter, 21, map[string]string{clNewField: "charger"})
+	a.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "passport"})
+	a.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "charger"})
 
 	b := newChecklistRigOn(t, a.store)
 	b.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
@@ -568,10 +657,10 @@ func TestChecklistSessionsMerge(t *testing.T) {
 
 func TestChecklistItemColors(t *testing.T) {
 	r := newChecklistRig(t)
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Trip"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "Trip"})
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "passport"})
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "charger"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "passport"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "charger"})
 	r.key(go3270.AIDEnter, 0, map[string]string{"done:2": "X"})
 	colors := map[string]go3270.Color{}
 	for _, f := range r.screen {
@@ -603,7 +692,7 @@ func TestChecklistViewers(t *testing.T) {
 	}
 
 	r := newChecklistRig(t)
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "Trip"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "Trip"})
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:1": "S"})
 	if strings.Contains(r.rows[clHeaderRow], "viewing") {
 		t.Errorf("alone, header is %q", r.rows[clHeaderRow])
@@ -620,11 +709,11 @@ func TestChecklistViewers(t *testing.T) {
 func TestChecklistStars(t *testing.T) {
 	r := newChecklistRig(t)
 	for _, name := range []string{"A", "B", "C", "D"} {
-		r.key(go3270.AIDEnter, 21, map[string]string{clNewField: name})
+		r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": name})
 	}
 	// Give B an item not done, so its count is red; A, C and D have none.
 	r.key(go3270.AIDEnter, 0, map[string]string{"sel:2": "S"})
-	r.key(go3270.AIDEnter, 21, map[string]string{clNewField: "thing"})
+	r.key(go3270.AIDEnter, 21, map[string]string{clNewField + "0": "thing"})
 	r.key(go3270.AIDPF3, 0, nil)
 
 	names := func() []string {

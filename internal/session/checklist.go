@@ -3,7 +3,6 @@ package session
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -18,18 +17,15 @@ import (
 
 // Checklist screen layout, for both the list of checklists and one
 // checklist's items: the heading, the column headings, one entry per row,
-// then a blank row, the row for adding an entry (on a checklist only), and
-// the message and help rows.
+// the last page filled out with blank entries, typed in to add more, then
+// a blank row and the message and help rows.
 //
 // On the list, each row is a one-character selection field, a one-character
 // star field, the checklist's name, then how many of its items are done.
 // The star field shows a * for a checklist starred as active; those are
-// listed first. Names are
-// typed over to rename a checklist, or blanked to remove it, which is saved
-// only once confirmed. After the last checklist is a blank name, typed in to
-// add one. On a checklist, each row is a one-character done field, then the
-// item. Items are protected, so that tabbing goes straight down the done
-// fields; one is changed on the row for adding, which PF4 turns over to it.
+// listed first. On a checklist, each row is a one-character done field,
+// then the item. Names and items are typed over to change them, or blanked
+// to remove them, which is saved only once confirmed.
 const (
 	clHeaderRow  = 2
 	clColumnRow  = 3
@@ -45,11 +41,11 @@ const (
 	clNameField = "name:"
 	clDoneField = "done:"
 	clItemField = "item:"
-	clNewField  = "new"
+	clNewField  = "new:"     // then which blank entry, from 0
+	clNewStar   = "newstar:" // a blank checklist's star field, then which one
 
 	clListPrompt = "S opens, * stars. Type over a name to rename it; blank it to remove it."
-	clItemPrompt = "Type X beside items done. At the cursor: PF4 changes, PF10/PF11 move up/down."
-	clEditPrompt = "Change the item, or blank it to remove it, then press Enter. PF3 cancels."
+	clItemPrompt = "X marks done. Type over an item to change it; blank it to remove it."
 )
 
 // errChecklistGone reports that the checklist shown was removed by another
@@ -76,10 +72,6 @@ type checklistState struct {
 	// be fixed.
 	typed map[string]string
 
-	// editing is the item being changed on the bottom row, zero while it
-	// is for adding.
-	editing int
-
 	// held, while set, is a key held for confirmation of what was typed
 	// with it, which is shown in place of the screen.
 	held *heldKey
@@ -96,8 +88,8 @@ type checklistState struct {
 	// this redraw.
 	others int
 
-	// cursorOnNew puts the cursor on the row for adding, after an entry
-	// has been added from there.
+	// cursorOnNew puts the cursor on the first blank entry, after entries
+	// have been added from the blank ones.
 	cursorOnNew bool
 
 	message string
@@ -117,9 +109,10 @@ type heldKey struct {
 // leaving is whether the key held is PF3, going back.
 func (h *heldKey) leaving() bool { return h.resp.AID == go3270.AIDPF3 }
 
-// checklistRows is how many entries fit on one page of a checklist screen.
+// checklistRows is how many entries, or blank ones for adding, fit on one
+// page of a checklist screen.
 func checklistRows(rows int) int {
-	return max(rows-clFirstRow-4, 1)
+	return max(rows-clFirstRow-3, 1)
 }
 
 // pageRange is which of n entries, perPage at a time, are on page, clamped
@@ -169,19 +162,17 @@ func buildChecklist(rows, cols int, now time.Time, lists []checklist.Checklist, 
 		if loadErr == nil {
 			c.message, c.isError = "That checklist has been removed.", true
 		}
-		c.open, c.editing, c.typed, c.confirmReset = 0, 0, nil, false
+		c.open, c.typed, c.confirmReset = 0, nil, false
 	}
 	return buildChecklistList(rows, cols, now, lists, loadErr, c)
 }
 
 // buildChecklistList renders one page of the checklists, the last page
-// ending with the blank row for adding one.
+// filled out with blank entries for adding more.
 func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checklist, loadErr error, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "CHECKLISTS", now, false)
 	lists = listOrder(lists)
-	// With no row for adding below, the list has a row more than a
-	// checklist does.
-	perPage := checklistRows(rows) + 1
+	perPage := checklistRows(rows)
 	followed := slices.IndexFunc(lists, func(l checklist.Checklist) bool { return l.ID == c.follow })
 	if followed >= 0 {
 		c.listPage = followed / perPage
@@ -189,6 +180,9 @@ func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checkli
 	c.follow = 0
 	shownPage, totalPages, start, end := pageRange(len(lists)+1, perPage, c.listPage)
 	c.listPage = shownPage
+	if end > len(lists) {
+		end = start + perPage // the last page, filled out with blank entries
+	}
 
 	header := line{{Content: "CHECKLISTS", Color: go3270.Turquoise, Intense: true}}
 	if loadErr != nil {
@@ -208,16 +202,8 @@ func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checkli
 	nameWidth := cols - clCountWidth - clNameCol - 1
 	for i := start; i < end; i++ {
 		row := clFirstRow + i - start
-		if i == len(lists) {
-			// The blank row for adding, ended where a name would be.
-			screen = append(screen,
-				go3270.Field{Row: row, Col: 0},
-				go3270.Field{
-					Row: row, Col: clNameCol, Write: true, Name: clNewField, Content: c.typed[clNewField],
-					Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
-				},
-				go3270.Field{Row: row, Col: cols - clCountWidth},
-			)
+		if i >= len(lists) {
+			screen = appendNewEntry(screen, row, i-len(lists), clNameCol, cols-clCountWidth, true, c)
 			continue
 		}
 		l := lists[i]
@@ -259,18 +245,48 @@ func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checkli
 	}
 	screen = appendChecklistMessage(screen, rows, cols, c, clListPrompt,
 		"PF3=Back PF7=Up PF8=Down PF10/11=Move Enter=Save, open selected")
+	cursorRow, cursorCol = entryCursor(followed, start, end, len(lists), clNameCol, c)
+	return screen, cursorRow, cursorCol
+}
 
-	// The cursor goes to the checklist just moved, else the first on the
-	// page, else (or just after adding one) the blank row.
+// appendNewEntry adds blank entry k for adding one on row, its input
+// field's attribute byte in column col, ended at column stop, with a star
+// field before it for a checklist.
+func appendNewEntry(screen go3270.Screen, row, k, col, stop int, star bool, c *checklistState) go3270.Screen {
+	name := clNewField + strconv.Itoa(k)
+	// Ends the field before, as an entry's first field would.
+	screen = append(screen, go3270.Field{Row: row, Col: 0})
+	if star {
+		starName := clNewStar + strconv.Itoa(k)
+		screen = append(screen, go3270.Field{
+			Row: row, Col: clStarCol, Write: true, Name: starName, Content: c.typed[starName],
+			Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+		})
+	}
+	return append(screen,
+		go3270.Field{
+			Row: row, Col: col, Write: true, Name: name, Content: c.typed[name],
+			Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+		},
+		go3270.Field{Row: row, Col: stop},
+	)
+}
+
+// entryCursor is where the cursor goes on a page showing entries start to
+// end of n, then any blank ones for adding, whose input fields' attribute
+// bytes are in column newCol: to the entry just moved (followed, -1 for
+// none), else the first on the page, else (or just after adding) the first
+// blank entry.
+func entryCursor(followed, start, end, n, newCol int, c *checklistState) (row, col int) {
 	switch {
 	case followed >= 0:
-		return screen, clFirstRow + followed - start, 1
-	case start < len(lists) && !c.cursorOnNew:
-		return screen, clFirstRow, 1
-	case end > len(lists):
-		return screen, clFirstRow + len(lists) - start, clNameCol + 1
+		return clFirstRow + followed - start, 1
+	case start < n && !c.cursorOnNew:
+		return clFirstRow, 1
+	case end > n:
+		return clFirstRow + n - start, newCol + 1
 	}
-	return screen, clFirstRow, 1
+	return clFirstRow, 1
 }
 
 // listOrder is lists in the order the list shows them: those starred first,
@@ -288,7 +304,8 @@ func listOrder(lists []checklist.Checklist) []checklist.Checklist {
 	return out
 }
 
-// buildChecklistItems renders one page of the items of l.
+// buildChecklistItems renders one page of the items of l, the last page
+// filled out with blank entries for adding more.
 func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	c.openName = l.Name
 	screen = titleFields(cols, "CHECKLIST", now, false)
@@ -298,8 +315,11 @@ func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c
 		c.itemPage = followed / perPage
 	}
 	c.follow = 0
-	shownPage, totalPages, start, end := pageRange(len(l.Items), perPage, c.itemPage)
+	shownPage, totalPages, start, end := pageRange(len(l.Items)+1, perPage, c.itemPage)
 	c.itemPage = shownPage
+	if end > len(l.Items) {
+		end = start + perPage // the last page, filled out with blank entries
+	}
 
 	done := 0
 	for _, it := range l.Items {
@@ -326,17 +346,22 @@ func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c
 	}
 	screen = append(screen, placeLine(clHeaderRow, cols, header)...)
 
-	if end > start {
-		// Aligned with an item row: the done mark in column 1, the item
-		// from column 3. The first item's done field stops the underline.
-		const headings = "S Item"
-		screen = append(screen, go3270.Field{
-			Row: clColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
-			Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
-		})
-	}
-	for i, it := range l.Items[start:end] {
-		row := clFirstRow + i
+	// Aligned with an item row: the done mark in column 1, the item from
+	// column 3. The first row's field in column 0 stops the underline.
+	const headings = "S Item"
+	screen = append(screen, go3270.Field{
+		Row: clColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
+		Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
+	})
+	// An item runs to the last column, where a field ends it.
+	textWidth := cols - clItemCol - 2
+	for i := start; i < end; i++ {
+		row := clFirstRow + i - start
+		if i >= len(l.Items) {
+			screen = appendNewEntry(screen, row, i-len(l.Items), clItemCol, cols-1, false, c)
+			continue
+		}
+		it := l.Items[i]
 		c.rowIDs[row] = it.ID
 		id := strconv.Itoa(it.ID)
 		mark := ""
@@ -353,32 +378,18 @@ func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c
 				Row: row, Col: 0, Write: true, Name: clDoneField + id, Content: c.fieldValue(clDoneField+id, mark),
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
-			// Autoskip sends the cursor on to the next item's done field
-			// once a mark is typed, rather than into the item.
 			go3270.Field{
-				Row: row, Col: clItemCol, Content: truncate(it.Text, cols-clItemCol-1),
-				Color: color, Intense: intense, Autoskip: true,
+				Row: row, Col: clItemCol, Write: true, Name: clItemField + id,
+				Content: c.fieldValue(clItemField+id, cutRunes(it.Text, textWidth)),
+				Color:   color, Intense: intense, Highlighting: go3270.Underscore,
 			},
+			go3270.Field{Row: row, Col: cols - 1},
 		)
 	}
-
-	// The item being changed is on the bottom row in place of adding one,
-	// unless it has gone.
-	i := slices.IndexFunc(l.Items, func(it checklist.Item) bool { return it.ID == c.editing })
-	if i < 0 {
-		c.editing = 0
-		screen, cursorRow, cursorCol = appendChecklistFooter(screen, rows, cols, c, "New item ===>", clNewField, c.typed[clNewField], clItemPrompt,
-			"PF3=Back PF4=Change PF6=Reset all PF7=Up PF8=Down PF10/11=Move Enter=Save", end > start)
-		if followed >= 0 {
-			cursorRow, cursorCol = clFirstRow+followed-start, 1
-		}
-		return screen, cursorRow, cursorCol
-	}
-	const label = "Change item ===>"
-	name := clItemField + strconv.Itoa(c.editing)
-	text := c.fieldValue(name, cutRunes(l.Items[i].Text, cols-len(label)-3))
-	return appendChecklistFooter(screen, rows, cols, c, label, name, text, clEditPrompt,
-		"PF3=Cancel change PF6=Reset all PF7=Up PF8=Down PF10/11=Move Enter=Save", end > start)
+	screen = appendChecklistMessage(screen, rows, cols, c, clItemPrompt,
+		"PF3=Back PF6=Reset all PF7=Up PF8=Down PF10/11=Move Enter=Save")
+	cursorRow, cursorCol = entryCursor(followed, start, end, len(l.Items), clItemCol, c)
+	return screen, cursorRow, cursorCol
 }
 
 // buildResetConfirm renders the confirmation for unchecking every item of
@@ -420,11 +431,11 @@ func buildResetConfirm(rows, cols int, now time.Time, l checklist.Checklist) go3
 
 // buildHeldConfirm renders the confirmation for what was typed with the key
 // held, on the list or, with open, on that checklist: when going back,
-// whether to save it first, else whether to rename and remove the
-// checklists whose names were typed over.
+// whether to save it first, else whether to change and remove the
+// checklists or items typed over.
 func buildHeldConfirm(rows, cols int, now time.Time, lists []checklist.Checklist, open int, held *heldKey) go3270.Screen {
 	edits, marks, bad := typedChanges(held.shown, held.resp.Values)
-	changes, renames, removes := describeChanges(lists, open, edits, marks, held.resp.Values[clNewField])
+	changes, renames, removes := describeChanges(lists, open, edits, marks, typedAdds(held.resp.Values))
 	if bad != "" {
 		changes = append([]line{{{Content: bad, Color: go3270.Red, Intense: true}}}, changes...)
 	}
@@ -433,15 +444,19 @@ func buildHeldConfirm(rows, cols int, now time.Time, lists []checklist.Checklist
 	prompt := "Press PF4 to save and go back, PF12 to discard and go back, or PF3 to return."
 	help := "PF3=Return PF4=Save and go back PF12=Discard and go back"
 	if !held.leaving() {
-		title, question = "CHANGE CHECKLISTS", "Those checklists have been removed by another session."
+		noun, verb := "checklist", "rename "
+		if open != 0 {
+			noun, verb = "item", "change "
+		}
+		title, question = "CHANGE "+strings.ToUpper(noun)+"S", "Those "+noun+"s have been removed by another session."
 		prompt = "Press PF4 to save, PF3 to go back to what was typed, or PF12 to discard it."
 		help = "PF3=Back PF4=Save PF12=Discard"
 		var asked []string
 		if renames > 0 {
-			asked = append(asked, "rename "+countText(renames, "checklist", 0, 1))
+			asked = append(asked, verb+countText(renames, noun, 0, 1))
 		}
 		if removes > 0 {
-			asked = append(asked, "remove "+countText(removes, "checklist", 0, 1))
+			asked = append(asked, "remove "+countText(removes, noun, 0, 1))
 		}
 		if len(asked) > 0 {
 			q := strings.Join(asked, " and ")
@@ -470,12 +485,12 @@ func buildHeldConfirm(rows, cols int, now time.Time, lists []checklist.Checklist
 	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
 }
 
-// describeChanges is a line for each change typed: on the list (open zero)
-// the names changed or blanked, with how many were renamed and removed,
-// and the stars; on checklist open, the items changed or blanked and the
-// marks; then on either, what was typed to add. Entries another session
+// describeChanges is a line for each change typed, with how many names or
+// items were changed and how many removed: on the list (open zero) the
+// names changed or blanked, and the stars; on checklist open, the items
+// changed or blanked, and the marks; then on either, what was typed to add. Entries another session
 // has removed since are left out.
-func describeChanges(lists []checklist.Checklist, open int, edits map[int]string, marks map[int]bool, added string) (changes []line, renames, removes int) {
+func describeChanges(lists []checklist.Checklist, open int, edits map[int]string, marks map[int]bool, added []newEntry) (changes []line, renames, removes int) {
 	change := func(verb string, color go3270.Color, l line) {
 		changes = append(changes, append(line{{Content: verb, Color: color, Intense: true}}, l...))
 	}
@@ -512,8 +527,10 @@ func describeChanges(lists []checklist.Checklist, open int, edits map[int]string
 	} else if i := slices.IndexFunc(lists, func(l checklist.Checklist) bool { return l.ID == open }); i >= 0 {
 		for _, it := range lists[i].Items {
 			if text, ok := edits[it.ID]; ok && text == "" {
+				removes++
 				change("Remove", go3270.Red, line{{Content: it.Text, Color: go3270.Turquoise, Intense: true}})
 			} else if ok {
+				renames++
 				change("Change", go3270.Yellow, line{
 					{Content: it.Text, Color: go3270.Turquoise},
 					{Content: "to", Color: go3270.Blue},
@@ -529,34 +546,14 @@ func describeChanges(lists []checklist.Checklist, open int, edits map[int]string
 			}
 		}
 	}
-	if added != "" {
-		change("Add", go3270.Green, line{{Content: added, Color: go3270.Turquoise, Intense: true}})
+	for _, a := range added {
+		l := line{{Content: a.text, Color: go3270.Turquoise, Intense: true}}
+		if a.star {
+			l = append(l, go3270.Field{Content: "(starred)", Color: go3270.Blue})
+		}
+		change("Add", go3270.Green, l)
 	}
 	return changes, renames, removes
-}
-
-// appendChecklistFooter adds the row for adding an entry (or changing one),
-// its input field called name and holding content, then the message and
-// help rows, and returns where the cursor goes: the first entry if there is
-// one, else the bottom row, which it also goes to while changing an item or
-// just after adding one.
-func appendChecklistFooter(screen go3270.Screen, rows, cols int, c *checklistState, label, name, content, prompt, help string, entries bool) (go3270.Screen, int, int) {
-	newRow, newCol := rows-3, len(label)+1
-	screen = append(screen,
-		go3270.Field{Row: newRow, Col: 0, Color: go3270.Turquoise, Content: label},
-		go3270.Field{
-			Row: newRow, Col: newCol, Write: true, Name: name, Content: content,
-			Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
-		},
-		// Ends the input field at the edge of the screen.
-		go3270.Field{Row: newRow, Col: cols - 1},
-	)
-	screen = appendChecklistMessage(screen, rows, cols, c, prompt, help)
-
-	if entries && !c.cursorOnNew && c.editing == 0 {
-		return screen, clFirstRow, 1
-	}
-	return screen, newRow, newCol + 1
 }
 
 // appendChecklistMessage adds the message row, showing prompt when there is
@@ -571,6 +568,32 @@ func appendChecklistMessage(screen go3270.Screen, rows, cols int, c *checklistSt
 	}
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: c.isError}})...)
 	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
+}
+
+// newEntry is what was typed on a blank entry: the name or item, and for a
+// checklist, whether its star field was typed in.
+type newEntry struct {
+	text string
+	star bool
+}
+
+// typedAdds is what was typed on the blank entries for adding, in the order
+// shown. A star typed beside no name adds nothing.
+func typedAdds(values map[string]string) []newEntry {
+	var ks []int
+	for name, v := range values {
+		if k, ok := strings.CutPrefix(name, clNewField); ok && v != "" {
+			if n, err := strconv.Atoi(k); err == nil {
+				ks = append(ks, n)
+			}
+		}
+	}
+	slices.Sort(ks)
+	added := make([]newEntry, len(ks))
+	for i, k := range ks {
+		added[i] = newEntry{values[clNewField+strconv.Itoa(k)], values[clNewStar+strconv.Itoa(k)] != ""}
+	}
+	return added
 }
 
 // countText is "n nouns", with the page when there is more than one.
@@ -589,14 +612,12 @@ func countText(n int, noun string, page, totalPages int) string {
 // whether to leave for the dashboard. Whatever was typed is saved first,
 // whatever the key; if it cannot be, it is left on the screen to fix and the
 // key does nothing more. Then PF3 goes back (to the list from a checklist),
-// PF4 changes the item the key acts on (see target), PF10 and PF11 move the
-// entry up and down, PF6 asks to uncheck every item of the checklist, PF7
-// and PF8 page, and Enter on the list opens the checklist selected, wherever
-// the cursor is. PF3 while changing an item cancels the change, saving the
-// rest.
+// PF10 and PF11 move the entry the key acts on (see target) up and down,
+// PF6 asks to uncheck every item of the checklist, PF7 and PF8 page, and
+// Enter on the list opens the checklist selected, wherever the cursor is.
 //
 // Going back with PF3 with anything typed (but a selection) asks first
-// whether to save it, as does any key on the list with a name typed over or
+// whether to save it, as does any key with a name or item typed over or
 // blanked. There, PF4 saves it all, then if the key was PF3 or Enter, does
 // what that key does; any other key does nothing more. PF12 discards it,
 // then goes back if the key was PF3. PF3 returns to the screen with it all
@@ -652,17 +673,11 @@ func (c *checklistState) handleKey(resp go3270.Response, store *checklist.Store,
 		}
 		return false
 	}
-	editing := c.editing
 	values := resp.Values
-	if resp.AID == go3270.AIDPF3 && editing != 0 {
-		values = maps.Clone(values)
-		delete(values, clItemField+strconv.Itoa(editing))
-	}
 	if !confirmed {
 		edits, marks, bad := typedChanges(c.shown, values)
-		unsaved := bad != "" || len(edits) > 0 || len(marks) > 0 || values[clNewField] != ""
-		leaving := resp.AID == go3270.AIDPF3 && editing == 0
-		if leaving && unsaved || c.open == 0 && len(edits) > 0 {
+		unsaved := bad != "" || len(edits) > 0 || len(marks) > 0 || len(typedAdds(values)) > 0
+		if resp.AID == go3270.AIDPF3 && unsaved || len(edits) > 0 {
 			c.held = &heldKey{resp: resp, shown: c.shown, rowIDs: c.rowIDs}
 			return false
 		}
@@ -681,7 +696,6 @@ func (c *checklistState) handleKey(resp go3270.Response, store *checklist.Store,
 		c.typed, c.message, c.isError = resp.Values, bad, true
 		return false
 	}
-	c.editing = 0
 
 	page := &c.listPage
 	if c.open != 0 {
@@ -689,18 +703,14 @@ func (c *checklistState) handleKey(resp go3270.Response, store *checklist.Store,
 	}
 	switch resp.AID {
 	case go3270.AIDPF3:
-		switch {
-		case editing != 0:
-		case c.open == 0:
-			return true
-		default:
-			c.open, c.itemPage = 0, 0
-		}
-	case go3270.AIDPF4:
 		if c.open == 0 {
-			c.message, c.isError = "Type over a name to rename the checklist, or blank it to remove it.", true
-		} else if id, ok := c.target(resp, selected, "PF4"); ok {
-			c.editing = id
+			return true
+		}
+		c.open, c.itemPage = 0, 0
+	case go3270.AIDPF4:
+		c.message, c.isError = "Type over a name to rename the checklist, or blank it to remove it.", true
+		if c.open != 0 {
+			c.message = "Type over an item to change it, or blank it to remove it."
 		}
 	case go3270.AIDPF10, go3270.AIDPF11:
 		id, ok := c.target(resp, selected, "PF10 or PF11")
@@ -831,22 +841,22 @@ func typedChanges(drawn, values map[string]string) (edits map[int]string, marks 
 }
 
 // save applies what was typed over the fields drawn last, and what was
-// typed on the row for adding. Nothing is saved if anything typed cannot
+// typed on the blank entries for adding. Nothing is saved if anything typed cannot
 // be; bad then says why.
 func (c *checklistState) save(values map[string]string, store *checklist.Store) (bad string, err error) {
 	edits, marks, bad := typedChanges(c.shown, values)
 	if bad != "" {
 		return bad, nil
 	}
-	added := values[clNewField]
-	if len(edits) == 0 && len(marks) == 0 && added == "" {
+	added := typedAdds(values)
+	if len(edits) == 0 && len(marks) == 0 && len(added) == 0 {
 		return "", nil
 	}
 
-	removed, renamed := 0, 0
+	removed, changed := 0, 0
 	open := c.open
 	err = store.Update(func(lists *[]checklist.Checklist, nextID func() int) error {
-		removed, renamed = 0, 0
+		removed, changed = 0, 0
 		if open == 0 {
 			*lists = slices.DeleteFunc(*lists, func(l checklist.Checklist) bool {
 				v, ok := edits[l.ID]
@@ -858,14 +868,14 @@ func (c *checklistState) save(values map[string]string, store *checklist.Store) 
 			for i, l := range *lists {
 				if v, ok := edits[l.ID]; ok {
 					(*lists)[i].Name = v
-					renamed++
+					changed++
 				}
 				if active, ok := marks[l.ID]; ok {
 					(*lists)[i].Active = active
 				}
 			}
-			if added != "" {
-				*lists = append(*lists, checklist.Checklist{ID: nextID(), Name: added})
+			for _, a := range added {
+				*lists = append(*lists, checklist.Checklist{ID: nextID(), Name: a.text, Active: a.star})
 			}
 			return nil
 		}
@@ -886,13 +896,14 @@ func (c *checklistState) save(values map[string]string, store *checklist.Store) 
 			it := &l.Items[j]
 			if v, ok := edits[it.ID]; ok {
 				it.Text = v
+				changed++
 			}
 			if done, ok := marks[it.ID]; ok {
 				it.Done = done
 			}
 		}
-		if added != "" {
-			l.Items = append(l.Items, checklist.Item{ID: nextID(), Text: added})
+		for _, a := range added {
+			l.Items = append(l.Items, checklist.Item{ID: nextID(), Text: a.text})
 		}
 		return nil
 	})
@@ -900,20 +911,20 @@ func (c *checklistState) save(values map[string]string, store *checklist.Store) 
 		return "", err
 	}
 
-	noun := "item"
+	noun, verb := "item", "Changed "
 	if open == 0 {
-		noun = "checklist"
+		noun, verb = "checklist", "Renamed "
 	}
 	var done []string
-	if renamed > 0 {
-		done = append(done, "Renamed "+countText(renamed, noun, 0, 1)+".")
+	if changed > 0 {
+		done = append(done, verb+countText(changed, noun, 0, 1)+".")
 	}
 	if removed > 0 {
 		done = append(done, "Removed "+countText(removed, noun, 0, 1)+".")
 	}
 	c.message = strings.Join(done, " ")
-	if added != "" {
-		// Show the new entry, at the end, and stay ready to add another.
+	if len(added) > 0 {
+		// Show the new entries, at the end, and stay ready to add more.
 		c.cursorOnNew = true
 		if open == 0 {
 			c.listPage = math.MaxInt

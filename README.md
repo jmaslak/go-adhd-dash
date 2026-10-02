@@ -308,15 +308,16 @@ checklists, with how many of each one's items are done: green when they
 all are, red when some are not.
 
 On the list, each checklist's row has an `S` column, to select it, a `*`
-column, to star it, then its name, which can be typed over. On a checklist,
-items are protected, so `Tab` goes straight down the column of `X` fields
-to their left.
+column, to star it, then its name. On a checklist, each item's row has an
+`X` column, to check it off, then the item. Names and items can be typed
+over.
 
-- on the list, type a name on the blank row after the last checklist (on
-  the last page) and press `Enter` to add it; the cursor goes to the blank
-  row after it, to add another;
-- on a checklist, type an item on the `New item ===>` row and press
-  `Enter` to add it at the end; the cursor stays there to add another;
+- type names, or items, on the blank rows that fill out the last page
+  after the last one, and press `Enter` to add them, in order (rows left
+  blank are skipped); the cursor goes to the first blank row after them,
+  to add more. A full last page is followed by a page of blank rows. On
+  the list, each blank row has a `*` column too: type in it to add the
+  checklist starred (it does nothing without a name beside it);
 - on the list, type `S` (or any character) in a checklist's `S` column
   and press `Enter` to open it, wherever the cursor is. Without one typed,
   `Enter` opens nothing;
@@ -327,31 +328,27 @@ to their left.
   cannot be moved with `PF10` / `PF11`, and unstarred ones move past them;
 - on a checklist, type `X` beside an item to check it off, or blank the
   `X` to uncheck it. Items still to do are red, those done green;
-- on the list, type over a name to rename the checklist, or blank it to
-  remove the checklist and its items. Nothing is saved until it is
-  confirmed: the next key shows the renames and removals, with each
-  removed checklist's item count, and everything else typed alongside;
-  `PF4` there saves it all (then, if the key was `Enter`, opens the
-  checklist selected), `PF3` goes back to the list with it all still
-  typed, to change, and `PF12` discards it all;
-- to change an item, press `PF4` on it: it moves to the bottom row, now
-  `Change item ===>`, to be typed over, or blanked to remove it, then
-  `Enter`.
+- type over a name or an item to change it, or blank it to remove it (a
+  checklist's items go with it). Nothing is saved until it is confirmed:
+  the next key shows the changes and removals, with each removed
+  checklist's item count, and everything else typed alongside; `PF4`
+  there saves it all (then, if the key was `Enter`, opens the checklist
+  selected), `PF3` goes back with it all still typed, to change, and
+  `PF12` discards it all.
 
 `PF10` and `PF11` act on the checklist selected, or with none selected,
-the one the cursor is on; on a checklist, `PF4`, `PF10` and `PF11` act on
-the item the cursor is on. Selecting more than one checklist is refused, with the selections left
-to fix.
+the one the cursor is on; on a checklist, on the item the cursor is on.
+Selecting more than one checklist is refused, with the selections left to
+fix.
 
 Whatever is typed is saved with the next key, whichever key it is, except
-that a name typed over or blanked asks for confirmation first (and the
-key, unless it is `Enter`, does nothing else), and so does `PF3` with
+that a name or item typed over or blanked asks for confirmation first (and
+the key, unless it is `Enter`, does nothing else), and so does `PF3` with
 anything typed. If a mark is anything but `X` or blank, nothing is saved
 and what was typed is left on the screen to fix.
 
 - `Enter`: save; on the list, open the checklist selected (unless it is
   being removed)
-- `PF4` (on a checklist): change or remove an item
 - `PF10` / `PF11`: move a checklist (not a starred one) or an item up /
   down; the cursor goes with it, onto the next page if need be, so the key
   can be pressed again
@@ -361,8 +358,7 @@ and what was typed is left on the screen to fix.
 - `PF3`: back (from a checklist, to the list). With anything typed but a
   selection, it first lists what was typed and asks: `PF4` saves it and
   goes back, `PF12` discards it and goes back, and `PF3` returns to the
-  screen with it still typed. While changing an item, `PF3` cancels the
-  change instead, saving any marks typed
+  screen with it still typed
 
 Neither screen redraws on a timer, since that would wipe what was typed but
 not yet saved.
