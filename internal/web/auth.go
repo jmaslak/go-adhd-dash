@@ -525,7 +525,7 @@ only on its own sign-in page, at <code>{{.ProviderHost}}</code>, after you
 choose to connect.</p></div>
 {{if .Message}}<p class="{{if .IsError}}error{{else}}ok{{end}}">{{.Message}}</p>{{end}}
 <form method="post" action="{{.Here}}/login">
-<p><label>{{.AppName}} user name<br><input name="name" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label></p>
+<p><label>{{.AppName}} user name<br><input name="name" maxlength="{{maxName}}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label></p>
 <p><label>{{.AppName}} password (not your {{.Provider}} password)<br><input name="password" type="password" autocomplete="current-password" required></label></p>
 <p><button type="submit">Sign in</button></p>
 </form>

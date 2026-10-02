@@ -351,7 +351,8 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 }
 
 // Validate reports why list is not a valid set of users: a name empty,
-// holding a space, or used twice (ignoring case), a user both an admin and
+// holding a space, longer than MaxNameLength, or used twice (ignoring
+// case), a user both an admin and
 // restricted, or both restricted and controlling the busy light, no admin,
 // or not exactly one user the console's.
 func Validate(list []User) error {
@@ -363,6 +364,8 @@ func Validate(list []User) error {
 			return errors.New("a user must have a name")
 		case strings.ContainsAny(u.Name, " \t"):
 			return fmt.Errorf("user name %q has a space in it", u.Name)
+		case utf8.RuneCountInString(u.Name) > MaxNameLength:
+			return fmt.Errorf("user name %q is longer than %d characters", u.Name, MaxNameLength)
 		case strings.ContainsFunc(u.Name, unicode.IsControl):
 			return fmt.Errorf("user name %q has a control character in it", u.Name)
 		case seen[key]:
@@ -444,6 +447,9 @@ func defaultConsole(list []User) {
 		list[pick].Console = true
 	}
 }
+
+// MaxNameLength is the most characters a user name may have.
+const MaxNameLength = 8
 
 // MinPasswordLength is the fewest characters a password may have.
 const MinPasswordLength = 8

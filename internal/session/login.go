@@ -176,13 +176,14 @@ func buildLogin(rows, cols int, now time.Time, lu string, l *loginState) (screen
 
 	fieldCol := len(loginNameLbl) + 1
 	end := min(fieldCol+1+loginWidth, cols-1)
+	nameEnd := min(fieldCol+1+users.MaxNameLength, cols-1)
 	screen = append(screen,
 		go3270.Field{Row: loginNameRow, Col: 0, Color: go3270.Turquoise, Content: loginNameLbl},
 		go3270.Field{
-			Row: loginNameRow, Col: fieldCol, Write: true, Name: loginField, Content: cutRunes(l.name, loginWidth),
+			Row: loginNameRow, Col: fieldCol, Write: true, Name: loginField, Content: cutRunes(l.name, users.MaxNameLength),
 			Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 		},
-		go3270.Field{Row: loginNameRow, Col: end},
+		go3270.Field{Row: loginNameRow, Col: nameEnd},
 		go3270.Field{Row: loginPassRow, Col: 0, Color: go3270.Turquoise, Content: loginPassLbl},
 		go3270.Field{
 			Row: loginPassRow, Col: fieldCol, Write: true, Hidden: true, Name: loginPassword,

@@ -187,6 +187,12 @@ hidden, and `Enter`. It is refused if the current one is wrong, the two
 new ones differ, or it is the same as the old one; `admin` cannot go back
 to the default password `admin`.
 
+A user name has at most 8 characters, no spaces, and is unique, ignoring
+case; the login screen's and the user editor's name fields hold no more.
+The rule holds for the whole users file: one with a longer name in it
+(written by hand, or by an older version) refuses every change until that
+name is shortened, and says which.
+
 A password, set here or by an admin (adding a user, or `P` in the user
 editor), must have at least 8 characters, and must not contain the user
 name, in any case. Passwords set before this rule keep working. Three wrong current passwords go back to

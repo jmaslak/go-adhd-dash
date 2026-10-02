@@ -54,7 +54,7 @@ const (
 	usNewRes        = "unewres"
 	usNewPassword   = "unewpw"
 
-	usNewNameWidth  = 20
+	usNewNameWidth  = users.MaxNameLength
 	usPasswordWidth = 30
 
 	// usersHashWait is how long hashing a password waits for a slot
@@ -220,9 +220,11 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 		screen = append(screen,
 			go3270.Field{Row: topRow, Col: 0, Color: go3270.Turquoise, Content: nameLabel},
 			go3270.Field{
-				Row: topRow, Col: nameCol, Write: true, Name: usNewName, Content: u.typed[usNewName],
+				Row: topRow, Col: nameCol, Write: true, Name: usNewName, Content: cutRunes(u.typed[usNewName], usNewNameWidth),
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
+			// Ends the name at the longest a name may be.
+			go3270.Field{Row: topRow, Col: nameCol + 1 + usNewNameWidth, Autoskip: true},
 			go3270.Field{Row: topRow, Col: adminLabelCol, Color: go3270.Turquoise, Content: adminLabel, Autoskip: true},
 			go3270.Field{
 				Row: topRow, Col: adminCol, Write: true, Name: usNewAdmin, Content: u.typed[usNewAdmin],

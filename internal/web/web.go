@@ -273,7 +273,10 @@ button.link { background: none; color: var(--link); padding: 0; font-weight: 400
 const contact = `{{define "contact"}}{{if .Contact}}<a href="mailto:{{.Contact}}">{{.Contact}}</a>{{else}}the administrators who gave you your account{{end}}{{end}}`
 
 func mustPage(body string) *template.Template {
-	funcs := template.FuncMap{"sessionMinutes": func() int { return int(sessionLife / time.Minute) }}
+	funcs := template.FuncMap{
+		"sessionMinutes": func() int { return int(sessionLife / time.Minute) },
+		"maxName":        func() int { return users.MaxNameLength },
+	}
 	return template.Must(template.Must(template.New("layout").Funcs(funcs).Parse(layout + contact)).Parse(`{{define "body"}}` + body + `{{end}}`))
 }
 

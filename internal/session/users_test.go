@@ -60,7 +60,7 @@ func TestUsersScreen(t *testing.T) {
 		usHeaderRow: " USERS 1 user, 1 admin",
 		usColumnRow: " S Name                      Admin Restricted Console Flag",
 		usFirstRow:  "   admin                     Y     N          Y       N",
-		20:          " New user ===>                       Admin ===>   Restricted ===>",
+		20:          " New user ===>           Admin ===>   Restricted ===>",
 		21:          " Password ===>",
 	} {
 		if r.rows[i] != want {
@@ -407,5 +407,31 @@ func TestUsersPasswordRules(t *testing.T) {
 	r.key(go3270.AIDEnter, map[string]string{"upw:2": "seven77"})
 	if !strings.Contains(r.u.message, "at least 8 characters") {
 		t.Errorf("changing to a short one: %q", r.u.message)
+	}
+}
+
+func TestUsersNameLength(t *testing.T) {
+	r := newUsersRig(t)
+	for _, f := range r.s {
+		if f.Name == usNewName {
+			// The field holds no more than a name may have.
+			end := -1
+			for _, g := range r.s {
+				if g.Row == f.Row && g.Col > f.Col && (end < 0 || g.Col < end) {
+					end = g.Col
+				}
+			}
+			if end-f.Col-1 != users.MaxNameLength {
+				t.Errorf("new name field holds %d characters, want %d", end-f.Col-1, users.MaxNameLength)
+			}
+		}
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "ninechars", usNewPassword: "long enough pw"})
+	if !strings.Contains(r.u.message, "longer than 8 characters") || len(r.list()) != 1 {
+		t.Errorf("nine-character name: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "eightchr", usNewPassword: "long enough pw"})
+	if len(r.list()) != 2 {
+		t.Errorf("eight-character name refused: %q", r.u.message)
 	}
 }

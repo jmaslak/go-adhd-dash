@@ -463,3 +463,14 @@ func TestCheckNewPassword(t *testing.T) {
 		}
 	}
 }
+
+func TestNameLength(t *testing.T) {
+	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "éééééééé"}}
+	if err := Validate(list); err != nil {
+		t.Errorf("eight characters (more bytes) refused: %v", err)
+	}
+	list[1].Name = "ninechars"
+	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "longer than 8 characters") {
+		t.Errorf("nine characters: %v", err)
+	}
+}
