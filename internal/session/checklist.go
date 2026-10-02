@@ -248,7 +248,7 @@ func buildChecklistList(rows, cols int, now time.Time, lists []checklist.Checkli
 			},
 		)
 	}
-	screen = appendChecklistMessage(screen, rows, cols, c, clListPrompt,
+	screen = appendMessageRows(screen, rows, cols, c.message, c.isError, clListPrompt,
 		"PF3=Back PF7=Up PF8=Down PF10/11=Move Enter=Save, open selected")
 	cursorRow, cursorCol = entryCursor(followed, start, end, len(lists), clNameCol, c)
 	return screen, cursorRow, cursorCol
@@ -391,7 +391,7 @@ func buildChecklistItems(rows, cols int, now time.Time, l checklist.Checklist, c
 			go3270.Field{Row: row, Col: cols - 1},
 		)
 	}
-	screen = appendChecklistMessage(screen, rows, cols, c, clItemPrompt,
+	screen = appendMessageRows(screen, rows, cols, c.message, c.isError, clItemPrompt,
 		"PF3=Back PF6=Reset all PF7=Up PF8=Down PF10/11=Move Enter=Save")
 	cursorRow, cursorCol = entryCursor(followed, start, end, len(l.Items), clItemCol, c)
 	return screen, cursorRow, cursorCol
@@ -559,20 +559,6 @@ func describeChanges(lists []checklist.Checklist, open int, edits map[int]string
 		change("Add", go3270.Green, l)
 	}
 	return changes, renames, removes
-}
-
-// appendChecklistMessage adds the message row, showing prompt when there is
-// no message, and the help row.
-func appendChecklistMessage(screen go3270.Screen, rows, cols int, c *checklistState, prompt, help string) go3270.Screen {
-	message, color := c.message, go3270.Red
-	if !c.isError {
-		color = go3270.Green
-		if message == "" {
-			message, color = prompt, go3270.Blue
-		}
-	}
-	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: c.isError}})...)
-	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
 }
 
 // newEntry is what was typed on a blank entry: the name or item, and for a

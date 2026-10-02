@@ -194,6 +194,22 @@ func headerColor(src busy.Source) (go3270.Color, bool) {
 // dashboardCommandRow is the row of the dashboard's command line.
 func dashboardCommandRow(rows int) int { return rows - 3 }
 
+// appendMessageRows adds the two rows at the bottom of most screens: the
+// message row, saying what the last key did, red when isError and green
+// when not, or with no message, the screen's prompt in blue; then the help
+// row, the screen's keys, cut to fit.
+func appendMessageRows(screen go3270.Screen, rows, cols int, message string, isError bool, prompt, help string) go3270.Screen {
+	color := go3270.Red
+	if !isError {
+		color = go3270.Green
+		if message == "" {
+			message, color = prompt, go3270.Blue
+		}
+	}
+	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: isError}})...)
+	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
+}
+
 // placeLine positions a line's fields on row, one after the other. Each
 // field's attribute byte takes a column of its own before its content, and
 // content that would run past the right edge is cut off.

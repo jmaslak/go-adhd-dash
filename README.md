@@ -121,9 +121,9 @@ Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
 `checklist`, `chat`, `google` (connect your Google calendar), `trello`
-(link your Trello account), `busy`,
+(link your Trello account), `password` (change your password), `busy`,
 `green`, `off`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
-in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`,
+in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`, `passwd`,
 `next`, `prev`, `quit`, `logoff`, `?`). The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
 
@@ -180,6 +180,18 @@ The admin menu (`admin`) lists its options by number; type one on the
   (see [Tasks](#tasks)).
 
 ### Users
+
+Any user changes their own password with `password` (or `passwd`) on the
+dashboard: their current password, then the new one twice, all typed
+hidden, and `Enter`. It is refused if the current one is wrong, the two
+new ones differ, or it is the same as the old one; `admin` cannot go back
+to the default password `admin`.
+
+A password, set here or by an admin (adding a user, or `P` in the user
+editor), must have at least 8 characters, and must not contain the user
+name, in any case. Passwords set before this rule keep working. Three wrong current passwords go back to
+the dashboard. Sessions already logged in, here and on the web site, stay
+so. An admin changes anyone's with `P` in the user editor, below.
 
 The users are kept in `-users-file`, which is made when the server starts
 if it does not exist, holding one user, `admin`, with the password `admin`.

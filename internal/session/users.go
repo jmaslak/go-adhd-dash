@@ -390,6 +390,28 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 	return e, ""
 }
 
+// checkPasswords says why a password typed in e, for a new user or for the
+// user whose password is being changed, will not do; "" if it will.
+func (u *usersState) checkPasswords(e usersEdit, store *users.Store) string {
+	if e.newName != "" && e.newPassword != "" {
+		if err := users.CheckNewPassword(e.newName, e.newPassword); err != nil {
+			return "The new user's password will not do: " + err.Error() + "."
+		}
+	}
+	if e.setPassword != "" {
+		list, _, err := store.Load()
+		if err != nil {
+			return "Could not read the users: " + err.Error()
+		}
+		if i := slices.IndexFunc(list, func(x users.User) bool { return x.ID == u.passwordFor }); i >= 0 {
+			if err := users.CheckNewPassword(list[i].Name, e.setPassword); err != nil {
+				return "That password will not do: " + err.Error() + "."
+			}
+		}
+	}
+	return ""
+}
+
 // consoleTo is the user given Y under Console, zero for none, or -1 for
 // more than one.
 func (e usersEdit) consoleTo() int {
@@ -540,6 +562,9 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 	e, bad := u.parse(resp.Values)
 	if bad == "" && resp.AID == go3270.AIDEnter && u.passwordFor != 0 && e.setPassword == "" && len(e.deletes) == 0 && !e.changesFlags() && e.passwordFor == 0 {
 		bad = "Type the new password, or press PF3 to cancel."
+	}
+	if bad == "" {
+		bad = u.checkPasswords(e, store)
 	}
 	if bad != "" {
 		fail(bad)

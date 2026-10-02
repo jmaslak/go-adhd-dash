@@ -511,6 +511,8 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Trello"
 	case modeTrelloKey:
 		return "Trello API key"
+	case modePassword:
+		return "Change password"
 	case modeAdmin:
 		return "Admin menu"
 	case modeShutdownConfirm:

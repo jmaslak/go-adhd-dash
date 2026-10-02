@@ -444,3 +444,22 @@ func TestFlagNotRestricted(t *testing.T) {
 		t.Errorf("flag user: %v", err)
 	}
 }
+
+func TestCheckNewPassword(t *testing.T) {
+	for pw, want := range map[string]string{
+		"1234567":           "at least 8",
+		"12345678":          "",
+		"ééééééé":           "at least 8", // seven characters, more bytes
+		"xxJoElLexx":        "user name",
+		"joelle-not-really": "user name",
+		"j0elle-secret":     "",
+	} {
+		err := CheckNewPassword("joelle", pw)
+		switch {
+		case want == "" && err != nil:
+			t.Errorf("%q: %v", pw, err)
+		case want != "" && (err == nil || !strings.Contains(err.Error(), want)):
+			t.Errorf("%q: %v, want %q", pw, err, want)
+		}
+	}
+}

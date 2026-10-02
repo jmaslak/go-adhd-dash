@@ -292,7 +292,7 @@ func buildGoogleConnect(rows, cols int, now time.Time, g *googleState) (screen g
 	text(9, "   If Google warns that the app is unverified, choose Advanced, then go on.")
 	text(10, "4. When the page says Connected, come back here and press Enter, to choose")
 	text(11, "   which of your calendars to show.")
-	screen = appendGoogleMessage(screen, rows, cols, g.message, g.isError,
+	screen = appendMessageRows(screen, rows, cols, g.message, g.isError,
 		"Press Enter once the web page says Connected.", "PF3=Back Enter=Continue")
 	return screen, rows - 1, 0
 }
@@ -462,7 +462,7 @@ func buildGoogleChoose(rows, cols int, now time.Time, g *googleState) (screen go
 			screen = append(screen, go3270.Field{Row: e.row + j, Col: gNameCol, Color: color, Intense: g.chosen[c.ID], Content: text})
 		}
 	}
-	screen = appendGoogleMessage(screen, rows, cols, g.message, g.isError,
+	screen = appendMessageRows(screen, rows, cols, g.message, g.isError,
 		gChoosePrompt,
 		"PF3=Back PF5=Reread PF6=Disconnect PF7=Up PF8=Down PF9=Reconnect Enter=Save")
 	return screen, cursorRow, cursorCol
@@ -601,12 +601,6 @@ func (g *googleState) handleDisconnect(resp go3270.Response, store *users.Store,
 	return false, ""
 }
 
-// appendGoogleMessage adds the message row, showing prompt when there is no
-// message, and the help row.
-func appendGoogleMessage(screen go3270.Screen, rows, cols int, message string, isError bool, prompt, help string) go3270.Screen {
-	return appendChecklistMessage(screen, rows, cols, &checklistState{message: message, isError: isError}, prompt, help)
-}
-
 // googleClientState is one session's place on the admin's screen for the
 // Google OAuth client.
 type googleClientState struct {
@@ -717,7 +711,7 @@ func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client 
 		note = "The secret is not shown as it is typed."
 	}
 	screen = append(screen, placeLine(row+3, cols, line{{Content: note, Color: go3270.Blue}})...)
-	screen = appendGoogleMessage(screen, rows, cols, g.message, g.isError,
+	screen = appendMessageRows(screen, rows, cols, g.message, g.isError,
 		"Type the client's ID and secret, then press Enter.", "PF3=Back Enter=Save")
 	return screen, row, gClientLabelWidth + 1
 }

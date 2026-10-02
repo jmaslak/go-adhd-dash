@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -442,6 +443,22 @@ func defaultConsole(list []User) {
 	if pick >= 0 {
 		list[pick].Console = true
 	}
+}
+
+// MinPasswordLength is the fewest characters a password may have.
+const MinPasswordLength = 8
+
+// CheckNewPassword reports why password will not do for the user called
+// name, or nil if it will: it must have at least MinPasswordLength
+// characters, and must not contain the user name, in any case.
+func CheckNewPassword(name, password string) error {
+	switch {
+	case utf8.RuneCountInString(password) < MinPasswordLength:
+		return fmt.Errorf("a password must have at least %d characters", MinPasswordLength)
+	case name != "" && strings.Contains(strings.ToLower(password), strings.ToLower(name)):
+		return errors.New("a password cannot contain the user name")
+	}
+	return nil
 }
 
 // IsDefaultLogin reports whether name and password are the first user's,

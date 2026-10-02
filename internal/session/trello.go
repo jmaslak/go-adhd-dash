@@ -246,7 +246,7 @@ func buildTrelloConnect(rows, cols int, now time.Time, t *trelloState) go3270.Sc
 	text(8, "3. Choose Link, then at Trello, allow access to your boards.")
 	text(9, "4. When the page says Linked, come back here and press Enter, to choose")
 	text(10, "   which of your Trello lists to show as your tasks.")
-	return appendGoogleMessage(screen, rows, cols, t.message, t.isError,
+	return appendMessageRows(screen, rows, cols, t.message, t.isError,
 		"Press Enter once the web page says Linked.", "PF3=Back Enter=Continue")
 }
 
@@ -347,7 +347,7 @@ func buildTrelloChoose(rows, cols int, now time.Time, t *trelloState) (screen go
 	if len(t.lists) == 0 && t.listErr == nil {
 		screen = append(screen, placeLine(tFirstRow, cols, line{{Content: "Your Trello account has no open lists.", Color: go3270.Blue}})...)
 	}
-	screen = appendGoogleMessage(screen, rows, cols, t.message, t.isError, tChoosePrmt,
+	screen = appendMessageRows(screen, rows, cols, t.message, t.isError, tChoosePrmt,
 		"PF3=Back PF5=Reread PF6=Unlink PF7=Up PF8=Down PF9=Link again Enter=Save")
 	return screen, tFirstRow, 1
 }
@@ -551,7 +551,7 @@ func buildTrelloKey(rows, cols int, now time.Time, list []users.User, client *us
 		go3270.Field{Row: row, Col: cols - 1},
 	)
 	screen = append(screen, placeLine(row+1, cols, line{{Content: "Blank the key to remove it.", Color: go3270.Blue}})...)
-	screen = appendGoogleMessage(screen, rows, cols, k.message, k.isError,
+	screen = appendMessageRows(screen, rows, cols, k.message, k.isError,
 		"Type the Power-Up's API key, then press Enter.", "PF3=Back Enter=Save")
 	return screen, row, col + 1
 }

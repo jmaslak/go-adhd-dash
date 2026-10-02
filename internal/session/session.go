@@ -268,6 +268,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var gs googleState
 	var gc googleClientState
 	var tr trelloState
+	var pw passwordState
 	var tk trelloKeyState
 	var site siteState
 	defer cfg.Chat.unwatch(sessionID)
@@ -341,6 +342,12 @@ func Handle(rawConn net.Conn, cfg Config) {
 				break
 			}
 			mode, gs = modeGoogle, g
+		case "password":
+			if user == nil || cfg.Users == nil {
+				message = "There is no user database to keep a password in."
+				break
+			}
+			mode, pw = modePassword, passwordState{}
 		case "trello":
 			id := 0
 			if user != nil {
@@ -463,6 +470,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modeTrello:
 			screen, cursorRow, cursorCol = tr.build(rows, cols, now)
+			redrawOnTimer = false
+		case modePassword:
+			screen, cursorRow, cursorCol = buildPassword(rows, cols, now, user.Name, &pw)
 			redrawOnTimer = false
 		case modeTrelloKey:
 			list, client, err := cfg.Users.TrelloClient()
@@ -679,6 +689,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if gc.handle(resp, cfg.Users, logf) {
 				mode = modeAdmin
 			}
+		case modePassword:
+			if leave, said := pw.handle(resp, cfg.Users, user, logf); leave {
+				mode, message = modeDashboard, said
+			}
 		case modeTrello:
 			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
 				mode, message = modeDashboard, said
@@ -762,6 +776,7 @@ const (
 	modeSite
 	modeTrello
 	modeTrelloKey
+	modePassword
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

@@ -96,15 +96,15 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	if !strings.Contains(r.u.message, `not "Q"`) {
 		t.Errorf("bad admin: %q", r.u.message)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: " joelle ", usNewPassword: "pw one", usNewAdmin: "n"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: " joelle ", usNewPassword: "pass word one", usNewAdmin: "n"})
 	list := r.list()
-	if r.u.isError || r.u.message != "Added joelle." || len(list) != 2 || list[1].Name != "joelle" || list[1].Admin || !users.CheckPassword(list[1].Password, "pw one") {
+	if r.u.isError || r.u.message != "Added joelle." || len(list) != 2 || list[1].Name != "joelle" || list[1].Admin || !users.CheckPassword(list[1].Password, "pass word one") {
 		t.Fatalf("add: message %q, users %+v", r.u.message, list)
 	}
 	if r.crow != 20 {
 		t.Errorf("cursor after adding on row %d, want the new user row", r.crow)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "JOELLE", usNewPassword: "x"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "JOELLE", usNewPassword: "long enough pw"})
 	if !strings.Contains(r.u.message, "already a user") {
 		t.Errorf("duplicate: %q", r.u.message)
 	}
@@ -173,8 +173,8 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	if r.u.isError || r.u.passwordFor != 2 {
 		t.Errorf("PF8 while changing: message %q, for %d", r.u.message, r.u.passwordFor)
 	}
-	r.key(go3270.AIDEnter, map[string]string{"upw:2": "new pw"})
-	if r.u.message != "Changed the password of joelle." || r.u.passwordFor != 0 || !users.CheckPassword(r.list()[0].Password, "new pw") {
+	r.key(go3270.AIDEnter, map[string]string{"upw:2": "new password 2"})
+	if r.u.message != "Changed the password of joelle." || r.u.passwordFor != 0 || !users.CheckPassword(r.list()[0].Password, "new password 2") {
 		t.Errorf("change: message %q, for %d", r.u.message, r.u.passwordFor)
 	}
 
@@ -223,7 +223,7 @@ func TestDeleteUsersConfirm(t *testing.T) {
 
 func TestUsersRestricted(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
 	list := r.list()
 	if r.u.isError || len(list) != 2 || !list[1].Restricted || list[1].Admin {
 		t.Fatalf("add restricted: message %q, users %+v", r.u.message, list)
@@ -246,7 +246,7 @@ func TestUsersRestricted(t *testing.T) {
 	if !strings.Contains(r.u.message, "cannot be both an admin and restricted") || r.list()[0].Restricted {
 		t.Errorf("restrict the admin: %q", r.u.message)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "both", usNewPassword: "pw", usNewAdmin: "Y", usNewRes: "Y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "both", usNewPassword: "long enough pw", usNewAdmin: "Y", usNewRes: "Y"})
 	if !strings.Contains(r.u.message, "cannot be both") || len(r.list()) != 2 {
 		t.Errorf("add a restricted admin: %q", r.u.message)
 	}
@@ -258,8 +258,8 @@ func TestUsersRestricted(t *testing.T) {
 
 func TestUsersConsole(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "pw"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "long enough pw"})
 	if len(r.list()) != 3 {
 		t.Fatalf("adding: %q", r.u.message)
 	}
@@ -361,7 +361,7 @@ func TestUsersRemoveWithCalendar(t *testing.T) {
 
 func TestUsersFlag(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
 
 	// Y under Flag gives a user control of the busy light.
 	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "y"})
@@ -380,5 +380,32 @@ func TestUsersFlag(t *testing.T) {
 	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "N"})
 	if r.list()[0].Flag {
 		t.Errorf("flag not cleared")
+	}
+}
+
+func TestUsersPasswordRules(t *testing.T) {
+	r := newUsersRig(t)
+	for typed, want := range map[[2]string]string{
+		{"joelle", "short"}:            "at least 8 characters",
+		{"joelle", "my-JOELLE-secret"}: "cannot contain the user name",
+	} {
+		r.key(go3270.AIDEnter, map[string]string{usNewName: typed[0], usNewPassword: typed[1]})
+		if !r.u.isError || !strings.Contains(r.u.message, want) || len(r.list()) != 1 {
+			t.Errorf("%q: message %q, users %d", typed, r.u.message, len(r.list()))
+		}
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "good secret"})
+	if len(r.list()) != 2 {
+		t.Fatalf("adding with a good password: %q", r.u.message)
+	}
+	// Changing one with P, likewise.
+	r.key(go3270.AIDEnter, map[string]string{"usel:2": "p"})
+	r.key(go3270.AIDEnter, map[string]string{"upw:2": "joellejoelle"})
+	if !strings.Contains(r.u.message, "cannot contain the user name") || !users.CheckPassword(r.list()[1].Password, "good secret") {
+		t.Errorf("changing to one with the name: %q", r.u.message)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"upw:2": "seven77"})
+	if !strings.Contains(r.u.message, "at least 8 characters") {
+		t.Errorf("changing to a short one: %q", r.u.message)
 	}
 }

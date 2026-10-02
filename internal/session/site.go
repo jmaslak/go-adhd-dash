@@ -101,7 +101,7 @@ func buildSite(rows, cols int, now time.Time, site *users.Site, loadErr error, l
 		screen = append(screen, placeLine(row, cols, line{{Content: "Until an address is set, the pages link to each other by path alone.", Color: go3270.Blue}})...)
 	}
 
-	screen = appendGoogleMessage(screen, rows, cols, s.message, s.isError,
+	screen = appendMessageRows(screen, rows, cols, s.message, s.isError,
 		"Type the address, e.g. https://adhd.example.com/, and press Enter.", "PF3=Back Enter=Save")
 	return screen, siteFirstField, siteLabelWidth + 1
 }
