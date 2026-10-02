@@ -52,8 +52,14 @@ type Config struct {
 	// available.
 	Adder TaskAdder
 
-	// Agenda holds the calendar; nil when no calendar is configured.
+	// Agenda is a calendar shown to every user, for trying the dashboard
+	// without Google (-agenda-file); nil normally, when each user sees
+	// their own Google calendars', kept in Agendas.
 	Agenda *agenda.Cache
+
+	// Agendas keeps each user's Google calendars' agenda while in use; nil
+	// for no Google calendars.
+	Agendas *agenda.Pool
 
 	// Checklists keeps the checklists.
 	Checklists *checklist.Store
@@ -251,6 +257,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var act activityState
 	var ch chatState
 	var us usersState
+	var gs googleState
+	defer gs.close()
+	var gc googleClientState
 	defer cfg.Chat.unwatch(sessionID)
 	var allTasks []tasks.Task      // the task screen's tasks, as last shown
 	var sessions []SessionActivity // the activity viewer's sessions, as last shown
@@ -282,7 +291,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "calc", "dbm":
 			mode, calc.dbm = modeCalc, c.name == "dbm"
 		case "checklist":
-			mode, cl = modeChecklist, checklistState{}
+			mode, cl = modeChecklist, checklistState{owner: ownerOf(user)}
 		case "busy", "green", "off":
 			if cfg.BusyControl == nil {
 				message = "No busy indicator control port (-busy-control)."
@@ -305,6 +314,18 @@ func Handle(rawConn net.Conn, cfg Config) {
 			mode = modeAdmin
 		case "chat":
 			mode, ch = modeChat, chatState{}
+		case "google":
+			id := 0
+			if user != nil {
+				id = user.ID
+			}
+			g, why := startGoogle(cfg.Users, id)
+			if why != "" {
+				message = why
+				break
+			}
+			gs.close()
+			mode, gs = modeGoogle, g
 		case "exit":
 			loggedOut = true
 			return true
@@ -359,8 +380,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildTerminateConfirm(rows, cols, now, sessionID, &act), rows-1, 0
 			redrawOnTimer = false
 		case modeCalendar:
-			cal.load(cfg.Agenda, cfg.AgendaRefresh, now)
-			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, autoRefresh, cfg.Agenda != nil))
+			cache := cfg.agendaFor(user)
+			cal.load(cache, cfg.AgendaRefresh, now)
+			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, autoRefresh, cache != nil))
 		case modeTasks:
 			snap := cfg.Tasks.Snapshot()
 			allTasks = snap.Tasks
@@ -396,11 +418,18 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeClearChatConfirm:
 			screen, cursorRow, cursorCol = buildClearChatConfirm(rows, cols, now, cfg.Chat.count()), rows-1, 0
 			redrawOnTimer = false
+		case modeGoogle:
+			screen, cursorRow, cursorCol = gs.build(rows, cols, now)
+			redrawOnTimer = false
+		case modeGoogleClient:
+			list, client, err := cfg.Users.GoogleClient()
+			screen, cursorRow, cursorCol = buildGoogleClient(rows, cols, now, list, client, err, &gc)
+			redrawOnTimer = false
 		case modeShutdownConfirm:
 			screen, cursorRow, cursorCol = buildShutdownConfirm(rows, cols, now, cfg.Shutdown.Sessions()), rows-1, 0
 			redrawOnTimer = false
 		default:
-			v := gather(cfg, now)
+			v := gather(cfg, now, cfg.agendaFor(user), ownerOf(user))
 			v.AutoRefresh, v.BusyControl, v.Message = autoRefresh, cfg.BusyControl != nil, message
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
@@ -531,7 +560,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case action == adminUsers && cfg.Users == nil:
 				message = "There is no user database."
 			case action == adminUsers:
-				mode, us = modeUsers, usersState{}
+				mode, us = modeUsers, usersState{checklists: cfg.Checklists}
+			case action == adminGoogleClient && cfg.Users == nil:
+				message = "There is no user database to keep a Google client in."
+			case action == adminGoogleClient:
+				mode, gc = modeGoogleClient, googleClientState{}
 			case action == adminClearChat:
 				mode = modeClearChatConfirm
 			case action == adminActivity:
@@ -574,6 +607,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if us.handle(resp, cfg.Users, logf) {
 				mode = modeAdmin
 			}
+		case modeGoogle:
+			if leave, said := gs.handle(resp, cfg.Users, logf); leave {
+				gs.close()
+				mode, message = modeDashboard, said
+			}
+		case modeGoogleClient:
+			if gc.handle(resp, cfg.Users, logf) {
+				mode = modeAdmin
+			}
 		case modeClearChatConfirm:
 			switch resp.AID {
 			case go3270.AIDPF3:
@@ -607,7 +649,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			typed := resp.Values[commandField]
 			if resp.AID == go3270.AIDEnter && typed == "" {
 				if id, ok := checklistAt[resp.Row]; ok {
-					mode, cl = modeChecklist, checklistState{open: id}
+					mode, cl = modeChecklist, checklistState{owner: ownerOf(user), open: id}
 				}
 				break
 			}
@@ -639,7 +681,17 @@ const (
 	modeClearChatConfirm
 	modeUsers
 	modeLogin
+	modeGoogle
+	modeGoogleClient
 )
+
+// ownerOf is the owner of u's checklists: their ID, or zero with no user.
+func ownerOf(u *users.User) int {
+	if u == nil {
+		return 0
+	}
+	return u.ID
+}
 
 // pfCommand is the command a PF key on the dashboard runs, or "" for none.
 // The busy indicator's keys do nothing without its control port, where they
@@ -724,20 +776,22 @@ type view struct {
 	ChecklistsErr error
 }
 
-// gather reads the current state of every source.
-func gather(cfg Config, now time.Time) view {
+// gather reads the current state of every source, the agenda from
+// agendaCache, nil for none, and the checklists owner's.
+func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, owner int) view {
 	v := view{Now: now}
 	if cfg.Busy != nil {
 		v.BusyEnabled = true
 		v.Busy = cfg.Busy.Status()
 	}
-	if cfg.Agenda != nil {
+	if agendaCache != nil {
 		v.AgendaEnabled = true
-		v.Agenda = cfg.Agenda.Snapshot()
+		v.Agenda = agendaCache.Snapshot()
 	}
 
 	if cfg.Checklists != nil {
 		v.Checklists, v.ChecklistsErr = cfg.Checklists.Load()
+		v.Checklists = checklist.Owned(v.Checklists, owner)
 	}
 
 	snap := cfg.Tasks.Snapshot()

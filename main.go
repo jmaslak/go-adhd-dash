@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 	_ "time/tzdata" // the calendar's world clocks, on hosts without zoneinfo
 
@@ -31,34 +30,15 @@ func main() {
 	busyURL := flag.String("busy-url", "", "busy indicator status feed, e.g. ws://localhost:3334/feed (empty: none)")
 	busyFile := flag.String("busy-file", "", "read the busy indicator's status from this JSON file instead of a feed")
 	busyControl := flag.String("busy-control", "localhost:3333", "busy indicator UDP control port as host:port, for PF1 (busy) and PF2 (off) (empty: none)")
-	calendars := flag.String("calendar", "", "comma-separated Google calendars for the agenda (empty: none)")
-	calendarAliases := flag.String("calendar-alias", "", "comma-separated short names for the -calendar calendars, in the same order, shown in brackets before their events")
-	agendaFile := flag.String("agenda-file", "", "read the agenda from this JSON file instead of Google Calendar")
+	agendaFile := flag.String("agenda-file", "", "show every user the agenda in this JSON file instead of their Google calendars")
 	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
 	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
 	maxConnsPerIP := flag.Int("max-connections-per-ip", 16, "most connections open at once from one address, an IPv6 one by its /64 (0: no limit)")
 	loginTimeout := flag.Duration("login-timeout", 60*time.Second, "how long the login screen waits for a login")
 	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
-	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often the calendar is read")
+	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often a calendar is read")
 	flag.Parse()
-
-	if *calendars != "" && *agendaFile != "" {
-		log.Fatal("-calendar and -agenda-file cannot both be given")
-	}
-	calendarList := strings.Split(*calendars, ",")
-	var aliases []string
-	if *calendarAliases != "" {
-		if *calendars == "" {
-			log.Fatal("-calendar-alias needs -calendar")
-		}
-		for _, a := range strings.Split(*calendarAliases, ",") {
-			aliases = append(aliases, strings.TrimSpace(a))
-		}
-		if len(aliases) != len(calendarList) {
-			log.Fatalf("-calendar-alias has %d names for %d calendars", len(aliases), len(calendarList))
-		}
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -76,16 +56,37 @@ func main() {
 
 	// Made now, with its first user, rather than when first looked at.
 	userStore := users.NewStore(*usersFile)
-	if _, created, err := userStore.Load(); err != nil {
+	userList, created, err := userStore.Load()
+	if err != nil {
 		log.Fatalf("users: %v", err)
 	} else if created {
 		log.Printf("created %s with the user %q, password %q, which is refused at the login screen: connect as the CONSOLE LU from this machine and change it", userStore.Path(), users.FirstName, users.FirstPassword)
+	}
+
+	// Checklists made before each was a user's become the admin's, and any
+	// of a user no longer there, which no one could reach, are removed.
+	checklistStore := checklist.NewStore(*checklistFile)
+	userIDs := map[int]bool{}
+	for _, u := range userList {
+		userIDs[u.ID] = true
+	}
+	if n, err := checklistStore.RemoveOwned(func(owner int) bool { return owner != 0 && !userIDs[owner] }); err != nil {
+		log.Fatalf("checklists: %v", err)
+	} else if n > 0 {
+		log.Printf("removed %d checklists of users no longer there", n)
+	}
+	if admin, ok := users.Admin(userList); ok {
+		if n, err := checklistStore.AssignUnowned(admin.ID); err != nil {
+			log.Fatalf("checklists: %v", err)
+		} else if n > 0 {
+			log.Printf("gave %d checklists with no owner to %q", n, admin.Name)
+		}
 	}
 	cfg := session.Config{
 		Shutdown: shutdown,
 		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
 		Tasks: taskCache, Archiver: taskCache, Adder: taskCache,
-		Checklists:   checklist.NewStore(*checklistFile),
+		Checklists:   checklistStore,
 		Users:        userStore,
 		Audit:        auditLog,
 		Limits:       session.NewConnLimiter(*maxConns, *maxConnsPerIP),
@@ -109,16 +110,13 @@ func main() {
 		cfg.BusyControl = &busy.Control{Addr: *busyControl}
 	}
 
-	var source agenda.Source
-	switch {
-	case *agendaFile != "":
-		source = agenda.File{Path: *agendaFile}
-	case *calendars != "":
-		source = agenda.NewGoogle(calendarList, aliases)
-	}
-	if source != nil {
-		cfg.Agenda = agenda.NewCache(source)
+	// Each user's Google calendars are read while they are in use; a file
+	// stands in for them all.
+	if *agendaFile != "" {
+		cfg.Agenda = agenda.NewCache(agenda.File{Path: *agendaFile})
 		go cfg.Agenda.Run(ctx, *agendaRefresh)
+	} else {
+		cfg.Agendas = agenda.NewPool(ctx, *agendaRefresh)
 	}
 
 	addr := net.JoinHostPort(*host, fmt.Sprint(*port))

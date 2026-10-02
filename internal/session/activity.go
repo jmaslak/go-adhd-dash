@@ -501,6 +501,10 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Checklist"
 	case modeHelp:
 		return "Help"
+	case modeGoogle:
+		return "Google calendar"
+	case modeGoogleClient:
+		return "Google client"
 	case modeAdmin:
 		return "Admin menu"
 	case modeShutdownConfirm:

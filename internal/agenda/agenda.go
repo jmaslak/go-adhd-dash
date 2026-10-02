@@ -1,6 +1,6 @@
 // Package agenda keeps today's and tomorrow's meetings, refreshed in the
-// background and shared by every dashboard session so that each connection
-// does not call Google on its own.
+// background and shared by every dashboard session of a user, so that each
+// connection does not call Google on its own.
 package agenda
 
 import (
@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmaslak/go-busy-indicator/gauth"
 	"github.com/jmaslak/go-busy-indicator/gcal"
 )
 
@@ -120,6 +119,53 @@ func (c *Cache) refresh(ctx context.Context) {
 	c.snap = Snapshot{Events: sortUnique(events), Fetched: now}
 }
 
+// Pool keeps a Cache for each of a set of sources, by key, refreshing each
+// only while it is in use: one not asked for in three refresh intervals is
+// stopped and dropped. It is safe for concurrent use.
+type Pool struct {
+	ctx      context.Context
+	interval time.Duration
+
+	mu      sync.Mutex
+	entries map[string]*poolEntry
+}
+
+type poolEntry struct {
+	cache    *Cache
+	stop     context.CancelFunc
+	lastUsed time.Time
+}
+
+// NewPool returns a pool whose caches refresh every interval until ctx is
+// canceled.
+func NewPool(ctx context.Context, interval time.Duration) *Pool {
+	return &Pool{ctx: ctx, interval: interval, entries: map[string]*poolEntry{}}
+}
+
+// Get returns the cache for key, starting one over the source newSource
+// makes if there is none. A key should change whenever the source would:
+// the cache under the old one is then dropped once unused.
+func (p *Pool) Get(key string, newSource func() Source) *Cache {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	for k, e := range p.entries {
+		if k != key && now.Sub(e.lastUsed) > 3*p.interval {
+			e.stop()
+			delete(p.entries, k)
+		}
+	}
+	e, ok := p.entries[key]
+	if !ok {
+		ctx, stop := context.WithCancel(p.ctx)
+		e = &poolEntry{cache: NewCache(newSource()), stop: stop}
+		p.entries[key] = e
+		go e.cache.Run(ctx, p.interval)
+	}
+	e.lastUsed = now
+	return e.cache
+}
+
 // Fetch reads the events between from and to straight from the source, for
 // views beyond the today and tomorrow the cache keeps. Nothing is cached.
 func (c *Cache) Fetch(ctx context.Context, from, to time.Time) ([]Event, error) {
@@ -176,11 +222,10 @@ type Google struct {
 	Client *gcal.Client
 }
 
-// NewGoogle returns a source for calendars, authorized by the gcalcli or
-// busy-indicator credential files. Credentials are read on first use.
-// aliases is nil, or one name for each calendar.
-func NewGoogle(calendars, aliases []string) *Google {
-	return &Google{Calendars: calendars, Aliases: aliases, Client: gcal.New(gauth.NewTokenSource())}
+// NewGoogle returns a source for calendars, authorized by tokens. aliases
+// is nil, or one name for each calendar.
+func NewGoogle(tokens gcal.TokenSource, calendars, aliases []string) *Google {
+	return &Google{Calendars: calendars, Aliases: aliases, Client: gcal.New(tokens)}
 }
 
 // Events reads every calendar. One calendar failing fails the whole fetch,

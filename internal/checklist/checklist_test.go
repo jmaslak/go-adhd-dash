@@ -72,3 +72,63 @@ func TestStore(t *testing.T) {
 		t.Errorf("Update over a corrupt file succeeded, which would have replaced it")
 	}
 }
+
+func TestAssignUnowned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checklists.json")
+	// As written before checklists had owners.
+	if err := os.WriteFile(path, []byte(`{"checklists": [{"id": 1, "name": "Old", "items": []},
+		{"id": 2, "name": "Older", "items": []}, {"id": 3, "name": "Mine", "items": [], "owner": 7}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(path)
+	n, err := s.AssignUnowned(5)
+	if err != nil || n != 2 {
+		t.Fatalf("assigned %d, %v; want 2", n, err)
+	}
+	lists, _ := s.Load()
+	if lists[0].Owner != 5 || lists[1].Owner != 5 || lists[2].Owner != 7 {
+		t.Errorf("owners %d, %d, %d; want 5, 5, 7", lists[0].Owner, lists[1].Owner, lists[2].Owner)
+	}
+	if got := Owned(lists, 5); len(got) != 2 || got[0].Name != "Old" || got[1].Name != "Older" {
+		t.Errorf("owned by 5: %+v", got)
+	}
+
+	// With none left unowned, the file is left alone.
+	before, _ := os.Stat(path)
+	if n, err := s.AssignUnowned(9); err != nil || n != 0 {
+		t.Errorf("again: %d, %v; want none", n, err)
+	}
+	if after, _ := os.Stat(path); !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("file rewritten with nothing to assign")
+	}
+	// A missing file has none.
+	if n, err := NewStore(filepath.Join(t.TempDir(), "none.json")).AssignUnowned(1); err != nil || n != 0 {
+		t.Errorf("missing file: %d, %v", n, err)
+	}
+}
+
+func TestRemoveOwned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checklists.json")
+	if err := os.WriteFile(path, []byte(`{"checklists": [{"id": 1, "name": "a", "items": [], "owner": 1},
+		{"id": 2, "name": "b", "items": [], "owner": 2}, {"id": 3, "name": "c", "items": [], "owner": 2},
+		{"id": 4, "name": "d", "items": []}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(path)
+	n, err := s.RemoveOwned(func(owner int) bool { return owner == 2 })
+	if err != nil || n != 2 {
+		t.Fatalf("removed %d, %v; want 2", n, err)
+	}
+	lists, _ := s.Load()
+	if len(lists) != 2 || lists[0].Name != "a" || lists[1].Name != "d" {
+		t.Errorf("left %+v", lists)
+	}
+	// With none to remove, the file is left alone.
+	before, _ := os.Stat(path)
+	if n, err := s.RemoveOwned(func(owner int) bool { return owner == 2 }); err != nil || n != 0 {
+		t.Errorf("again: %d, %v", n, err)
+	}
+	if after, _ := os.Stat(path); !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("file rewritten with nothing to remove")
+	}
+}

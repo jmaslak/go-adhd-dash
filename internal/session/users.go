@@ -11,6 +11,8 @@ import (
 
 	"github.com/racingmars/go3270"
 
+	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/google"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -84,6 +86,10 @@ type usersState struct {
 	// pending is a save deleting users, shown for confirmation in place of
 	// the users.
 	pending *usersPending
+
+	// checklists keeps the checklists, a deleted user's deleted with them;
+	// nil for none.
+	checklists *checklist.Store
 
 	message string
 	isError bool
@@ -391,11 +397,16 @@ type usersPending struct {
 	typed       map[string]string
 	deleting    []users.User // as they were when asked
 	others      bool         // the save holds other changes too
+
+	// checklists is how many checklists each user deleting has, by ID.
+	checklists map[int]int
 }
 
 // usersResult is what applying an edit did.
 type usersResult struct {
 	removed         []string
+	removedIDs      []int
+	revoke          []string // the Google refresh tokens of the users removed
 	changedPassword string
 	added           string
 	console         string // the user the console was handed to
@@ -406,7 +417,10 @@ type usersResult struct {
 func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, nextID func() int) (r usersResult, err error) {
 	*list = slices.DeleteFunc(*list, func(x users.User) bool {
 		if e.deletes[x.ID] {
-			r.removed = append(r.removed, x.Name)
+			r.removed, r.removedIDs = append(r.removed, x.Name), append(r.removedIDs, x.ID)
+			if x.Google != nil && x.Google.RefreshToken != "" {
+				r.revoke = append(r.revoke, x.Google.RefreshToken)
+			}
 		}
 		return e.deletes[x.ID]
 	})
@@ -540,6 +554,17 @@ func (u *usersState) handle(resp go3270.Response, store *users.Store, logf func(
 				p.deleting = append(p.deleting, x)
 			}
 		}
+		if u.checklists != nil {
+			lists, err := u.checklists.Load()
+			if err != nil {
+				fail("Could not read the checklists, which go with the users deleted: " + err.Error())
+				return false
+			}
+			p.checklists = map[int]int{}
+			for _, l := range lists {
+				p.checklists[l.Owner]++
+			}
+		}
 		u.pending = p
 		return false
 	}
@@ -568,6 +593,31 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 			logf("removed user %q", name)
 		}
 		said = append(said, "Removed "+countText(n, "user", 0, 1)+".")
+	}
+	// A user's checklists go with them.
+	if u.checklists != nil && len(r.removedIDs) > 0 {
+		n, err := u.checklists.RemoveOwned(func(owner int) bool { return slices.Contains(r.removedIDs, owner) })
+		switch {
+		case err != nil:
+			logf("could not remove the removed users' checklists: %v", err)
+			said = append(said, "Could not remove their checklists: "+err.Error()+".")
+		case n > 0:
+			logf("removed %s of the removed users", countText(n, "checklist", 0, 1))
+			said = append(said, "Removed "+countText(n, "checklist", 0, 1)+".")
+		}
+	}
+	// A user's Google calendar goes with them: the link was in their entry,
+	// and Google is asked to withdraw the authorization it held.
+	for _, token := range r.revoke {
+		ctx, cancel := context.WithTimeout(context.Background(), googleWait)
+		err := google.Revoke(ctx, token)
+		cancel()
+		if err != nil {
+			logf("could not withdraw a removed user's Google authorization: %v", err)
+			said = append(said, "Google could not be told to withdraw a removed user's calendar access ("+err.Error()+").")
+			continue
+		}
+		logf("withdrew a removed user's Google authorization")
 	}
 	if r.changedPassword != "" {
 		logf("changed the password of %q", r.changedPassword)
@@ -630,6 +680,16 @@ func buildDeleteUsersConfirm(rows, cols int, now time.Time, p *usersPending) go3
 		l := line{{Content: x.Name, Color: go3270.Green}}
 		if x.Admin {
 			l = line{{Content: x.Name, Color: go3270.White, Intense: true}, {Content: "(admin)", Color: go3270.Blue}}
+		}
+		var with []string
+		if n := p.checklists[x.ID]; n > 0 {
+			with = append(with, countText(n, "checklist", 0, 1))
+		}
+		if x.Google != nil {
+			with = append(with, "their Google calendar")
+		}
+		if len(with) > 0 {
+			l = append(l, go3270.Field{Content: "with " + strings.Join(with, " and "), Color: go3270.Blue})
 		}
 		screen = append(screen, placeLineAt(row, usNameCol, cols, l)...)
 		row++

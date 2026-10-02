@@ -22,6 +22,7 @@ var adminOptions = []struct{ number, what string }{
 	{"2", "Activity viewer: every session, its LU, screen and IP address"},
 	{"3", "Clear the chat"},
 	{"4", "Users: add, remove, change passwords and admins"},
+	{"5", "Google client: what users connect their calendars through"},
 }
 
 // buildAdmin renders the admin menu, with message below the option field,
@@ -66,12 +67,13 @@ func buildAdmin(rows, cols int, now time.Time, message string, ok bool, sessions
 type adminAction int
 
 const (
-	adminStay      adminAction = iota // the menu again
-	adminLeave                        // the dashboard
-	adminShutdown                     // the confirmation for shutting down
-	adminActivity                     // the activity viewer
-	adminClearChat                    // the confirmation for clearing the chat
-	adminUsers                        // the user editor
+	adminStay         adminAction = iota // the menu again
+	adminLeave                           // the dashboard
+	adminShutdown                        // the confirmation for shutting down
+	adminActivity                        // the activity viewer
+	adminClearChat                       // the confirmation for clearing the chat
+	adminUsers                           // the user editor
+	adminGoogleClient                    // the Google client
 )
 
 // adminChoice is what the admin menu's key asks for, and when it is to stay
@@ -94,6 +96,8 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 		return adminClearChat, ""
 	case "4":
 		return adminUsers, ""
+	case "5":
+		return adminGoogleClient, ""
 	default:
 		return adminStay, fmt.Sprintf("There is no option %q.", typed)
 	}

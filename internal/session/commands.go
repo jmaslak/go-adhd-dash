@@ -34,6 +34,7 @@ var commands = []command{
 	{name: "down", aliases: []string{"next"}, key: "PF8", what: "Next page of tasks"},
 	{name: "refresh", key: "Enter", what: "Redraw the dashboard now"},
 	{name: "chat", key: "PF11", what: "Chat with the other sessions"},
+	{name: "google", aliases: []string{"gcal"}, what: "Connect your Google calendar; choose calendars"},
 	{name: "admin", what: "Admin menu: shut down the server"},
 	{name: "help", aliases: []string{"?"}, what: "This list of commands"},
 	{name: "exit", aliases: []string{"quit", "logoff"}, key: "PF3", what: "Disconnect"},

@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jmaslak/go-busy-indicator/gauth"
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
@@ -369,12 +370,28 @@ func TestDashboardDegraded(t *testing.T) {
 		}
 	}
 
+	// With no calendar, nothing of one is shown, and the tasks start
+	// where the agenda would.
 	s, _, _, _ = buildDashboard(24, 80, view{Now: now}, 0, "")
-	text = strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"not configured (-busy-url)", "No calendar configured", "All tasks completed!"} {
+	rows := screenText(t, s, 24, 80)
+	text = strings.Join(rows, "\n")
+	for _, want := range []string{"not configured (-busy-url)", "All tasks completed!"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "AGENDA") || strings.Contains(strings.ToLower(text), "calendar") {
+		t.Errorf("screen shows calendar information with no calendar:\n%s", text)
+	}
+	if !strings.HasPrefix(rows[firstBodyRow], " TASKS") {
+		t.Errorf("row %d is %q; want the tasks to start there", firstBodyRow, rows[firstBodyRow])
+	}
+
+	// A refused authorization says how to fix it.
+	v.Agenda.Err = fmt.Errorf("refreshing: %w", errors.Join(&gauth.RejectedError{Source: "x", Code: "invalid_grant"}))
+	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "type GOOGLE to reconnect") {
+		t.Errorf("refused authorization not explained:\n%s", text)
 	}
 }
 

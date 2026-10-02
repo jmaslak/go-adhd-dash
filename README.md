@@ -7,7 +7,8 @@ screen shows:
   long until the next meeting, from
   [go-busy-indicator](../go-busy-indicator)'s WebSocket status feed;
 - the **agenda**: every meeting under way or starting in the next 24 hours,
-  from Google Calendar, with the one in progress marked `NOW` and a
+  from the Google calendars the user has connected (see [Agenda](#agenda)),
+  with the one in progress marked `NOW` and a
   countdown to the next. All-day events and out-of-office events (by
   title: "out of office" or the word "OOO") are left out. If they do not
   all fit alongside the tasks, the first page gives them the room and the
@@ -23,7 +24,7 @@ shows `AUTO-REFRESH` while it is on.
 
 ```
 go build -o adhd-dash .
-./adhd-dash -busy-url ws://localhost:3334/feed -calendar you@example.com
+./adhd-dash -busy-url ws://localhost:3334/feed
 ```
 
 Then connect a TN3270 emulator (c3270, x3270, s3270, ...) to `host:port`.
@@ -40,10 +41,8 @@ Model 5's 27x132 or larger.
 | `-busy-url` | (none) | busy indicator feed, `ws://host:port/feed` |
 | `-busy-file` | (none) | read the busy status from a JSON file instead of a feed |
 | `-busy-control` | `localhost:3333` | busy indicator UDP control port, `host:port` (its `--port`), for `PF1` / `PF2`; empty to turn them off |
-| `-calendar` | (none) | comma-separated Google calendars for the agenda |
-| `-calendar-alias` | (none) | comma-separated short names for the `-calendar` calendars, in the same order; each event is shown as `[name] title` |
-| `-agenda-file` | (none) | read the agenda from a JSON file instead of Google |
-| `-agenda-refresh` | `5m` | how often the calendar is read |
+| `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
+| `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-checklist-file` | `~/.adhd-dash-checklists.json` | JSON file the checklists are kept in |
 | `-users-file` | `~/.adhd-dash-users.json` | JSON file the users are kept in |
 | `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
@@ -51,8 +50,10 @@ Model 5's 27x132 or larger.
 | `-login-timeout` | `60s` | how long the login screen waits for a login |
 | `-audit-log` | `~/.adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
 
-Leaving `-busy-url` or `-calendar` empty leaves that section showing "not
-configured" rather than failing.
+Leaving `-busy-url` empty leaves that section showing "not configured"
+rather than failing. The calendars are each user's own, chosen with the
+`google` command and kept in `-users-file`; a user with none sees no
+calendar information at all.
 
 ## Keys
 
@@ -77,9 +78,9 @@ The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
-`checklist`, `chat`, `busy`, `green`, `off`, `auto`, `up`, `down`, `refresh`,
-`admin`, `help` and `exit`, in either case, with a few aliases (`task`,
-`calendar`, `cl`,
+`checklist`, `chat`, `google` (connect your Google calendar), `busy`,
+`green`, `off`, `auto`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
+in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`,
 `next`, `prev`, `quit`, `logoff`, `?`). The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
 
@@ -126,6 +127,8 @@ The admin menu (`admin`) lists its options by number; type one on the
   messages it deletes. Every session on the chat screen shows it emptied at
   once.
 - `4`: the users (see [Users](#users)).
+- `5`: the Google OAuth client every user connects their calendar through
+  (see [Agenda](#agenda)).
 
 ### Users
 
@@ -145,7 +148,11 @@ each with a one-character command field and `Admin`, `Restricted` and
 
 - type `D` beside a user to delete them (a confirmation lists them first,
   and saves nothing until `PF4`; `PF3` goes back with what was typed left
-  as it was), or `P` to change their password:
+  as it was). A deleted user's checklists and Google calendar go with
+  them: the checklists are deleted (the confirmation says how many), the
+  calendar was kept in their entry, and Google is asked to withdraw its
+  authorization. Their ID is never given to another user, and any
+  checklists of a user no longer there are deleted when the server starts. Or type `P` to change their password:
   the bottom rows then ask for it (typed hidden), `Enter` saves it and
   `PF3` cancels;
 - type `Y` or `N` under `Admin` to make a user an admin or not, and under
@@ -236,7 +243,9 @@ On the calendar, a month is shown with the selected day's events beside it. Move
 - `PF3`: back to the dashboard
 
 The calendar reads each month from Google as it is shown and reuses it for
-`-agenda-refresh`, separately from the shared today-and-tomorrow agenda.
+`-agenda-refresh`, separately from the today-and-tomorrow agenda. A user
+with no calendar connected sees the month and the clocks, with a note to
+use `google`.
 
 The task screen lists every open task, whatever its tags. Type `X` in the `S` column beside the tasks to archive,
 then press `PF6`; a confirmation lists them, and `PF4` archives them. Marks
@@ -302,7 +311,11 @@ be of one kind: powers add in mW, so `avg` of powers is the average power
 (`1mW 3mW avg` is 2 mW, 3.01 dBm); dB values add in dB.
 
 The checklists (`checklist` or `cl`) are named lists of items, each
-checked off with an `X`, kept for reuse: `PF6` unchecks every item, after
+checked off with an `X`, kept for reuse. Each user has their own: no one
+sees, changes or moves another's, and the dashboard lists only the user's
+own starred ones. Checklists from before they were each a user's are given
+to the admin user (the admin called `admin`, else the console's user if an
+admin, else the first admin) when the server starts, which it logs. `PF6` unchecks every item, after
 confirmation, to start the list over. The first screen lists the
 checklists, with how many of each one's items are done: green when they
 all are, red when some are not.
@@ -364,16 +377,16 @@ Neither screen redraws on a timer, since that would wipe what was typed but
 not yet saved.
 
 The checklists are kept in `-checklist-file` as JSON, rewritten (by atomic
-rename) on every change and read on every redraw, so every session sees
-the same checklists:
+rename) on every change and read on every redraw, so every session of a
+user sees the same checklists. `owner` is the user's ID in `-users-file`:
 
 ```json
-{"checklists": [{"id": 1, "name": "Morning", "active": true, "items": [
-  {"id": 2, "text": "Pills", "done": true}]}]}
+{"checklists": [{"id": 1, "name": "Morning", "active": true, "owner": 1,
+  "items": [{"id": 2, "text": "Pills", "done": true}]}]}
 ```
 
-A checklist's heading says how many other sessions of this server have it
-open too, e.g. `(1 other session viewing)`. Like the rest of the screen, it
+A checklist's heading says how many other sessions of this server (its
+user's, logged in elsewhere) have it open too, e.g. `(1 other session viewing)`. Like the rest of the screen, it
 is as of the last key pressed.
 
 IDs are unique across the file. Changes are made by ID, and only to what
@@ -417,28 +430,88 @@ restart it).
 
 ### Agenda
 
-Calendars are read with the same credentials as `busy-indicator`:
-`~/.gcalcli_oauth`, falling back to `~/.busy-indicator-oauth` (written by
-`busy-indicator --login`). No separate authorization is needed. The fetch
-happens once per `-agenda-refresh` and is shared by every connected session.
-If a fetch fails, the last agenda stays up, marked stale.
+Each user connects their own Google calendar, and chooses which of its
+calendars to show. Their authorization and choices are kept in their entry
+in `-users-file` (readable only by its owner). A user with none connected,
+or none chosen, sees no agenda section on the dashboard, and the tasks get
+the room.
+
+**Once, an admin sets up the OAuth client** every user connects through:
+admin menu option `5`. The screen lists the steps: in the Google Cloud
+console, create a project, enable the Google Calendar API, set up the
+consent screen (Internal for a Workspace domain's own users; otherwise
+External, and *Publish app*, since in Testing an authorization lasts only 7
+days), and create a client of type **Desktop app**. Paste its ID (two rows
+are there for it) and secret, and press `Enter`. The secret is never shown.
+Leaving the secret blank keeps the one set; blanking both removes the
+client. Replacing or removing a client that users are connected through
+asks first, as they will each have to connect again.
+
+```json
+{"users": [{"id": 1, "name": "admin", "google": {"client_id": "...",
+  "refresh_token": "...", "calendars": [{"id": "you@example.com",
+  "name": "you@example.com", "alias": "me"}]}, ...}],
+ "google_client": {"client_id": "....apps.googleusercontent.com",
+  "client_secret": "..."}}
+```
+
+**Each user then types `google`** (or `gcal`) on the dashboard:
+
+1. The screen shows a short link, `http://127.0.0.1:port/`, served by the
+   server itself for the next 15 minutes, and Google's full link, wrapped
+   over several rows. In a browser on the server's own machine, open the
+   short link; from anywhere else, copy the full one.
+2. Sign in and allow read-only access to your calendars (the dashboard
+   asks for `calendar.readonly`). If the client is published but not
+   verified, Google warns first: choose *Advanced*, then continue.
+3. On the server's machine the browser comes back to the short link's
+   server and says *Connected*: press `Enter`. Elsewhere the browser ends
+   on a page that cannot load, since `127.0.0.1` is its own machine: copy
+   the address it shows, paste it into the field at the bottom (it may
+   take more than one row; line breaks are ignored), and press `Enter`.
+   The code alone will do too. `PF5` makes a new link.
+
+Once connected, the screen lists every calendar on your Google calendar
+list, your own already marked to show, followed by blank rows filling the
+page:
+
+- type `X` in the left column to show a calendar, blank it to stop;
+- type an alias, up to 10 characters (no commas or brackets), to have its
+  events shown as `[alias] title`;
+- a calendar not on your list (someone else's shared with you, say) can be
+  typed by its ID on a blank row, across both of the row's lines, with an
+  alias; it is checked with Google when you press a key, and then added;
+- a long name takes two rows.
+
+`Enter` saves the choices. `PF3` goes back; with choices not saved, it
+asks first, and a second `PF3` leaves without saving them. `PF7` / `PF8`
+page, `PF5` reads your calendar list again, `PF9` authorizes again (keeping
+the choices), and `PF6` disconnects, after a confirmation: your
+authorization and choices are removed and Google is asked to withdraw it.
+
+Each user's calendars are read every `-agenda-refresh` while any of their
+sessions is showing them, and that agenda is shared by their sessions; one
+not used for three intervals is dropped. If a fetch fails, the last agenda
+stays up, marked stale. If Google refuses the authorization (it was
+withdrawn, or the client changed), the agenda says to type `google` to
+reconnect.
 
 Cancelled events and events you declined are left out, as the busy indicator
 does.
 
-The OAuth and Calendar API clients are go-busy-indicator's `gauth` and
-`gcal` packages, imported rather than copied, so the dashboard and the busy
-indicator share one implementation.
+The token refresh and event reading are go-busy-indicator's `gauth` and
+`gcal` packages, imported rather than copied; the authorization flow and the
+calendar list are in `internal/google`.
 
-`-agenda-file` takes a JSON list, for trying the dashboard without Google:
+`-agenda-file` takes a JSON list, shown to every user in place of their
+Google calendars, for trying the dashboard without Google:
 
 ```json
 [{"summary": "Standup", "start": "2026-09-27T09:00:00-06:00",
   "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work"}]
 ```
 
-`calendar` is optional; it is shown in brackets as `-calendar-alias` names
-are.
+`calendar` is optional; it is shown in brackets as an alias is.
 
 ### Tasks
 
@@ -512,7 +585,9 @@ whoever reads it. User names may not hold control characters at all.
 - `main.go`: flags, background watchers, and the accept loop.
 - `internal/session`: per-connection TN3270 session and dashboard rendering.
 - `internal/busy`: busy indicator WebSocket feed client.
-- `internal/agenda`: shared, periodically refreshed calendar cache.
+- `internal/agenda`: each user's periodically refreshed calendar cache.
+- `internal/google`: connecting a Google calendar: the OAuth flow and the
+  calendar list.
 - `internal/tasks`: the tasks from Trello, cached, and the task program's
   configuration.
 - `internal/checklist`: the checklist file.

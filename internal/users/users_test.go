@@ -244,3 +244,102 @@ func TestHashSlots(t *testing.T) {
 		t.Errorf("%d slots left taken", len(hashSlots))
 	}
 }
+
+func TestGoogleClient(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, c, err := s.GoogleClient(); err != nil || c != nil {
+		t.Fatalf("new file: client %+v, %v; want none", c, err)
+	}
+	client := &GoogleClient{ClientID: "cid", ClientSecret: "cs"}
+	if err := s.SetGoogleClient(client); err != nil {
+		t.Fatal(err)
+	}
+
+	// A change to the users keeps the client, and a user's calendar.
+	link := &GoogleLink{ClientID: "cid", RefreshToken: "rt", Calendars: []Calendar{{ID: "me@example.com", Alias: "me"}}}
+	if err := s.Update(func(list *[]User, _ func() int) error {
+		(*list)[0].Google = link
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(list *[]User, _ func() int) error {
+		(*list)[0].Admin = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, c, err := s.GoogleClient()
+	if err != nil || c == nil || *c != *client {
+		t.Fatalf("after changing users: client %+v, %v", c, err)
+	}
+	if g := list[0].Google; g == nil || g.RefreshToken != "rt" || len(g.Calendars) != 1 || g.Calendars[0].Alias != "me" {
+		t.Errorf("user's calendar %+v", g)
+	}
+	if !list[0].Connected(c) {
+		t.Errorf("user is not connected through the client that issued the token")
+	}
+	if list[0].Connected(&GoogleClient{ClientID: "other"}) || list[0].Connected(nil) {
+		t.Errorf("user is connected through another client, or none")
+	}
+
+	if err := s.SetGoogleClient(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, c, _ := s.GoogleClient(); c != nil {
+		t.Errorf("removed client is still there: %+v", c)
+	}
+	if data, err := os.ReadFile(s.Path()); err != nil || strings.Contains(string(data), "google_client") {
+		t.Errorf("file still names a client: %s, %v", data, err)
+	}
+}
+
+func TestAdmin(t *testing.T) {
+	for _, c := range []struct {
+		list []User
+		want string
+	}{
+		{[]User{{Name: "joelle", Admin: true, Console: true}, {Name: "Admin", Admin: true}}, "Admin"},
+		{[]User{{Name: "admin"}, {Name: "joelle", Admin: true}, {Name: "ops", Admin: true, Console: true}}, "ops"},
+		{[]User{{Name: "bob", Console: true}, {Name: "joelle", Admin: true}, {Name: "ops", Admin: true}}, "joelle"},
+		{[]User{{Name: "bob"}}, ""},
+	} {
+		u, ok := Admin(c.list)
+		if u.Name != c.want || ok != (c.want != "") {
+			t.Errorf("%+v: %q, %v; want %q", c.list, u.Name, ok, c.want)
+		}
+	}
+}
+
+func TestIDsNotReused(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	add := func(name string) int {
+		var id int
+		if err := s.Update(func(list *[]User, nextID func() int) error {
+			id = nextID()
+			*list = append(*list, User{ID: id, Name: name})
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	if id := add("a"); id != 2 {
+		t.Fatalf("first added user has ID %d, want 2", id)
+	}
+	if err := s.Update(func(list *[]User, _ func() int) error {
+		*list = (*list)[:1]
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if id := add("b"); id != 3 {
+		t.Errorf("user added after the last was removed has ID %d; want 3, not the removed one's", id)
+	}
+}

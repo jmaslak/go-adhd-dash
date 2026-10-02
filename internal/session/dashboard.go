@@ -43,14 +43,20 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 
 	// Rows available between the fixed top and the command line: two
 	// section headers and a blank spacer between the sections come out of
-	// it; what remains is split between agenda and task lines.
+	// it; what remains is split between agenda and task lines. With no
+	// calendar there is no agenda section, and the tasks have it all.
 	body := commandRow - firstBodyRow
 	content := body - 3
 
 	// The first page shows the whole agenda, even if that leaves no room
 	// for tasks; later pages show two fifths of it and more tasks.
-	firstAgenda := agendaContent(v, max(content*2/5, min(len(agendaEvents(v)), content)), cols)
-	restAgenda := agendaContent(v, content*2/5, cols)
+	var firstAgenda, restAgenda []line
+	if v.AgendaEnabled {
+		firstAgenda = agendaContent(v, max(content*2/5, min(len(agendaEvents(v)), content)), cols)
+		restAgenda = agendaContent(v, content*2/5, cols)
+	} else {
+		content = body - 1
+	}
 	firstRows := max(content-len(firstAgenda), 0)
 	restRows := max(content-len(restAgenda), 1)
 
@@ -77,13 +83,15 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	}
 
 	row := firstBodyRow
-	screen = append(screen, placeLine(row, cols, agendaHeader(v))...)
-	row++
-	for _, l := range agendaLines {
-		screen = append(screen, placeLine(row, cols, l)...)
+	if v.AgendaEnabled {
+		screen = append(screen, placeLine(row, cols, agendaHeader(v))...)
 		row++
+		for _, l := range agendaLines {
+			screen = append(screen, placeLine(row, cols, l)...)
+			row++
+		}
+		row++ // spacer
 	}
-	row++ // spacer
 
 	screen = append(screen, placeLine(row, cols, taskHeader(v, open, shownPage, totalPages, len(pageEntries)))...)
 	row++
@@ -324,16 +332,15 @@ func meetingName(e agenda.Event) string {
 	return name
 }
 
-// agendaHeader titles the agenda, noting a failed or missing calendar.
+// agendaHeader titles the agenda, noting a calendar that cannot be read.
 func agendaHeader(v view) line {
 	l := line{{Content: "AGENDA (next 24 hours)", Color: go3270.Turquoise, Intense: true}}
 	switch {
-	case !v.AgendaEnabled:
 	case v.Agenda.Err != nil && v.Agenda.Fetched.IsZero():
-		l = append(l, go3270.Field{Content: "calendar unavailable: " + v.Agenda.Err.Error(), Color: go3270.Red})
+		l = append(l, go3270.Field{Content: "calendar unavailable: " + agendaErrorText(v.Agenda.Err), Color: go3270.Red})
 	case v.Agenda.Err != nil:
 		l = append(l, go3270.Field{
-			Content: fmt.Sprintf("stale, from %s: %s", v.Agenda.Fetched.Format("15:04"), v.Agenda.Err),
+			Content: fmt.Sprintf("stale, from %s: %s", v.Agenda.Fetched.Format("15:04"), agendaErrorText(v.Agenda.Err)),
 			Color:   go3270.Yellow,
 		})
 	}
@@ -359,9 +366,6 @@ func agendaEvents(v view) []agenda.Event {
 // fit.
 func agendaContent(v view, limit, cols int) []line {
 	limit = max(limit, 1)
-	if !v.AgendaEnabled {
-		return []line{{{Content: "No calendar configured (-calendar)", Color: go3270.Blue}}}
-	}
 	upcoming := agendaEvents(v)
 	if len(upcoming) == 0 {
 		if v.Agenda.Fetched.IsZero() {

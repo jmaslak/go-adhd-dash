@@ -9,6 +9,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 )
 
 // checklistRig drives the checklist screens as a session does: draw, then
@@ -809,5 +810,57 @@ func TestChecklistStars(t *testing.T) {
 	r.key(go3270.AIDEnter, 0, map[string]string{"star:2": ""})
 	if got := fmt.Sprint(names()); got != "[A B C D]" {
 		t.Errorf("after unstarring B: order %s", got)
+	}
+}
+
+// TestChecklistOwners checks that each user sees, changes and moves only
+// their own checklists, in a file shared with others'.
+func TestChecklistOwners(t *testing.T) {
+	a := newChecklistRig(t)
+	a.c.owner = 1
+	a.draw()
+	b := newChecklistRigOn(t, a.store)
+	b.c.owner = 2
+	b.draw()
+
+	a.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "A1"})
+	b.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "B1"})
+	a.key(go3270.AIDEnter, 0, map[string]string{clNewField + "0": "A2"})
+	a.draw()
+	b.draw()
+
+	if got := names(checklist.Owned(a.lists(), 1)); fmt.Sprint(got) != "[A1 A2]" {
+		t.Errorf("user 1 owns %v", got)
+	}
+	if !strings.HasPrefix(a.rows[clHeaderRow], " CHECKLISTS 2 checklists") || strings.Contains(strings.Join(a.rows, "\n"), "B1") {
+		t.Errorf("user 1 sees:\n%s", strings.Join(a.rows, "\n"))
+	}
+	if !strings.HasPrefix(b.rows[clHeaderRow], " CHECKLISTS 1 checklist") || strings.Contains(strings.Join(b.rows, "\n"), "A1") {
+		t.Errorf("user 2 sees:\n%s", strings.Join(b.rows, "\n"))
+	}
+
+	// Moving A2 up passes over B1, which lies between them in the file.
+	a.key(go3270.AIDPF10, clFirstRow+1, nil)
+	if got := names(checklist.Owned(a.lists(), 1)); fmt.Sprint(got) != "[A2 A1]" || a.c.isError {
+		t.Errorf("after moving up: %v, message %q", got, a.rows[22])
+	}
+	a.key(go3270.AIDPF10, clFirstRow, nil)
+	if !strings.Contains(a.rows[22], "already at the top") {
+		t.Errorf("moving the top one up: %q", a.rows[22])
+	}
+
+	// Another user's checklist cannot be opened, even by its ID.
+	b.c.open = 1
+	b.draw()
+	if b.c.open != 0 || !strings.Contains(b.rows[22], "has been removed") {
+		t.Errorf("user 2 opened user 1's checklist: open %d", b.c.open)
+	}
+
+	// The dashboard lists only the user's own starred checklists.
+	a.key(go3270.AIDEnter, 0, map[string]string{"star:1": "*"})
+	b.key(go3270.AIDEnter, 0, map[string]string{"star:2": "*"})
+	cfg := Config{Checklists: a.store, Tasks: tasks.NewCache()}
+	if got := names(gather(cfg, now, nil, 2).Checklists); fmt.Sprint(got) != "[B1]" {
+		t.Errorf("user 2's dashboard checklists: %v", got)
 	}
 }

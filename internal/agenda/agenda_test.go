@@ -77,3 +77,44 @@ func TestFile(t *testing.T) {
 		t.Errorf("File.Events = %+v", got)
 	}
 }
+
+func TestPool(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := NewPool(ctx, time.Hour)
+	made := 0
+	source := func() Source {
+		made++
+		return &fakeSource{events: []Event{{Summary: "A", Start: at(9, 0), End: at(10, 0)}}}
+	}
+
+	a := p.Get("alice", source)
+	if p.Get("alice", source) != a || made != 1 {
+		t.Errorf("the same key gave another cache, or made another source (%d)", made)
+	}
+	b := p.Get("bob", source)
+	if b == a || made != 2 {
+		t.Errorf("another key shared a cache, or made no source (%d)", made)
+	}
+	// Each fills itself.
+	for deadline := time.Now().Add(5 * time.Second); a.Snapshot().Fetched.IsZero() && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+	}
+	if len(a.Snapshot().Events) != 1 {
+		t.Errorf("cache not filled: %+v", a.Snapshot())
+	}
+
+	// One unused for three intervals is dropped when another is asked for.
+	p.mu.Lock()
+	p.entries["alice"].lastUsed = time.Now().Add(-4 * time.Hour)
+	p.mu.Unlock()
+	p.Get("bob", source)
+	p.mu.Lock()
+	_, kept := p.entries["alice"]
+	p.mu.Unlock()
+	if kept {
+		t.Errorf("unused cache kept")
+	}
+	if p.Get("alice", source) == a || made != 3 {
+		t.Errorf("dropped key gave its old cache back, or made no source (%d)", made)
+	}
+}

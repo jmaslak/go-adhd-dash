@@ -48,8 +48,9 @@ type calendarState struct {
 	// midnight on the day whose events are listed.
 	month, selected time.Time
 
-	// events are loadedMonth's, read at loaded; err is why the last read
-	// failed.
+	// events are loadedMonth's, read at loaded from source; err is why the
+	// last read failed.
+	source              *agenda.Cache
 	loadedMonth, loaded time.Time
 	events              []agenda.Event
 	err                 error
@@ -73,9 +74,14 @@ func (c *calendarState) changeMonth(delta int, now time.Time) {
 }
 
 // load reads the shown month's events unless they were read for that month
-// less than maxAge ago. A failed read of the month already loaded keeps its
-// events, and is not retried until maxAge has passed.
+// from cache less than maxAge ago. A failed read of the month already loaded
+// keeps its events, and is not retried until maxAge has passed. Events read
+// from another cache, as a user's is replaced when they choose other
+// calendars, are dropped.
 func (c *calendarState) load(cache *agenda.Cache, maxAge time.Duration, now time.Time) {
+	if cache != c.source {
+		c.source, c.loadedMonth, c.events, c.err = cache, time.Time{}, nil, nil
+	}
 	if cache == nil || (c.loadedMonth.Equal(c.month) && now.Sub(c.loaded) < maxAge) {
 		return
 	}
@@ -96,7 +102,7 @@ type calendarView struct {
 	Now         time.Time
 	AutoRefresh bool
 
-	// AgendaEnabled is false when no calendar is configured.
+	// AgendaEnabled is false when the user has no calendar to show.
 	AgendaEnabled bool
 
 	// Month is midnight on the first of the month shown; Selected is
@@ -164,7 +170,7 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 	screen = append(screen, dayFields(rows, cols, v)...)
 
 	if v.Err != nil {
-		screen = append(screen, placeLine(rows-2, cols, line{{Content: "calendar unavailable: " + v.Err.Error(), Color: go3270.Red}})...)
+		screen = append(screen, placeLine(rows-2, cols, line{{Content: "calendar unavailable: " + agendaErrorText(v.Err), Color: go3270.Red}})...)
 	}
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
@@ -207,7 +213,10 @@ func dayFields(rows, cols int, v calendarView) []go3270.Field {
 	var lines []line
 	switch {
 	case !v.AgendaEnabled:
-		lines = []line{{{Content: "No calendar configured (-calendar)", Color: go3270.Blue}}}
+		lines = []line{
+			{{Content: "No Google calendar connected.", Color: go3270.Blue}},
+			{{Content: "Type GOOGLE on the dashboard to connect one.", Color: go3270.Blue}},
+		}
 	default:
 		for _, e := range v.Events {
 			if overlapsDay(e, v.Selected) && !isHomeDay(e) {

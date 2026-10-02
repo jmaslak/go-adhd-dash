@@ -1,7 +1,9 @@
 // Package users keeps the user database in a JSON file: each user's name,
-// whether they are an admin, and their password, hashed with Argon2id. At
-// least one user is always an admin, and exactly one is the console's: the
-// user the console is logged in as.
+// whether they are an admin, their password, hashed with Argon2id, and the
+// Google calendar they have connected, if any. At least one user is always
+// an admin, and exactly one is the console's: the user the console is
+// logged in as. The file also holds the Google OAuth client every user's
+// calendar is connected through, set by an admin.
 //
 // Users carry IDs, unique across the file and never reused while it lasts,
 // so that a change made on a screen drawn before another session changed
@@ -41,6 +43,41 @@ type User struct {
 	Console bool `json:"console,omitempty"`
 
 	Password string `json:"password"` // Argon2id, in PHC string format
+
+	// Google is the user's connected Google calendar; nil for none.
+	Google *GoogleLink `json:"google,omitempty"`
+}
+
+// GoogleClient is the OAuth client users connect their calendars through.
+type GoogleClient struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// GoogleLink is a user's authorization to read their Google calendars, and
+// which of them to show.
+type GoogleLink struct {
+	// ClientID is the client the token was issued to; it is no use with
+	// any other.
+	ClientID     string `json:"client_id"`
+	RefreshToken string `json:"refresh_token"`
+
+	Calendars []Calendar `json:"calendars"`
+}
+
+// Calendar is one Google calendar a user has chosen to show.
+type Calendar struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"` // as Google gave it, for the user to know it by
+
+	// Alias, if set, is shown in brackets before the calendar's events.
+	Alias string `json:"alias,omitempty"`
+}
+
+// Connected reports whether u's calendar can be read through client: they
+// have a token, issued to that client.
+func (u User) Connected(client *GoogleClient) bool {
+	return client != nil && u.Google != nil && u.Google.RefreshToken != "" && u.Google.ClientID == client.ClientID
 }
 
 // The first user, made when there is no file yet.
@@ -58,6 +95,13 @@ var ErrNoConsole = errors.New("one user must be the console's")
 // file is the JSON file's contents.
 type file struct {
 	Users []User `json:"users"`
+
+	// GoogleClient is the OAuth client for Google calendars; nil for none.
+	GoogleClient *GoogleClient `json:"google_client,omitempty"`
+
+	// LastID is the highest ID ever given, so that a removed user's is not
+	// given again: their checklists, kept by user ID, would go with it.
+	LastID int `json:"last_id,omitempty"`
 }
 
 // Store reads and writes the user file. One Store is shared by every
@@ -90,19 +134,40 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Load() (list []User, created bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list, err = s.read()
+	f, err := s.read()
 	if !errors.Is(err, fs.ErrNotExist) {
-		return list, false, err
+		return f.Users, false, err
 	}
 	hash, err := hashPassword(FirstPassword) // at startup, with nothing to wait for
 	if err != nil {
 		return nil, false, err
 	}
 	list = []User{{ID: 1, Name: FirstName, Admin: true, Console: true, Password: hash}}
-	if err := s.write(list); err != nil {
+	if err := s.write(file{Users: list}); err != nil {
 		return nil, false, err
 	}
 	return list, true, nil
+}
+
+// GoogleClient returns the users and the Google OAuth client, nil if none
+// is set, as one read of the file.
+func (s *Store) GoogleClient() ([]User, *GoogleClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	return f.Users, f.GoogleClient, err
+}
+
+// SetGoogleClient sets the Google OAuth client, or with nil removes it.
+func (s *Store) SetGoogleClient(client *GoogleClient) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if err != nil {
+		return err
+	}
+	f.GoogleClient = client
+	return s.write(f)
 }
 
 // Update reads the users, passes them to change, and writes back what it
@@ -113,25 +178,26 @@ func (s *Store) Load() (list []User, created bool, err error) {
 func (s *Store) Update(change func(list *[]User, nextID func() int) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list, err := s.read()
+	f, err := s.read()
 	if err != nil {
 		return err
 	}
-	last := 0
-	for _, u := range list {
+	last := f.LastID
+	for _, u := range f.Users {
 		last = max(last, u.ID)
 	}
 	nextID := func() int {
 		last++
 		return last
 	}
-	if err := change(&list, nextID); err != nil {
+	if err := change(&f.Users, nextID); err != nil {
 		return err
 	}
-	if err := Validate(list); err != nil {
+	f.LastID = last
+	if err := Validate(f.Users); err != nil {
 		return err
 	}
-	return s.write(list)
+	return s.write(f)
 }
 
 // Validate reports why list is not a valid set of users: a name empty,
@@ -178,6 +244,25 @@ func Validate(list []User) error {
 func ConsoleUser(list []User) (User, bool) {
 	for _, u := range list {
 		if u.Console {
+			return u, true
+		}
+	}
+	return User{}, false
+}
+
+// Admin returns the admin user: the one called FirstName if they are an
+// admin, else the console's user if they are, else the first admin.
+func Admin(list []User) (User, bool) {
+	for _, u := range list {
+		if u.Admin && strings.EqualFold(u.Name, FirstName) {
+			return u, true
+		}
+	}
+	if u, ok := ConsoleUser(list); ok && u.Admin {
+		return u, true
+	}
+	for _, u := range list {
+		if u.Admin {
 			return u, true
 		}
 	}
@@ -255,28 +340,29 @@ func acquireHashSlot(ctx context.Context) (release func(), err error) {
 	}
 }
 
-// read returns the users in the file; a missing file is fs.ErrNotExist.
-func (s *Store) read() ([]User, error) {
+// read returns the file's contents; a missing file is fs.ErrNotExist.
+func (s *Store) read() (file, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, err
+			return file{}, err
 		}
-		return nil, fmt.Errorf("reading users: %w", err)
+		return file{}, fmt.Errorf("reading users: %w", err)
 	}
 	var f file
 	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("reading users from %s: %w", s.path, err)
+		return file{}, fmt.Errorf("reading users from %s: %w", s.path, err)
 	}
 	defaultConsole(f.Users)
-	return f.Users, nil
+	return f, nil
 }
 
 // write replaces the file by renaming a new one over it, so that a reader
 // never sees it half written and a failure leaves the old one. The file is
-// readable only by its owner, as it holds password hashes.
-func (s *Store) write(list []User) error {
-	data, err := json.MarshalIndent(file{Users: list}, "", "  ")
+// readable only by its owner, as it holds password hashes and Google
+// credentials.
+func (s *Store) write(f file) error {
+	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return fmt.Errorf("writing users: %w", err)
 	}

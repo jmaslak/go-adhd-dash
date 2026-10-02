@@ -113,7 +113,7 @@ func TestCalendarDayList(t *testing.T) {
 
 	v.Events, v.AgendaEnabled = nil, false
 	s, _, _ = buildCalendar(24, 80, v)
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "No calendar configured") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "No Google calendar connected.") || !strings.Contains(text, "Type GOOGLE") {
 		t.Errorf("missing calendar not reported:\n%s", text)
 	}
 }

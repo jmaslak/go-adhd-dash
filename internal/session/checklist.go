@@ -54,6 +54,10 @@ var errChecklistGone = errors.New("that checklist has been removed")
 
 // checklistState is one session's place on the checklist screens.
 type checklistState struct {
+	// owner is the ID of the user whose checklists are shown, and who owns
+	// those added; zero for a session with no user.
+	owner int
+
 	// open is the ID of the checklist shown, zero for the list of them;
 	// openName is its name, as last drawn.
 	open     int
@@ -149,6 +153,7 @@ func (c *checklistState) fieldValue(name, stored string) string {
 // list.
 func buildChecklist(rows, cols int, now time.Time, lists []checklist.Checklist, loadErr error, c *checklistState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	c.shown, c.rowIDs = map[string]string{}, map[int]int{}
+	lists = checklist.Owned(lists, c.owner)
 	if c.held != nil {
 		return buildHeldConfirm(rows, cols, now, lists, c.open, c.held), rows - 1, 0
 	}
@@ -721,7 +726,7 @@ func (c *checklistState) handleKey(resp go3270.Response, store *checklist.Store,
 		if resp.AID == go3270.AIDPF11 {
 			by = 1
 		}
-		if msg, err := moveEntry(store, c.open, id, by); err != nil {
+		if msg, err := moveEntry(store, c.owner, c.open, id, by); err != nil {
 			c.message, c.isError = "Could not save: "+err.Error(), true
 		} else {
 			c.message, c.isError = msg, msg != ""
@@ -875,7 +880,7 @@ func (c *checklistState) save(values map[string]string, store *checklist.Store) 
 				}
 			}
 			for _, a := range added {
-				*lists = append(*lists, checklist.Checklist{ID: nextID(), Name: a.text, Active: a.star})
+				*lists = append(*lists, checklist.Checklist{ID: nextID(), Name: a.text, Active: a.star, Owner: c.owner})
 			}
 			return nil
 		}
@@ -935,14 +940,14 @@ func (c *checklistState) save(values map[string]string, store *checklist.Store) 
 	return "", nil
 }
 
-// moveEntry moves checklist id, or with open item id of checklist open, by
-// one place, up (by -1) or down (by 1). It returns why it could not when
-// that is the entry's place, not an error: already at the top or bottom, or
-// gone.
-func moveEntry(store *checklist.Store, open, id, by int) (msg string, err error) {
+// moveEntry moves owner's checklist id, or with open item id of checklist
+// open, by one place, up (by -1) or down (by 1). It returns why it could not
+// when that is the entry's place, not an error: already at the top or
+// bottom, or gone.
+func moveEntry(store *checklist.Store, owner, open, id, by int) (msg string, err error) {
 	err = store.Update(func(lists *[]checklist.Checklist, _ func() int) error {
 		if open == 0 {
-			msg = moveChecklist(*lists, id, by)
+			msg = moveChecklist(*lists, owner, id, by)
 			return nil
 		}
 		i := slices.IndexFunc(*lists, func(l checklist.Checklist) bool { return l.ID == open })
@@ -958,11 +963,12 @@ func moveEntry(store *checklist.Store, open, id, by int) (msg string, err error)
 	return msg, err
 }
 
-// moveChecklist moves checklist id past the next unstarred checklist up (by
-// -1) or down (by 1) the list, or says why it cannot. The starred are
-// listed apart, first, so it skips over them, and they cannot be moved.
-func moveChecklist(lists []checklist.Checklist, id, by int) string {
-	j := slices.IndexFunc(lists, func(l checklist.Checklist) bool { return l.ID == id })
+// moveChecklist moves owner's checklist id past their next unstarred
+// checklist up (by -1) or down (by 1) the list, or says why it cannot. The
+// starred are listed apart, first, so it skips over them, and they cannot
+// be moved; other users' checklists are not on the list at all.
+func moveChecklist(lists []checklist.Checklist, owner, id, by int) string {
+	j := slices.IndexFunc(lists, func(l checklist.Checklist) bool { return l.ID == id && l.Owner == owner })
 	switch {
 	case j < 0:
 		return "That checklist has been removed."
@@ -970,7 +976,7 @@ func moveChecklist(lists []checklist.Checklist, id, by int) string {
 		return "Starred checklists stay at the top; unstar one to move it."
 	}
 	k := j + by
-	for k >= 0 && k < len(lists) && lists[k].Active {
+	for k >= 0 && k < len(lists) && (lists[k].Active || lists[k].Owner != owner) {
 		k += by
 	}
 	switch {

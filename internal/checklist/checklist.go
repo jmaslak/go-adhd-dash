@@ -1,5 +1,5 @@
 // Package checklist keeps named checklists in a JSON file, shared by every
-// session.
+// session. Each checklist is one user's.
 //
 // Checklists and their items carry IDs, unique across the file and never
 // reused while it lasts, so that a change made on a screen drawn before
@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
@@ -32,6 +33,22 @@ type Checklist struct {
 	// Active is set for a checklist starred as in use, which is listed
 	// ahead of the others.
 	Active bool `json:"active,omitempty"`
+
+	// Owner is the ID of the user whose checklist it is; zero for one made
+	// before checklists were each a user's, until AssignUnowned gives it
+	// to someone.
+	Owner int `json:"owner,omitempty"`
+}
+
+// Owned are the checklists of lists that are owner's, in the same order.
+func Owned(lists []Checklist, owner int) []Checklist {
+	var out []Checklist
+	for _, l := range lists {
+		if l.Owner == owner {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // file is the JSON file's contents.
@@ -69,6 +86,44 @@ func (s *Store) Load() ([]Checklist, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.read()
+}
+
+// AssignUnowned gives every checklist with no owner to owner, reporting how
+// many there were. With none, the file is left as it is.
+func (s *Store) AssignUnowned(owner int) (int, error) {
+	lists, err := s.Load()
+	if err != nil || !slices.ContainsFunc(lists, func(l Checklist) bool { return l.Owner == 0 }) {
+		return 0, err
+	}
+	n := 0
+	err = s.Update(func(lists *[]Checklist, _ func() int) error {
+		n = 0
+		for i := range *lists {
+			if (*lists)[i].Owner == 0 {
+				(*lists)[i].Owner = owner
+				n++
+			}
+		}
+		return nil
+	})
+	return n, err
+}
+
+// RemoveOwned removes every checklist whose owner gone says is gone,
+// reporting how many there were. With none, the file is left as it is.
+func (s *Store) RemoveOwned(gone func(owner int) bool) (int, error) {
+	lists, err := s.Load()
+	if err != nil || !slices.ContainsFunc(lists, func(l Checklist) bool { return gone(l.Owner) }) {
+		return 0, err
+	}
+	n := 0
+	err = s.Update(func(lists *[]Checklist, _ func() int) error {
+		before := len(*lists)
+		*lists = slices.DeleteFunc(*lists, func(l Checklist) bool { return gone(l.Owner) })
+		n = before - len(*lists)
+		return nil
+	})
+	return n, err
 }
 
 // Update reads the checklists, passes them to change, and writes back what

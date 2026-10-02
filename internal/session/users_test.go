@@ -2,12 +2,14 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/racingmars/go3270"
 
+	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -287,5 +289,72 @@ func TestUsersConsole(t *testing.T) {
 	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "N", "ucon:3": "Y"})
 	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "joelle" {
 		t.Errorf("hand to joelle: %q, console user %+v", r.u.message, u)
+	}
+}
+
+// TestUsersRemoveWithCalendar checks that a user's checklists and Google
+// calendar go with them: their link with their entry, and their
+// authorization at Google.
+func TestUsersRemoveWithCalendar(t *testing.T) {
+	fake := newFakeGoogle(t)
+	r := newUsersRig(t)
+	r.u.checklists = checklist.NewStore(filepath.Join(t.TempDir(), "cl.json"))
+	if err := r.u.checklists.Update(func(l *[]checklist.Checklist, nextID func() int) error {
+		*l = append(*l,
+			checklist.Checklist{ID: nextID(), Name: "admin's", Owner: 1},
+			checklist.Checklist{ID: nextID(), Name: "joelle's", Owner: 2},
+			checklist.Checklist{ID: nextID(), Name: "joelle's too", Owner: 2})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.Update(func(list *[]users.User, nextID func() int) error {
+		*list = append(*list, users.User{ID: nextID(), Name: "joelle",
+			Google: &users.GoogleLink{ClientID: "cid", RefreshToken: "joelle-token", Calendars: []users.Calendar{{ID: "j@example.com"}}}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.draw()
+
+	r.key(go3270.AIDEnter, map[string]string{"usel:2": "D"})
+	if text := strings.Join(r.rows, "\n"); !strings.Contains(text, "joelle with 2 checklists and their Google calendar") {
+		t.Errorf("confirmation does not say the checklists and calendar go too:\n%s", text)
+	}
+	r.key(go3270.AIDPF4, nil)
+	if list := r.list(); len(list) != 1 || r.u.isError || r.u.message != "Removed 1 user. Removed 2 checklists." {
+		t.Fatalf("after removing: %+v, message %q", list, r.u.message)
+	}
+	if lists, _ := r.u.checklists.Load(); len(lists) != 1 || lists[0].Name != "admin's" {
+		t.Errorf("checklists left: %+v; want only admin's", lists)
+	}
+	fake.mu.Lock()
+	revoked := fake.revoked
+	fake.mu.Unlock()
+	if len(revoked) != 1 || revoked[0] != "joelle-token" {
+		t.Errorf("revoked %v; want joelle's token", revoked)
+	}
+	if data, err := os.ReadFile(r.store.Path()); err != nil || strings.Contains(string(data), "joelle") {
+		t.Errorf("the users file still has joelle: %v\n%s", err, data)
+	}
+
+	// A user with no calendar has nothing to withdraw.
+	if err := r.store.Update(func(list *[]users.User, nextID func() int) error {
+		*list = append(*list, users.User{ID: nextID(), Name: "bob"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.draw()
+	if bob := r.list()[1]; bob.ID != 3 {
+		t.Errorf("bob was given ID %d, joelle's; want 3", bob.ID)
+	}
+	r.key(go3270.AIDEnter, map[string]string{"usel:3": "D"})
+	r.key(go3270.AIDPF4, nil)
+	fake.mu.Lock()
+	n := len(fake.revoked)
+	fake.mu.Unlock()
+	if len(r.list()) != 1 || n != 1 {
+		t.Errorf("removing bob: users %+v, %d revoked", r.list(), n)
 	}
 }
