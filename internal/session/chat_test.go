@@ -230,3 +230,40 @@ func TestChatClear(t *testing.T) {
 		t.Error("nil chat has messages")
 	}
 }
+
+// TestChatNames checks that posters are shown by user name: the column as
+// wide as the longest, up to chatMaxName, and a user with two sessions on
+// the chat screen listed once.
+func TestChatNames(t *testing.T) {
+	c := NewChat()
+	for id, name := range map[uint64]string{1: "joelle", 2: "joelle", 3: "bob"} {
+		conn, other := net.Pipe()
+		defer conn.Close()  //nolint:errcheck
+		defer other.Close() //nolint:errcheck
+		c.watch(id, name, conn)
+	}
+	c.post(1, "joelle", "hi", now)
+	c.post(3, "bob", "hello", now)
+
+	s, _, _ := buildChat(24, 80, now, c, "joelle", &chatState{})
+	rows := screenText(t, s, 24, 80)
+	text := strings.Join(rows, "\n")
+	if !strings.Contains(rows[chatHeaderRow], "as joelle; 2 here: bob joelle") {
+		t.Errorf("header %q", rows[chatHeaderRow])
+	}
+	// Short names keep the old width: text after "15:04 name:   ".
+	if !strings.Contains(text, " 10:00 joelle:   hi") || !strings.Contains(text, " 10:00 bob:      hello") {
+		t.Errorf("short names:\n%s", text)
+	}
+
+	c.post(3, "averyverylongusername", "long", now)
+	c.post(3, "elevenchars", "eleven", now)
+	s, _, _ = buildChat(24, 80, now, c, "joelle", &chatState{})
+	text = strings.Join(screenText(t, s, 24, 80), "\n")
+	if !strings.Contains(text, " 10:00 joelle:           hi") || !strings.Contains(text, " 10:00 elevenchars:      eleven") {
+		t.Errorf("names not widened to the longest, up to 16:\n%s", text)
+	}
+	if strings.Contains(text, "averyverylongusername") || !strings.Contains(text, "long") {
+		t.Errorf("name over 16 not cut:\n%s", text)
+	}
+}

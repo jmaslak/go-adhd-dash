@@ -354,7 +354,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		// Before the read deadline is set, so that a wake meant for the chat
 		// screen cannot cut short the wait for a key on another.
 		if mode == modeChat {
-			cfg.Chat.watch(sessionID, neg.LUName, rawConn)
+			cfg.Chat.watch(sessionID, chatName(user, neg.LUName), rawConn)
 		} else {
 			cfg.Chat.unwatch(sessionID)
 		}
@@ -365,7 +365,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeChat:
 			// A timed redraw, or one woken by a message posted, writes over
 			// the screen without erasing it, so what is typed survives.
-			screen, cursorRow, cursorCol = buildChat(rows, cols, now, cfg.Chat, neg.LUName, &ch)
+			screen, cursorRow, cursorCol = buildChat(rows, cols, now, cfg.Chat, chatName(user, neg.LUName), &ch)
 		case modeActivity:
 			// Redrawn on the timer like the dashboard, keeping what has
 			// been typed, and each session in its row so that marks typed
@@ -596,7 +596,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				logIn(*u)
 			}
 		case modeChat:
-			if ch.handle(resp, cfg.Chat, sessionID, neg.LUName, rows) {
+			if ch.handle(resp, cfg.Chat, sessionID, chatName(user, neg.LUName), rows) {
 				mode = modeDashboard
 			}
 		case modeTerminateConfirm:
@@ -684,6 +684,15 @@ const (
 	modeGoogle
 	modeGoogleClient
 )
+
+// chatName is who a session is on the chat: its user's name, or with no
+// user (a console with no user database), its LU name.
+func chatName(u *users.User, lu string) string {
+	if u == nil {
+		return lu
+	}
+	return u.Name
+}
 
 // ownerOf is the owner of u's checklists: their ID, or zero with no user.
 func ownerOf(u *users.User) int {

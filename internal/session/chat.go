@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/racingmars/go3270"
 )
@@ -19,7 +20,7 @@ const chatKeep = 1000
 type ChatMessage struct {
 	Seq  int // from 1, in the order posted
 	Time time.Time
-	From string // the poster's LU
+	From string // the poster's user name
 	Text string
 }
 
@@ -34,10 +35,10 @@ type Chat struct {
 	watchers map[uint64]chatWatcher
 }
 
-// chatWatcher is a session on the chat screen: its LU, and its connection,
-// to wake it.
+// chatWatcher is a session on the chat screen: who it is logged in as, and
+// its connection, to wake it.
 type chatWatcher struct {
-	lu   string
+	name string
 	conn net.Conn
 }
 
@@ -46,16 +47,16 @@ func NewChat() *Chat {
 	return &Chat{watchers: map[uint64]chatWatcher{}}
 }
 
-// watch records that session id, as lu on conn, is on the chat screen, to
-// be woken when a message is posted. A nil Chat does nothing, here and in
-// its other methods.
-func (c *Chat) watch(id uint64, lu string, conn net.Conn) {
+// watch records that session id, as name on conn, is on the chat screen,
+// to be woken when a message is posted. A nil Chat does nothing, here and
+// in its other methods.
+func (c *Chat) watch(id uint64, name string, conn net.Conn) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.watchers[id] = chatWatcher{lu: lu, conn: conn}
+	c.watchers[id] = chatWatcher{name: name, conn: conn}
 }
 
 // unwatch records that session id has left the chat screen. It must be
@@ -70,16 +71,16 @@ func (c *Chat) unwatch(id uint64) {
 	delete(c.watchers, id)
 }
 
-// post adds a message from lu, sent by session id, and wakes every other
+// post adds a message from name, sent by session id, and wakes every other
 // session on the chat screen: its read deadline passes, and it redraws.
-func (c *Chat) post(id uint64, lu, text string, now time.Time) {
+func (c *Chat) post(id uint64, name, text string, now time.Time) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.seq++
-	c.messages = append(c.messages, ChatMessage{Seq: c.seq, Time: now, From: lu, Text: text})
+	c.messages = append(c.messages, ChatMessage{Seq: c.seq, Time: now, From: name, Text: text})
 	if len(c.messages) > chatKeep {
 		c.messages = slices.Delete(c.messages, 0, len(c.messages)-chatKeep)
 	}
@@ -123,7 +124,8 @@ func (c *Chat) changed(except uint64) {
 }
 
 // snapshot is the messages kept, the version they are of (see latest), and
-// the LUs of the sessions on the chat screen, sorted.
+// who is on the chat screen, sorted, each once however many sessions they
+// have there.
 func (c *Chat) snapshot() (messages []ChatMessage, version int, here []string) {
 	if c == nil {
 		return nil, 0, nil
@@ -131,9 +133,10 @@ func (c *Chat) snapshot() (messages []ChatMessage, version int, here []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, w := range c.watchers {
-		here = append(here, w.lu)
+		here = append(here, w.name)
 	}
 	slices.SortFunc(here, cmp.Compare[string])
+	here = slices.Compact(here)
 	return slices.Clone(c.messages), c.version, here
 }
 
@@ -185,15 +188,33 @@ type chatLine struct {
 	own              bool
 }
 
+// The poster's name, as shown before their messages, is as wide as the
+// longest kept, within these bounds; one longer is cut.
+const (
+	chatMinName = 8
+	chatMaxName = 16
+)
+
+// chatNameWidth is how wide the posters' names are shown.
+func chatNameWidth(messages []ChatMessage) int {
+	width := chatMinName
+	for _, m := range messages {
+		width = max(width, utf8.RuneCountInString(m.From))
+	}
+	return min(width, chatMaxName)
+}
+
 // chatPrefixWidth is the width of a message's time and poster, "15:04
-// AD000001:", with the space after it.
-const chatPrefixWidth = 16
+// name:", with the space after it, for names nameWidth wide.
+func chatPrefixWidth(nameWidth int) int {
+	return nameWidth + 8
+}
 
 // chatLines wraps messages into lines of at most width runes, the text after
 // the time and poster, continuation lines indented to it. Lines are broken
-// at spaces where they can be. own is the LU whose messages are marked.
+// at spaces where they can be. own is the name whose messages are marked.
 func chatLines(messages []ChatMessage, width int, own string) []chatLine {
-	textWidth := max(width-chatPrefixWidth, 10)
+	textWidth := max(width-chatPrefixWidth(chatNameWidth(messages)), 10)
 	var out []chatLine
 	for _, m := range messages {
 		first := true
@@ -231,12 +252,13 @@ func wrapText(s string, width int) []string {
 	return append(out, string(r))
 }
 
-// buildChat renders the chat as lu sees it, and where the cursor goes: the
-// input field.
-func buildChat(rows, cols int, now time.Time, chat *Chat, lu string, c *chatState) (screen go3270.Screen, cursorRow, cursorCol int) {
+// buildChat renders the chat as name sees it, and where the cursor goes:
+// the input field.
+func buildChat(rows, cols int, now time.Time, chat *Chat, name string, c *chatState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	messages, version, here := chat.snapshot()
 	c.shown = version
-	lines := chatLines(messages, cols-1, lu)
+	lines := chatLines(messages, cols-1, name)
+	nameWidth := chatNameWidth(messages)
 	if c.scroll > 0 {
 		c.scroll += len(lines) - c.lines // keep what is shown in place
 	}
@@ -247,7 +269,7 @@ func buildChat(rows, cols int, now time.Time, chat *Chat, lu string, c *chatStat
 	start := max(end-perPage, 0)
 
 	screen = titleFields(cols, "CHAT", now, false)
-	info := fmt.Sprintf("as %s; %d here: %s", lu, len(here), strings.Join(here, " "))
+	info := fmt.Sprintf("as %s; %d here: %s", name, len(here), strings.Join(here, " "))
 	if c.scroll > 0 {
 		info += fmt.Sprintf("; %d newer lines, PF8", c.scroll)
 	}
@@ -270,11 +292,11 @@ func buildChat(rows, cols int, now time.Time, chat *Chat, lu string, c *chatStat
 		if l.from != "" {
 			ln = line{
 				{Content: l.when, Color: go3270.Blue},
-				{Content: fmt.Sprintf("%-*s", chatPrefixWidth-7, l.from+":"), Color: fromColor, Intense: l.own},
+				{Content: fmt.Sprintf("%-*s", nameWidth+1, truncate(l.from, nameWidth)+":"), Color: fromColor, Intense: l.own},
 				{Content: l.text, Color: go3270.Green, Intense: true},
 			}
 		} else {
-			ln = line{{Content: strings.Repeat(" ", chatPrefixWidth-1)}, {Content: l.text, Color: go3270.Green, Intense: true}}
+			ln = line{{Content: strings.Repeat(" ", chatPrefixWidth(nameWidth)-1)}, {Content: l.text, Color: go3270.Green, Intense: true}}
 		}
 		screen = append(screen, placeLine(row, cols, ln)...)
 		row++
@@ -306,7 +328,7 @@ func buildChat(rows, cols int, now time.Time, chat *Chat, lu string, c *chatStat
 // leave for the dashboard. Enter sends what was typed, if anything, and
 // goes back to the newest messages; PF7 and PF8 scroll a page older and
 // newer.
-func (c *chatState) handle(resp go3270.Response, chat *Chat, id uint64, lu string, rows int) (leave bool) {
+func (c *chatState) handle(resp go3270.Response, chat *Chat, id uint64, name string, rows int) (leave bool) {
 	c.message, c.isError = "", false
 	page := max(chatRows(rows)-1, 1)
 	switch resp.AID {
@@ -321,7 +343,7 @@ func (c *chatState) handle(resp go3270.Response, chat *Chat, id uint64, lu strin
 		if text == "" {
 			break
 		}
-		chat.post(id, lu, text, time.Now())
+		chat.post(id, name, text, time.Now())
 		c.scroll = 0
 	}
 	return false

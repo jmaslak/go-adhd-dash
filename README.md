@@ -85,7 +85,9 @@ in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`,
 without erasing it, so a command half typed survives it.
 
 The chat (`chat` or `PF11`) is shared by every session of this server, each
-posting as its LU name. Type a message on the `Message ===>` line and press
+posting as its user's name (the console with no user database, as its LU
+name). Names are shown as wide as the longest posted, up to 16 characters,
+and cut beyond that. Type a message on the `Message ===>` line and press
 `Enter` to send it; the newest messages are at the bottom, above that line,
 with your own names in white. Every other session on the chat screen shows
 a message the moment it is sent, redrawing over the screen without erasing
@@ -232,7 +234,8 @@ nothing else: `PF9` switches between it and the dBm calculator, and `PF3`
 flag takes effect at their next login.
 
 The activity viewer shows who each session logged in as, the console
-included; the chat still names sessions by LU.
+included; so does the chat. Someone on the chat screen in two sessions is
+listed there once.
 
 On the calendar, a month is shown with the selected day's events beside it. Move the cursor onto a day and press
 `Enter` to select it.
