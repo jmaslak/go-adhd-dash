@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/google"
+	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -90,6 +91,10 @@ type usersState struct {
 	// checklists keeps the checklists, a deleted user's deleted with them;
 	// nil for none.
 	checklists *checklist.Store
+
+	// trelloBaseURL is the Trello API's address, for withdrawing a deleted
+	// user's token; "" for Trello's own.
+	trelloBaseURL string
 
 	message string
 	isError bool
@@ -407,6 +412,7 @@ type usersResult struct {
 	removed         []string
 	removedIDs      []int
 	revoke          []string // the Google refresh tokens of the users removed
+	revokeTrello    []tasks.Config
 	changedPassword string
 	added           string
 	console         string // the user the console was handed to
@@ -420,6 +426,9 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 			r.removed, r.removedIDs = append(r.removed, x.Name), append(r.removedIDs, x.ID)
 			if x.Google != nil && x.Google.RefreshToken != "" {
 				r.revoke = append(r.revoke, x.Google.RefreshToken)
+			}
+			if x.Trello != nil && x.Trello.Token != "" {
+				r.revokeTrello = append(r.revokeTrello, tasks.Config{APIKey: x.Trello.APIKey, Token: x.Trello.Token})
 			}
 		}
 		return e.deletes[x.ID]
@@ -619,6 +628,18 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 		}
 		logf("withdrew a removed user's Google authorization")
 	}
+	for _, tc := range r.revokeTrello {
+		tc.BaseURL = u.trelloBaseURL
+		ctx, cancel := context.WithTimeout(context.Background(), googleWait)
+		err := tasks.Revoke(ctx, tc)
+		cancel()
+		if err != nil {
+			logf("could not withdraw a removed user's Trello token: %v", err)
+			said = append(said, "Trello could not be told to withdraw a removed user's token ("+err.Error()+").")
+			continue
+		}
+		logf("withdrew a removed user's Trello token")
+	}
 	if r.changedPassword != "" {
 		logf("changed the password of %q", r.changedPassword)
 		said = append(said, "Changed the password of "+r.changedPassword+".")
@@ -688,8 +709,16 @@ func buildDeleteUsersConfirm(rows, cols int, now time.Time, p *usersPending) go3
 		if x.Google != nil {
 			with = append(with, "their Google calendar")
 		}
+		if x.Trello != nil {
+			with = append(with, "their Trello link")
+		}
 		if len(with) > 0 {
-			l = append(l, go3270.Field{Content: "with " + strings.Join(with, " and "), Color: go3270.Blue})
+			last := len(with) - 1
+			list := with[last]
+			if last > 0 {
+				list = strings.Join(with[:last], ", ") + " and " + list
+			}
+			l = append(l, go3270.Field{Content: "with " + list, Color: go3270.Blue})
 		}
 		screen = append(screen, placeLineAt(row, usNameCol, cols, l)...)
 		row++

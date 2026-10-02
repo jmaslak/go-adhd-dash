@@ -13,8 +13,8 @@ screen shows:
   title: "out of office" or the word "OOO") are left out. If they do not
   all fit alongside the tasks, the first page gives them the room and the
   tasks move to later pages;
-- the **tasks**: the cards on the Trello lists named in `~/.task.yaml`
-  (see [Tasks](#tasks)), less those with an ignored tag.
+- the **tasks**: the cards on the Trello lists the user has linked (see
+  [Tasks](#tasks)), then their starred checklists.
 
 The screen redraws itself every `-refresh`, so it can be left up on a spare
 terminal. `PF5` turns that off and on again for the session; the title row
@@ -43,6 +43,7 @@ Model 5's 27x132 or larger.
 | `-busy-control` | `localhost:3333` | busy indicator UDP control port, `host:port` (its `--port`), for `PF1` / `PF2`; empty to turn them off |
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
+| `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
 | `-checklist-file` | `~/.adhd-dash-checklists.json` | JSON file the checklists are kept in |
 | `-users-file` | `~/.adhd-dash-users.json` | JSON file the users are kept in |
 | `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
@@ -78,7 +79,8 @@ The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
-`checklist`, `chat`, `google` (connect your Google calendar), `busy`,
+`checklist`, `chat`, `google` (connect your Google calendar), `trello`
+(link your Trello account), `busy`,
 `green`, `off`, `auto`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
 in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`,
 `next`, `prev`, `quit`, `logoff`, `?`). The dashboard's timed redraw writes over the screen
@@ -131,6 +133,10 @@ The admin menu (`admin`) lists its options by number; type one on the
 - `4`: the users (see [Users](#users)).
 - `5`: the Google OAuth client every user connects their calendar through
   (see [Agenda](#agenda)).
+- `6`: the web site: its public address, and the organization and contact
+  email its privacy policy and terms name (see [Web site](#web-site)).
+- `7`: the Trello API key every user links their Trello account through
+  (see [Tasks](#tasks)).
 
 ### Users
 
@@ -262,7 +268,7 @@ are kept while paging.
 - `PF3`: back (from the confirmation, to the list with the marks kept)
 
 `PF4` adds a task: type its title, and the number of the Trello board and
-list to put it on, from those in `~/.task.yaml` (with only one, it is picked
+list to put it on, from those the user chose (with only one, it is picked
 already), then press `Enter`. A card is added at the bottom of that list, and
 the task screen comes back saying which task number it got; marks typed
 before `PF4` are kept. If the card cannot be added, the screen says why.
@@ -444,8 +450,11 @@ admin menu option `5`. The screen lists the steps: in the Google Cloud
 console, create a project, enable the Google Calendar API, set up the
 consent screen (Internal for a Workspace domain's own users; otherwise
 External, and *Publish app*, since in Testing an authorization lasts only 7
-days), and create a client of type **Desktop app**. Paste its ID (two rows
-are there for it) and secret, and press `Enter`. The secret is never shown.
+days), and create a client of type **Web application**, whose authorized
+redirect URI is the web site's `google/callback` (the screen shows it, once
+the site's address is set on option `6`, e.g.
+`https://adhd.example.com/google/callback`). Paste its ID (two rows are
+there for it) and secret, and press `Enter`. The secret is never shown.
 Leaving the secret blank keeps the one set; blanking both removes the
 client. Replacing or removing a client that users are connected through
 asks first, as they will each have to connect again.
@@ -458,21 +467,21 @@ asks first, as they will each have to connect again.
   "client_secret": "..."}}
 ```
 
-**Each user then types `google`** (or `gcal`) on the dashboard:
+**Each user then connects on the web site** (see [Web site](#web-site)),
+which must be served and have its address set. Typing `google` (or `gcal`)
+on the dashboard shows the steps:
 
-1. The screen shows a short link, `http://127.0.0.1:port/`, served by the
-   server itself for the next 15 minutes, and Google's full link, wrapped
-   over several rows. In a browser on the server's own machine, open the
-   short link; from anywhere else, copy the full one.
-2. Sign in and allow read-only access to your calendars (the dashboard
-   asks for `calendar.readonly`). If the client is published but not
-   verified, Google warns first: choose *Advanced*, then continue.
-3. On the server's machine the browser comes back to the short link's
-   server and says *Connected*: press `Enter`. Elsewhere the browser ends
-   on a page that cannot load, since `127.0.0.1` is its own machine: copy
-   the address it shows, paste it into the field at the bottom (it may
-   take more than one row; line breaks are ignored), and press `Enter`.
-   The code alone will do too. `PF5` makes a new link.
+1. In a browser, go to the site's `google` page, e.g.
+   `https://adhd.example.com/google`.
+2. Sign in there with the same user name and password as on the terminal.
+3. Choose *Connect*, and at Google allow read-only access to your calendars
+   (the dashboard asks for `calendar.readonly`). If the client is published
+   but not verified, Google warns first: choose *Advanced*, then continue.
+   Google sends the browser back to the site, which stores the
+   authorization in your entry and says *Connected*, with a *Go to the
+   terminal* button: a link to the site's `3270/`, where the web server in
+   front is expected to serve a browser terminal for this server.
+4. Back on the terminal, press `Enter`, to go on to choosing calendars.
 
 Once connected, the screen lists every calendar on your Google calendar
 list, your own already marked to show, followed by blank rows filling the
@@ -488,8 +497,9 @@ page:
 
 `Enter` saves the choices. `PF3` goes back; with choices not saved, it
 asks first, and a second `PF3` leaves without saving them. `PF7` / `PF8`
-page, `PF5` reads your calendar list again, `PF9` authorizes again (keeping
-the choices), and `PF6` disconnects, after a confirmation: your
+page, `PF5` reads your calendar list again, `PF9` shows the steps for
+connecting again on the web site, keeping the choices (`Enter` there waits
+for the new authorization; `PF3` goes back), and `PF6` disconnects, after a confirmation: your
 authorization and choices are removed and Google is asked to withdraw it.
 
 Each user's calendars are read every `-agenda-refresh` while any of their
@@ -516,44 +526,116 @@ Google calendars, for trying the dashboard without Google:
 
 `calendar` is optional; it is shown in brackets as an alias is.
 
+### Web site
+
+Google asks an app that reads its users' calendars for a home page, a
+privacy policy and terms of service before it verifies the app. The server
+serves them itself, over plain HTTP on `-http-port` (3280), on `-host`:
+
+- `/`: what the dashboard is and does, and what it does with a Google
+  calendar;
+- `/privacy`: the privacy policy, written for this kind of service, run by
+  an organization for its own users: what is kept (accounts, checklists,
+  Google authorizations, chat, records of use), who sees it, how long it is
+  kept, and the statement Google requires, that Google user data is used
+  under the Google API Services User Data Policy's Limited Use
+  requirements;
+- `/terms`: the terms of service: accounts, acceptable use, monitoring by
+  administrators, the Google calendar, and the service provided as it is;
+- `/google`: where a user signs in, with their terminal user name and
+  password, and connects their Google calendar (see [Agenda](#agenda));
+- `/trello`: the same, for linking their Trello account (see
+  [Tasks](#tasks)).
+
+They are meant to be reached at an HTTPS address through a web server in
+front (a reverse proxy such as nginx or Caddy, terminating TLS on port 443
+and passing requests to port 3280). The server never sees that address, so
+an admin types it on admin menu option `6`: `Public address`, e.g.
+`https://adhd.example.com/`, with the `Organization` running the service
+and a `Contact email`, which the policy and terms name. Every link on the
+pages, and each page's canonical address, uses the public address; until
+it is set they link by path. The screen lists the three pages' public
+addresses, for the Google consent screen's Branding page. The settings are
+kept in `-users-file`; blanking all three removes them.
+
+The pages run no scripts, and are sent with a strict
+`Content-Security-Policy` and the usual headers against framing and
+sniffing. The public ones answer only `GET` and `HEAD`. Signing in follows
+the terminal's rules (the default admin password is refused, and so is a
+restricted user), and is recorded in the audit log with `via=web`, the
+address it came from, and the `X-Forwarded-For` the proxy added. Five
+failed sign-ins as one name within 15 minutes stop that name signing in
+here until the oldest is 15 minutes old. A sign-in lasts 30 minutes, in
+memory, kept by an `HttpOnly`, `SameSite=Lax` cookie (`Secure` when the
+address is `https`) sent only to the `/google` pages. Forms are accepted
+only from the site's own origin, and signing out takes the session's own
+token. A connection begun at Google is good for one return, within 10
+minutes, to the browser session that began it. The privacy policy and terms are a starting
+point: have whoever handles your organization's legal matters read them.
+
 ### Tasks
 
-The tasks are the cards on Trello lists, read from Trello; nothing is kept
-on disk. Which lists, and the tag each one's cards get, come from the
-`trello:` section of `~/.task.yaml`, the Trello credentials from
-`~/.task.secret.yaml` (settings there override the first file), and
-`ignore-tags` from either:
+Each user links their own Trello account, and chooses which of its lists'
+cards are their tasks, with a short tag for each list, shown in brackets
+before its tasks. The token and choices are kept in their entry in
+`-users-file`. A user with none linked, or no list chosen, has no tasks:
+the dashboard lists only their starred checklists, and the task screen
+(`tasks`, `PF10`) says to link Trello. (`~/.task.yaml` is no longer read.)
 
-```yaml
-# ~/.task.yaml
-ignore-tags: [shopping]
-trello:
-  tasks:
-    "Work Tasks":          # board
-      "Today": work        # list: tag
-    "Personal Tasks":
-      "Today": personal
+**Once, an admin sets the Trello API key** every user links through: admin
+menu option `7`. The screen lists the steps: signed in to Trello, go to
+`trello.com/power-ups/admin`, make a Power-Up (named `exec-3270`) in a
+workspace, generate its API key, and add the web site's address (shown on
+the screen) under *Allowed origins*. Type the key and press `Enter`; its
+secret is not needed. Replacing or removing a key that users are linked
+through asks first, as each will have to link again.
 
-# ~/.task.secret.yaml
-trello:
-  api-key: ...
-  token: ...
-```
+**Each user then links on the web site** (see [Web site](#web-site)).
+Typing `trello` on the dashboard shows the steps:
 
-Tasks are listed by board, then list, then the cards' order on the list,
-and numbered in that order; the numbers change as tasks come and go.
+1. In a browser, go to the site's `trello` page, e.g.
+   `https://adhd.example.com/trello`.
+2. Sign in there with the same user name and password as on the terminal
+   (one sign-in serves both this page and the Google one).
+3. Choose *Link*, and at Trello allow access to your boards (read and
+   write, not expiring). Trello sends the browser back to the site with the
+   token in the address's `#fragment`, which only the browser sees; a short
+   script on that page posts it to the server, which checks it with Trello,
+   stores it in your entry, and says *Linked*. Without scripts, the page has
+   a field to paste the token into.
+4. Back on the terminal, press `Enter`, to go on to choosing lists.
 
-Every session shares one copy of the tasks, kept in memory for 15 minutes.
-When it is older than that, the next redraw starts fetching them again in
-the background (one request for the boards, then two per board) and goes on
-showing the old copy until the new one arrives; the next redraw after that
-shows it. Adding or archiving a task changes the copy at once and starts a
-fetch in the background, to catch up with anything else changed on Trello.
-If a fetch fails, the old copy is kept, the task heading says it is stale
-and why, and the fetch is tried again after a minute. Until the first fetch
-finishes, the heading says the tasks are being fetched. The configuration is
-read at each fetch, so a change to it shows up within 15 minutes, without a
-restart.
+The screen then lists every open list of every open board, as
+`Board / List`:
+
+- type `X` in the left column to show a list's cards as your tasks, blank
+  it to stop;
+- type a tag, up to 10 characters (no spaces, commas or brackets), for its
+  tasks to be shown with, as `[tag] title`; a list with none shows its
+  tasks untagged;
+- a list chosen that Trello no longer has is shown in red, `(gone from
+  Trello)`, to unchoose.
+
+`Enter` saves the choices. `PF3` goes back, asking first if they are not
+saved. `PF7` / `PF8` page, `PF5` reads the lists again, `PF9` shows the
+steps for linking again (keeping the choices), and `PF6` unlinks, after a
+confirmation: the token and choices are removed, and Trello is asked to
+withdraw the token. Deleting a user does the same.
+
+Lists are kept by Trello's IDs, so a board or list renamed keeps working
+(its old name is shown until it is chosen again). Tasks are listed in the
+order of the lists on the screen, then the cards' order on each list, and
+numbered in that order; the numbers change as tasks come and go. A new task
+(`PF4` on the task screen) is added at the bottom of one of the lists
+chosen.
+
+Each user's tasks are kept in memory for 15 minutes, shared by their
+sessions. When they are older than that, the next redraw starts fetching
+them again in the background (one request per list) and goes on showing
+the old ones until the new arrive. Adding or archiving a task changes them
+at once and starts a fetch in the background. If a fetch fails, the old
+tasks are kept, the task heading says they are stale and why, and the fetch
+is tried again after a minute.
 
 ### Limits
 
@@ -591,6 +673,7 @@ whoever reads it. User names may not hold control characters at all.
 - `internal/agenda`: each user's periodically refreshed calendar cache.
 - `internal/google`: connecting a Google calendar: the OAuth flow and the
   calendar list.
+- `internal/web`: the web pages: home, privacy policy and terms.
 - `internal/tasks`: the tasks from Trello, cached, and the task program's
   configuration.
 - `internal/checklist`: the checklist file.

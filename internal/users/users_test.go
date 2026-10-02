@@ -343,3 +343,93 @@ func TestIDsNotReused(t *testing.T) {
 		t.Errorf("user added after the last was removed has ID %d; want 3, not the removed one's", id)
 	}
 }
+
+func TestSite(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if site, err := s.Site(); err != nil || site != nil {
+		t.Fatalf("no file: %+v, %v", site, err)
+	}
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	want := Site{BaseURL: "https://adhd.example.com/", Organization: "Example", Contact: "it@example.com"}
+	if err := s.SetSite(&want); err != nil {
+		t.Fatal(err)
+	}
+	// Kept across a change to the users.
+	if err := s.Update(func(list *[]User, _ func() int) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if site, err := s.Site(); err != nil || site == nil || *site != want {
+		t.Errorf("site %+v, %v", site, err)
+	}
+	if err := s.SetSite(nil); err != nil {
+		t.Fatal(err)
+	}
+	if site, _ := s.Site(); site != nil {
+		t.Errorf("removed site still there: %+v", site)
+	}
+}
+
+func TestConnectGoogle(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConnectGoogle(1, "cid", "rt1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(list *[]User, _ func() int) error {
+		(*list)[0].Google.Calendars = []Calendar{{ID: "me@example.com", Alias: "me"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Connecting again replaces the token and keeps the calendars.
+	if err := s.ConnectGoogle(1, "cid2", "rt2"); err != nil {
+		t.Fatal(err)
+	}
+	list, _, _ := s.Load()
+	if g := list[0].Google; g.ClientID != "cid2" || g.RefreshToken != "rt2" || len(g.Calendars) != 1 {
+		t.Errorf("after connecting again: %+v", g)
+	}
+	if err := s.ConnectGoogle(99, "cid", "rt"); !errors.Is(err, ErrNoUser) {
+		t.Errorf("no such user: %v", err)
+	}
+}
+
+func TestTrello(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTrelloClient(&TrelloClient{APIKey: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConnectTrello(1, "k1", "t1", "joelle"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(list *[]User, _ func() int) error {
+		(*list)[0].Trello.Lists = []TrelloList{{BoardID: "b", Board: "Work", ListID: "l", List: "Today", Tag: "work"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Linking again keeps the lists; the key survives other changes.
+	if err := s.ConnectTrello(1, "k1", "t2", "joelle"); err != nil {
+		t.Fatal(err)
+	}
+	list, client, err := s.TrelloClient()
+	if err != nil || client == nil || client.APIKey != "k1" {
+		t.Fatalf("client %+v, %v", client, err)
+	}
+	if l := list[0].Trello; l.Token != "t2" || len(l.Lists) != 1 || l.Lists[0].Tag != "work" || !list[0].TrelloLinked(client) {
+		t.Errorf("link %+v", l)
+	}
+	if list[0].TrelloLinked(&TrelloClient{APIKey: "other"}) || list[0].TrelloLinked(nil) {
+		t.Errorf("linked through another key, or none")
+	}
+	if err := s.ConnectTrello(99, "k1", "t", "x"); !errors.Is(err, ErrNoUser) {
+		t.Errorf("no such user: %v", err)
+	}
+}

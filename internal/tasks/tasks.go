@@ -1,7 +1,7 @@
-// Package tasks reads the open tasks from Trello: the cards on the lists the
-// task program's configuration (~/.task.yaml) names for trello-sync, each
-// list's cards tagged as that configuration says. Nothing is kept on disk;
-// the cards are cached in memory and fetched again in the background.
+// Package tasks reads a user's open tasks from Trello: the cards on the
+// lists they chose, each list's cards tagged as they said. Nothing is kept
+// on disk; the cards are cached in memory and fetched again in the
+// background.
 package tasks
 
 import (
@@ -11,6 +11,36 @@ import (
 	"sync"
 	"time"
 )
+
+// Destination is a Trello list tasks are read from and added to, with the
+// tag its tasks are given. The IDs find it; the names are for showing.
+type Destination struct {
+	BoardID, Board string
+	ListID, List   string
+	Tag            string
+}
+
+// String names d as "board / list".
+func (d Destination) String() string { return d.Board + " / " + d.List }
+
+// tags are the tags d's tasks are given: its tag, if it has one.
+func (d Destination) tags() []string {
+	if d.Tag == "" {
+		return nil
+	}
+	return []string{d.Tag}
+}
+
+// Config is what a cache reads: the Trello credentials, and the lists its
+// tasks come from, in order.
+type Config struct {
+	APIKey, Token string
+
+	// BaseURL is the Trello API's address; "" for DefaultBaseURL.
+	BaseURL string
+
+	Lists []Destination
+}
 
 // Task is one open task: a card on one of the configured Trello lists.
 type Task struct {
@@ -31,18 +61,6 @@ func renumber(ts []Task) {
 	}
 }
 
-// Visible returns the tasks the dashboard shows: those not carrying an
-// ignored tag.
-func Visible(all []Task, ignoreTags []string) []Task {
-	var out []Task
-	for _, t := range all {
-		if !slices.ContainsFunc(t.Tags, func(tag string) bool { return slices.Contains(ignoreTags, tag) }) {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 // How long fetched tasks are used before they are fetched again, and how
 // long after a failed fetch it is tried again.
 const (
@@ -54,8 +72,7 @@ const (
 
 // Snapshot is the tasks as last fetched, with any local changes since.
 type Snapshot struct {
-	Tasks      []Task
-	IgnoreTags []string
+	Tasks []Task
 
 	// Fetched is when the tasks were last fetched, zero if never.
 	Fetched time.Time
@@ -79,8 +96,7 @@ type Cache struct {
 
 	mu         sync.Mutex
 	snap       Snapshot
-	listIDs    map[Destination]string // as of the last fetch
-	next       time.Time              // when to fetch again
+	next       time.Time // when to fetch again
 	refreshing bool
 
 	// gen counts the local changes. A fetch begun before one may not
@@ -90,11 +106,10 @@ type Cache struct {
 	fetches sync.WaitGroup // for tests to wait on
 }
 
-// NewCache returns a cache of the tasks configured in the task program's
-// configuration, which is read at each fetch, so a change shows up without
-// restarting. Nothing is fetched until the first Snapshot.
-func NewCache() *Cache {
-	return &Cache{loadConfig: LoadConfig, now: time.Now}
+// NewCache returns a cache of the tasks config gives, which it calls at
+// each fetch and change. Nothing is fetched until the first Snapshot.
+func NewCache(config func() (Config, error)) *Cache {
+	return &Cache{loadConfig: config, now: time.Now}
 }
 
 // Snapshot returns the tasks, beginning a fetch in the background if they
@@ -131,7 +146,6 @@ func (c *Cache) fetch(gen int) {
 	defer cancel()
 
 	var ts []Task
-	var ids map[Destination]string
 	cfg, err := c.loadConfig()
 	if err == nil {
 		var client *trelloClient
@@ -139,9 +153,9 @@ func (c *Cache) fetch(gen int) {
 		switch {
 		case err != nil:
 		case len(cfg.Lists) == 0:
-			err = errors.New("no Trello lists are configured (trello: tasks: in ~/.task.yaml)")
+			err = errors.New("no Trello lists are chosen")
 		default:
-			ts, ids, err = fetchTasks(ctx, client, cfg.Lists)
+			ts, err = fetchTasks(ctx, client, cfg.Lists)
 		}
 	}
 
@@ -156,8 +170,8 @@ func (c *Cache) fetch(gen int) {
 	case err != nil:
 		c.snap.Err, c.next = err, now.Add(cacheRetry)
 	default:
-		c.snap = Snapshot{Tasks: ts, IgnoreTags: cfg.IgnoreTags, Fetched: now}
-		c.listIDs, c.next = ids, now.Add(cacheTTL)
+		c.snap = Snapshot{Tasks: ts, Fetched: now}
+		c.next = now.Add(cacheTTL)
 	}
 }
 
@@ -170,7 +184,7 @@ func (c *Cache) changed() {
 	c.maybeFetch()
 }
 
-// Destinations are the configured Trello lists, by board then list.
+// Destinations are the Trello lists chosen, in order.
 func (c *Cache) Destinations() ([]Destination, error) {
 	cfg, err := c.loadConfig()
 	return cfg.Lists, err
@@ -209,15 +223,7 @@ func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	c.mu.Lock()
-	listID := c.listIDs[d]
-	c.mu.Unlock()
-	if listID == "" {
-		if listID, err = client.listID(ctx, d); err != nil {
-			return 0, err
-		}
-	}
-	cardID, err := client.createCard(ctx, listID, title)
+	cardID, err := client.createCard(ctx, d.ListID, title)
 	if err != nil {
 		return 0, err
 	}
@@ -232,7 +238,47 @@ func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, erro
 			at = i + 1
 		}
 	}
-	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: []string{d.Tag}, CardID: cardID, Dest: d})
+	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: d.tags(), CardID: cardID, Dest: d})
 	c.changed()
 	return at + 1, nil
+}
+
+// Pool keeps a Cache for each of a set of task sources, by key. A key should
+// change whenever the source would: the cache under the old one is dropped
+// once unused for an hour. It is safe for concurrent use.
+type Pool struct {
+	mu      sync.Mutex
+	entries map[string]*poolEntry
+}
+
+type poolEntry struct {
+	cache    *Cache
+	lastUsed time.Time
+}
+
+// poolIdle is how long a cache unused stays in a Pool.
+const poolIdle = time.Hour
+
+// NewPool returns an empty pool.
+func NewPool() *Pool {
+	return &Pool{entries: map[string]*poolEntry{}}
+}
+
+// Get returns the cache for key, making one over config if there is none.
+func (p *Pool) Get(key string, config func() (Config, error)) *Cache {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	for k, e := range p.entries {
+		if k != key && now.Sub(e.lastUsed) > poolIdle {
+			delete(p.entries, k)
+		}
+	}
+	e, ok := p.entries[key]
+	if !ok {
+		e = &poolEntry{cache: NewCache(config)}
+		p.entries[key] = e
+	}
+	e.lastUsed = now
+	return e.cache
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -145,14 +144,24 @@ func TestGoogleConnectAndChoose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, why := startGoogle(store, 1); !strings.Contains(why, "No Google client") {
+	if _, why := startGoogle(store, 1, true); !strings.Contains(why, "No Google client") {
 		t.Errorf("with no client: %q", why)
 	}
-	if _, why := startGoogle(nil, 0); !strings.Contains(why, "no user database") {
+	if _, why := startGoogle(nil, 0, true); !strings.Contains(why, "no user database") {
 		t.Errorf("with no user database: %q", why)
 	}
 	if err := store.SetGoogleClient(&users.GoogleClient{ClientID: "cid", ClientSecret: "cs"}); err != nil {
 		t.Fatal(err)
+	}
+	// Connecting is on the web site, which must be set up and served.
+	if _, why := startGoogle(store, 1, true); !strings.Contains(why, "web site") {
+		t.Errorf("with no site: %q", why)
+	}
+	if err := store.SetSite(&users.Site{BaseURL: "https://adhd.example.com/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, why := startGoogle(store, 1, false); !strings.Contains(why, "web site") {
+		t.Errorf("with the site not served: %q", why)
 	}
 	cfg := Config{Users: store, Agendas: agenda.NewPool(context.Background(), time.Hour)}
 	u := &users.User{ID: 1}
@@ -160,41 +169,29 @@ func TestGoogleConnectAndChoose(t *testing.T) {
 		t.Errorf("not connected, yet an agenda")
 	}
 
-	g, why := startGoogle(store, 1)
+	g, why := startGoogle(store, 1, true)
 	if why != "" || g.step != googleConnect {
 		t.Fatalf("start: %q, step %d", why, g.step)
 	}
 	r := &googleRig{t: t, store: store, g: g}
-	defer r.g.close()
 	r.draw()
-	for _, want := range []string{r.g.flow.ShortURL, "From a browser anywhere else", "PF5=New link"} {
+	for _, want := range []string{"https://adhd.example.com/google", "user name and password you use here", "PF3=Back Enter=Continue"} {
 		if !strings.Contains(r.text(), want) {
 			t.Errorf("connect screen lacks %q:\n%s", want, r.text())
 		}
 	}
-	if !strings.Contains(strings.ReplaceAll(r.text(), "\n", ""), r.g.flow.AuthURL[:60]) {
-		t.Errorf("connect screen lacks the full link:\n%s", r.text())
-	}
 
-	// Enter before anything has happened says what to do.
+	// Enter before connecting on the web says to finish there first.
 	r.key(go3270.AIDEnter, nil)
-	if !r.g.isError || !strings.Contains(r.text(), "Open the link") {
-		t.Errorf("Enter too soon: %q", r.g.message)
-	}
-	// A pasted address from another authorization is refused, and kept.
-	r.key(go3270.AIDEnter, map[string]string{gPasteField: "http://127.0.0.1:1/?state=other&code=good-code"})
-	if !strings.Contains(r.g.message, "not from this authorization") || r.field(gPasteField).Content == "" {
-		t.Errorf("wrong paste: %q, field %q", r.g.message, r.field(gPasteField).Content)
+	if !r.g.isError || r.g.step != googleConnect || !strings.Contains(r.g.message, "Not connected yet") {
+		t.Errorf("Enter too soon: step %d, %q", r.g.step, r.g.message)
 	}
 
-	// The browser on this machine brings the code; Enter connects, and
-	// offers the user's own calendar, not yet saved.
-	auth, _ := url.Parse(r.g.flow.AuthURL)
-	resp, err := http.Get(r.g.flow.ShortURL + "?" + url.Values{"state": {auth.Query().Get("state")}, "code": {"good-code"}}.Encode())
-	if err != nil {
+	// Connected on the web site, Enter goes on to choosing, offering the
+	// user's own calendar, not yet saved.
+	if err := store.ConnectGoogle(1, "cid", "rt1"); err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close() //nolint:errcheck
 	r.key(go3270.AIDEnter, nil)
 	if l := r.link(); r.g.step != googleChoose || l == nil || l.ClientID != "cid" || l.RefreshToken != "rt1" || len(l.Calendars) != 0 {
 		t.Fatalf("after connecting: step %d, link %+v, message %q", r.g.step, l, r.g.message)
@@ -251,17 +248,28 @@ func TestGoogleConnectAndChoose(t *testing.T) {
 		t.Errorf("leaving saved: %+v", r.link().Calendars)
 	}
 
-	// Reconnecting by pasting keeps the calendars; PF3 there goes back.
-	r.g, _ = startGoogle(store, 1)
+	// Reconnecting: PF9 shows the web page again; Enter waits for a new
+	// authorization there, and the calendars are kept.
+	r.g, _ = startGoogle(store, 1, true)
 	r.draw()
 	r.key(go3270.AIDPF9, nil)
-	if r.g.step != googleConnect || !r.g.reconnecting {
-		t.Fatalf("PF9: step %d", r.g.step)
+	if r.g.step != googleConnect || !r.g.reconnecting || !strings.Contains(r.text(), "connects it again") {
+		t.Fatalf("PF9: step %d:\n%s", r.g.step, r.text())
 	}
-	auth, _ = url.Parse(r.g.flow.AuthURL)
-	pasted := r.g.flow.ShortURL + "?state=" + auth.Query().Get("state") + "&code=good-code&scope=x"
-	r.key(go3270.AIDEnter, map[string]string{gPasteField: pasted})
-	if l := r.link(); r.g.step != googleChoose || l.RefreshToken != "rt2" || len(l.Calendars) != 3 {
+	r.key(go3270.AIDEnter, nil)
+	if r.g.step != googleConnect || !strings.Contains(r.g.message, "Not connected yet") {
+		t.Errorf("Enter with the old authorization: step %d, %q", r.g.step, r.g.message)
+	}
+	r.key(go3270.AIDPF3, nil)
+	if r.g.step != googleChoose {
+		t.Errorf("PF3 while reconnecting: step %d; want back to choosing", r.g.step)
+	}
+	r.key(go3270.AIDPF9, nil)
+	if err := store.ConnectGoogle(1, "cid", "rt2"); err != nil {
+		t.Fatal(err)
+	}
+	r.key(go3270.AIDEnter, nil)
+	if l := r.link(); r.g.step != googleChoose || l.RefreshToken != "rt2" || len(l.Calendars) != 3 || r.g.unsaved() {
 		t.Fatalf("after reconnecting: step %d, link %+v, message %q", r.g.step, l, r.g.message)
 	}
 
@@ -325,7 +333,8 @@ func TestGoogleClientScreen(t *testing.T) {
 	var text string
 	draw := func() {
 		list, client, err := store.GoogleClient()
-		screen, _, _ = buildGoogleClient(24, 80, now, list, client, err, &g)
+		site, _ := store.Site()
+		screen, _, _ = buildGoogleClient(24, 80, now, list, client, site, err, &g)
 		text = strings.Join(screenText(t, screen, 24, 80), "\n")
 	}
 	key := func(aid go3270.AID, typed map[string]string) bool {
@@ -347,8 +356,16 @@ func TestGoogleClientScreen(t *testing.T) {
 		return c
 	}
 	draw()
-	if !strings.Contains(text, "none set") || !strings.Contains(text, "Desktop app") {
+	if !strings.Contains(text, "none set") || !strings.Contains(text, "Web application") || !strings.Contains(text, "set the web site's address first") {
 		t.Errorf("no client:\n%s", text)
+	}
+	// With the site's address set, the redirect address to register is shown.
+	if err := store.SetSite(&users.Site{BaseURL: "https://adhd.example.com/"}); err != nil {
+		t.Fatal(err)
+	}
+	draw()
+	if !strings.Contains(text, "https://adhd.example.com/google/callback") {
+		t.Errorf("redirect address not shown:\n%s", text)
 	}
 
 	key(go3270.AIDEnter, nil)

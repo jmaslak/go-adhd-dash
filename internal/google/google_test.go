@@ -10,92 +10,29 @@ import (
 	"testing"
 )
 
-// noRedirect is an HTTP client that reports redirects rather than following
-// them.
-var noRedirect = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-
-func TestFlowListener(t *testing.T) {
-	f, err := Start(Client{ID: "id.apps.googleusercontent.com", Secret: "s"})
+func TestBegin(t *testing.T) {
+	if _, err := Begin(Client{}, "https://x/"); err == nil {
+		t.Errorf("began with no client")
+	}
+	a, err := Begin(Client{ID: "id.apps.googleusercontent.com", Secret: "s"}, "https://adhd.example.com/google/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-
-	auth, err := url.Parse(f.AuthURL)
+	auth, err := url.Parse(a.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	q := auth.Query()
 	for k, want := range map[string]string{
-		"client_id": "id.apps.googleusercontent.com", "redirect_uri": f.ShortURL, "scope": Scope,
-		"access_type": "offline", "code_challenge_method": "S256", "response_type": "code",
+		"client_id": "id.apps.googleusercontent.com", "redirect_uri": "https://adhd.example.com/google/callback", "scope": Scope,
+		"access_type": "offline", "code_challenge_method": "S256", "response_type": "code", "state": a.State,
 	} {
 		if q.Get(k) != want {
 			t.Errorf("auth URL %s = %q, want %q", k, q.Get(k), want)
 		}
 	}
-	if !strings.HasPrefix(f.ShortURL, "http://127.0.0.1:") {
-		t.Errorf("short URL %q is not on the loopback interface", f.ShortURL)
-	}
-
-	// The short link sends the browser on to Google.
-	resp, err := noRedirect.Get(f.ShortURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != f.AuthURL {
-		t.Errorf("short link: %s to %q", resp.Status, resp.Header.Get("Location"))
-	}
-
-	// A redirect with another state is refused.
-	resp, err = http.Get(f.ShortURL + "?state=wrong&code=nope")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close() //nolint:errcheck
-	if _, ok := f.Code(); ok || resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("wrong state: %s, code taken %v", resp.Status, ok)
-	}
-
-	// Google's redirect brings the code.
-	resp, err = http.Get(f.ShortURL + "?" + url.Values{"state": {q.Get("state")}, "code": {"4/abc"}}.Encode())
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close() //nolint:errcheck
-	if code, ok := f.Code(); !ok || code != "4/abc" || resp.StatusCode != http.StatusOK {
-		t.Errorf("redirect: %s, code %q %v", resp.Status, code, ok)
-	}
-
-	// Closed, it stops listening.
-	f.Close()
-	if _, err := http.Get(f.ShortURL); err == nil {
-		t.Errorf("still listening after Close")
-	}
-	f.Close() // again, harmlessly
-}
-
-func TestParsePasted(t *testing.T) {
-	f := &Flow{state: "st8"}
-	for _, c := range []struct{ pasted, code, err string }{
-		{"4/0Abc-def", "4/0Abc-def", ""},
-		{"  4/0Abc-\n def ", "4/0Abc-def", ""},
-		{"http://127.0.0.1:5555/?state=st8&code=4%2F0Abc&scope=x", "4/0Abc", ""},
-		// Copied off the screen in two lines.
-		{"http://127.0.0.1:5555/?state=st8&co\nde=4%2F0Abc", "4/0Abc", ""},
-		{"http://127.0.0.1:5555/?state=other&code=4%2F0Abc", "", "not from this authorization"},
-		{"http://127.0.0.1:5555/?error=access_denied&state=st8", "", "access_denied"},
-		{"http://127.0.0.1:5555/?state=st8", "", "no code"},
-		{"", "", "nothing was pasted"},
-	} {
-		code, err := f.ParsePasted(c.pasted)
-		switch {
-		case c.err == "" && (err != nil || code != c.code):
-			t.Errorf("%q: %q, %v; want %q", c.pasted, code, err, c.code)
-		case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
-			t.Errorf("%q: %q, %v; want an error with %q", c.pasted, code, err, c.err)
-		}
+	if b, _ := Begin(Client{ID: "i", Secret: "s"}, "https://x/"); b.State == a.State || b.Verifier == a.Verifier {
+		t.Errorf("two authorizations share a state or verifier")
 	}
 }
 
@@ -111,11 +48,11 @@ func fakeGoogle(t *testing.T, handler http.HandlerFunc) {
 }
 
 func TestExchange(t *testing.T) {
-	f, err := Start(Client{ID: "cid", Secret: "csecret"})
+	client := Client{ID: "cid", Secret: "csecret"}
+	a, err := Begin(client, "https://adhd.example.com/google/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
 	var got url.Values
 	fakeGoogle(t, func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm() //nolint:errcheck
@@ -128,19 +65,19 @@ func TestExchange(t *testing.T) {
 		w.Write([]byte(`{"access_token": "at", "refresh_token": "rt", "expires_in": 3600}`)) //nolint:errcheck
 	})
 
-	token, err := f.Exchange(context.Background(), "4/abc")
+	token, err := a.Exchange(context.Background(), client, "4/abc")
 	if err != nil || token != "rt" {
 		t.Fatalf("exchange: %q, %v", token, err)
 	}
 	for k, want := range map[string]string{
-		"grant_type": "authorization_code", "code": "4/abc", "code_verifier": f.verifier,
-		"redirect_uri": f.redirectURI, "client_id": "cid", "client_secret": "csecret",
+		"grant_type": "authorization_code", "code": "4/abc", "code_verifier": a.Verifier,
+		"redirect_uri": a.RedirectURI, "client_id": "cid", "client_secret": "csecret",
 	} {
 		if got.Get(k) != want {
 			t.Errorf("posted %s = %q, want %q", k, got.Get(k), want)
 		}
 	}
-	if _, err := f.Exchange(context.Background(), "bad"); err == nil || !strings.Contains(err.Error(), "Bad Request") {
+	if _, err := a.Exchange(context.Background(), client, "bad"); err == nil || !strings.Contains(err.Error(), "Bad Request") {
 		t.Errorf("bad code: %v; want Google's explanation", err)
 	}
 }

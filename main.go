@@ -5,10 +5,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/session"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/web"
 )
 
 func main() {
@@ -38,12 +41,12 @@ func main() {
 	loginTimeout := flag.Duration("login-timeout", 60*time.Second, "how long the login screen waits for a login")
 	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often a calendar is read")
+	httpPort := flag.Int("http-port", 3280, "TCP port the web pages (home, privacy policy, terms) are served on over HTTP, on -host (0: none)")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	shutdown := session.NewShutdown()
-	taskCache := tasks.NewCache()
 
 	var auditLog *audit.Log
 	if *auditFile != "" {
@@ -85,7 +88,7 @@ func main() {
 	cfg := session.Config{
 		Shutdown: shutdown,
 		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
-		Tasks: taskCache, Archiver: taskCache, Adder: taskCache,
+		TaskPool:     tasks.NewPool(),
 		Checklists:   checklistStore,
 		Users:        userStore,
 		Audit:        auditLog,
@@ -117,6 +120,35 @@ func main() {
 		go cfg.Agenda.Run(ctx, *agendaRefresh)
 	} else {
 		cfg.Agendas = agenda.NewPool(ctx, *agendaRefresh)
+	}
+
+	// The web pages, for a web server in front to give their public HTTPS
+	// address, set on the admin menu.
+	if *httpPort != 0 {
+		httpAddr := net.JoinHostPort(*host, fmt.Sprint(*httpPort))
+		httpLn, err := net.Listen("tcp", httpAddr)
+		if err != nil {
+			log.Fatalf("listen on %s: %v", httpAddr, err)
+		}
+		cfg.HTTPListen = httpAddr
+		srv := &http.Server{
+			Handler:           &web.Server{Users: userStore, Audit: auditLog},
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    16 << 10,
+		}
+		log.Printf("web pages served on http://%s", httpAddr)
+		go func() {
+			if err := srv.Serve(httpLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("web: %v", err)
+			}
+		}()
+		go func() {
+			<-shutdown.Done()
+			srv.Close() //nolint:errcheck
+		}()
 	}
 
 	addr := net.JoinHostPort(*host, fmt.Sprint(*port))

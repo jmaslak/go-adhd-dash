@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jmaslak/go-busy-indicator/gauth"
 	"github.com/racingmars/go3270"
@@ -16,6 +15,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/google"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/web"
 )
 
 // Google calendar screens: connecting a user's calendar (the GOOGLE
@@ -39,7 +39,6 @@ const (
 	gNewField   = "gnew:"  // a blank entry's ID, its first row
 	gNewMore    = "gnewx:" // and its second
 	gNewAlias   = "gnewalias:"
-	gPasteField = "gpaste"
 
 	gClientIDField     = "gcid"
 	gClientIDMore      = "gcidx"
@@ -81,7 +80,9 @@ func (cfg Config) agendaFor(u *users.User) *agenda.Cache {
 	key := strings.Join(append([]string{strconv.Itoa(u.ID), client.ClientID, client.ClientSecret, link.RefreshToken},
 		fmt.Sprint(ids), fmt.Sprint(aliases)), "\x00")
 	return cfg.Agendas.Get(key, func() agenda.Source {
-		return agenda.NewGoogle(google.Tokens(google.Client{ID: client.ClientID, Secret: client.ClientSecret}, link.RefreshToken), ids, aliases)
+		src := agenda.NewGoogle(google.Tokens(google.Client{ID: client.ClientID, Secret: client.ClientSecret}, link.RefreshToken), ids, aliases)
+		src.Client.BaseURL = google.APIBase
+		return src
 	})
 }
 
@@ -118,9 +119,9 @@ type googleState struct {
 	userID int
 	client google.Client
 
-	// flow is the authorization under way on googleConnect; reconnecting
-	// is set when there is already one, which PF3 goes back to.
-	flow         *google.Flow
+	// connectURL is the web page the user connects on; reconnecting is set
+	// when they are connected already, which PF3 goes back to.
+	connectURL   string
 	reconnecting bool
 
 	// refreshToken is the user's authorization, once connected.
@@ -157,9 +158,10 @@ type googleState struct {
 }
 
 // startGoogle readies the Google calendar screens for the user with userID:
-// choosing calendars if they are connected, else connecting. It says why
+// choosing calendars if they are connected, else connecting, on the web
+// site, which must be served (served) and have its address set. It says why
 // not when it cannot.
-func startGoogle(store *users.Store, userID int) (g googleState, why string) {
+func startGoogle(store *users.Store, userID int, served bool) (g googleState, why string) {
 	if store == nil || userID == 0 {
 		return g, "There is no user database to keep a Google calendar in."
 	}
@@ -167,41 +169,28 @@ func startGoogle(store *users.Store, userID int) (g googleState, why string) {
 	if err != nil {
 		return g, "Could not read the users: " + err.Error()
 	}
-	if client == nil {
+	site, err := store.Site()
+	switch {
+	case err != nil:
+		return g, "Could not read the web site's settings: " + err.Error()
+	case client == nil:
 		return g, "No Google client is set up; an admin sets it on the admin menu."
+	case site == nil || site.BaseURL == "" || !served:
+		return g, "The web site, where calendars are connected, is not set up; ask an admin."
 	}
 	i := slices.IndexFunc(list, func(x users.User) bool { return x.ID == userID })
 	if i < 0 {
 		return g, "You are no longer a user."
 	}
-	g = googleState{userID: userID, client: google.Client{ID: client.ClientID, Secret: client.ClientSecret}}
+	g = googleState{userID: userID, client: google.Client{ID: client.ClientID, Secret: client.ClientSecret}, connectURL: site.BaseURL + "google"}
 	if u := list[i]; u.Connected(client) {
 		g.refreshToken, g.saved = u.Google.RefreshToken, slices.Clone(u.Google.Calendars)
 		g.step = googleChoose
 		g.loadCalendars()
 		return g, ""
 	}
-	if err := g.startFlow(); err != nil {
-		return g, "Could not start connecting: " + err.Error()
-	}
+	g.step = googleConnect
 	return g, ""
-}
-
-// close ends the authorization under way, if there is one.
-func (g *googleState) close() {
-	g.flow.Close()
-	g.flow = nil
-}
-
-// startFlow begins a new authorization, ending any under way.
-func (g *googleState) startFlow() error {
-	g.close()
-	flow, err := google.Start(g.client)
-	if err != nil {
-		return err
-	}
-	g.flow, g.step, g.typed = flow, googleConnect, nil
-	return nil
 }
 
 // tokens gives access tokens for the user's authorization.
@@ -285,111 +274,63 @@ func (g *googleState) handle(resp go3270.Response, store *users.Store, logf func
 	return g.handleChoose(resp, store, logf)
 }
 
-// buildGoogleConnect renders the steps for authorizing: the link to open,
-// and the field to paste the address the browser ends on into.
+// buildGoogleConnect renders the steps for connecting, on the web site.
 func buildGoogleConnect(rows, cols int, now time.Time, g *googleState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "CONNECT GOOGLE CALENDAR", now, false)
-	screen = append(screen, placeLine(2, cols, line{
-		{Content: "Connect your Google calendar", Color: go3270.Turquoise, Intense: true},
-		{Content: "(read-only access)", Color: go3270.Blue},
-	})...)
+	header := line{{Content: "Connect your Google calendar", Color: go3270.Turquoise, Intense: true}}
+	if g.reconnecting {
+		header = append(header, go3270.Field{Content: "(connected now; this connects it again)", Color: go3270.Blue})
+	}
+	screen = append(screen, placeLine(2, cols, header)...)
 	text := func(row int, s string) {
 		screen = append(screen, placeLine(row, cols, line{{Content: s, Color: go3270.Green}})...)
 	}
-	text(4, "1. In a browser on the server's own machine, open:")
-	screen = append(screen, placeLineAt(5, 3, cols, line{{Content: g.flow.ShortURL, Color: go3270.White, Intense: true}})...)
-	text(6, "   From a browser anywhere else, open this link instead:")
-	// The link is one field, wrapping from row to row as the terminal
-	// runs it on, so that it can be copied whole.
-	screen = append(screen, go3270.Field{Row: 7, Col: 0, Color: go3270.Turquoise, Content: g.flow.AuthURL})
-	row := 7 + (1+utf8.RuneCountInString(g.flow.AuthURL)+cols-1)/cols
-	text(row, "2. Sign in, and allow access. If Google warns that the app is unverified,")
-	text(row+1, "   choose Advanced, then continue to it.")
-	text(row+2, "3. If the browser then says Connected, press Enter. If it cannot connect to")
-	text(row+3, "   127.0.0.1, copy the address it shows, paste it below, and press Enter:")
-
-	// The paste field runs on from row to row, to the row above the blank
-	// one above the message.
-	pasteRow := row + 4
-	end := max(rows-4, pasteRow)
-	screen = append(screen,
-		go3270.Field{
-			Row: pasteRow, Col: 0, Write: true, Name: gPasteField, Content: g.typed[gPasteField],
-			Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
-		},
-		go3270.Field{Row: end, Col: cols - 1},
-	)
+	text(4, "1. In a web browser, go to:")
+	screen = append(screen, placeLineAt(5, 4, cols, line{{Content: g.connectURL, Color: go3270.White, Intense: true}})...)
+	text(7, "2. Sign in there with the user name and password you use here.")
+	text(8, "3. Choose Connect, then at Google, allow read-only access to your calendars.")
+	text(9, "   If Google warns that the app is unverified, choose Advanced, then go on.")
+	text(10, "4. When the page says Connected, come back here and press Enter, to choose")
+	text(11, "   which of your calendars to show.")
 	screen = appendGoogleMessage(screen, rows, cols, g.message, g.isError,
-		"Press Enter once the browser says Connected, or with its address pasted.",
-		"PF3=Back PF5=New link Enter=Connect")
-	return screen, pasteRow, 1
+		"Press Enter once the web page says Connected.", "PF3=Back Enter=Continue")
+	return screen, rows - 1, 0
 }
 
-// handleConnect acts on a key on the authorizing screen.
+// handleConnect acts on a key on the connecting screen: Enter goes on to
+// choosing calendars once the user has connected (again, if reconnecting)
+// on the web site, PF3 goes back.
 func (g *googleState) handleConnect(resp go3270.Response, store *users.Store, logf func(string, ...any)) (bool, string) {
 	switch resp.AID {
 	case go3270.AIDPF3:
-		g.close()
 		if g.reconnecting {
 			g.step, g.reconnecting = googleChoose, false
 			return false, ""
 		}
 		return true, ""
-	case go3270.AIDPF5:
-		if err := g.startFlow(); err != nil {
-			g.message, g.isError = "Could not start connecting: "+err.Error(), true
-		} else {
-			g.message = "This is a new link; the old one no longer works."
-		}
-		return false, ""
 	case go3270.AIDEnter:
 	default:
 		return false, ""
 	}
 
-	code, ok := g.flow.Code()
-	if !ok {
-		pasted := resp.Values[gPasteField]
-		if strings.TrimSpace(pasted) == "" {
-			g.message, g.isError = "Open the link and allow access first, then press Enter.", true
-			return false, ""
-		}
-		var err error
-		if code, err = g.flow.ParsePasted(pasted); err != nil {
-			g.message, g.isError, g.typed = "That will not do: "+err.Error(), true, map[string]string{gPasteField: pasted}
-			return false, ""
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), googleWait)
-	token, err := g.flow.Exchange(ctx, code)
-	cancel()
+	list, client, err := store.GoogleClient()
 	if err != nil {
-		g.message, g.isError = "Google refused it ("+err.Error()+"); press PF5 for a new link and try again.", true
+		g.message, g.isError = "Could not read the users: "+err.Error(), true
 		return false, ""
 	}
-
-	// Calendars chosen before are kept: a reconnection is usually only for
-	// a new authorization.
-	err = store.Update(func(list *[]users.User, _ func() int) error {
-		i := slices.IndexFunc(*list, func(x users.User) bool { return x.ID == g.userID })
-		if i < 0 {
-			return errors.New("you are no longer a user")
-		}
-		var keep []users.Calendar
-		if old := (*list)[i].Google; old != nil {
-			keep = old.Calendars
-		}
-		(*list)[i].Google = &users.GoogleLink{ClientID: g.client.ID, RefreshToken: token, Calendars: keep}
-		g.saved = slices.Clone(keep)
-		return nil
-	})
-	if err != nil {
-		g.message, g.isError = "Could not save: "+err.Error(), true
+	i := slices.IndexFunc(list, func(x users.User) bool { return x.ID == g.userID })
+	switch {
+	case i < 0:
+		return true, "You are no longer a user."
+	case !list[i].Connected(client) || list[i].Google.RefreshToken == g.refreshToken:
+		g.message, g.isError = "Not connected yet: finish on the web page first, then press Enter.", true
 		return false, ""
 	}
+	u := list[i]
 	logf("connected a Google calendar")
-	g.close()
-	g.refreshToken, g.step, g.reconnecting, g.chosen = token, googleChoose, false, nil
+	g.client = google.Client{ID: client.ClientID, Secret: client.ClientSecret}
+	g.refreshToken, g.saved = u.Google.RefreshToken, slices.Clone(u.Google.Calendars)
+	g.step, g.reconnecting, g.chosen, g.calendars = googleChoose, false, nil, nil
 	g.loadCalendars()
 	g.message = "Connected."
 	if len(g.saved) == 0 {
@@ -617,11 +558,7 @@ func (g *googleState) handleChoose(resp go3270.Response, store *users.Store, log
 	case go3270.AIDPF8:
 		g.page++ // the next redraw keeps it to the pages there are
 	case go3270.AIDPF9:
-		if err := g.startFlow(); err != nil {
-			g.message, g.isError = "Could not start connecting: "+err.Error(), true
-		} else {
-			g.reconnecting = true
-		}
+		g.step, g.reconnecting = googleConnect, true
 	}
 	return false, ""
 }
@@ -689,16 +626,26 @@ type googleClientState struct {
 	isError bool
 }
 
-// googleClientSteps tell an admin how to make the client.
-var googleClientSteps = []string{
-	"Users connect their calendars through this Google OAuth client. To make one:",
-	" 1. At console.cloud.google.com, create a project, or choose one.",
-	" 2. APIs & Services > Library: enable the Google Calendar API.",
-	" 3. Google Auth Platform > Branding: give an app name and your email.",
-	" 4. Audience: Internal, for a Google Workspace domain's users only. Otherwise",
-	"    External, then Publish app (in Testing, authorizations last 7 days;",
-	"    published but not verified, Google warns each user before allowing).",
-	" 5. Clients > Create client > Desktop app. Copy its ID and secret below.",
+// googleClientSteps tell an admin how to make the client, for a web site
+// at base ("" when its address is not set).
+func googleClientSteps(base string) []string {
+	redirect := "    " + base + "google/callback"
+	if base == "" {
+		redirect = "    (set the web site's address first, on admin menu option 6)"
+	}
+	return []string{
+		"Users connect their calendars through this Google OAuth client. To make one:",
+		" 1. At console.cloud.google.com, create a project, or choose one.",
+		" 2. APIs & Services > Library: enable the Google Calendar API.",
+		" 3. Google Auth Platform > Branding: app name " + web.AppName + ", your email, and the",
+		"    home page, privacy and terms addresses shown on admin menu option 6.",
+		" 4. Audience: Internal, for a Google Workspace domain's users only. Otherwise",
+		"    External, then Publish app (in Testing, authorizations last 7 days;",
+		"    published but not verified, Google warns each user before allowing).",
+		" 5. Clients > Create client > Web application, with the redirect URI:",
+		redirect,
+		" 6. Copy the client's ID and secret below.",
+	}
 }
 
 // connectedCount is how many of list are connected through client.
@@ -712,9 +659,10 @@ func connectedCount(list []users.User, client *users.GoogleClient) int {
 	return n
 }
 
-// buildGoogleClient renders the admin's screen for the Google client, or the
-// confirmation for replacing or removing it.
-func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client *users.GoogleClient, loadErr error, g *googleClientState) (screen go3270.Screen, cursorRow, cursorCol int) {
+// buildGoogleClient renders the admin's screen for the Google client, for
+// the web site site (nil if not set up), or the confirmation for replacing
+// or removing it.
+func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client *users.GoogleClient, site *users.Site, loadErr error, g *googleClientState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	if g.confirming {
 		return buildGoogleClientConfirm(rows, cols, now, connectedCount(list, client), g.pending == nil), rows - 1, 0
 	}
@@ -729,7 +677,12 @@ func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client 
 		header = append(header, go3270.Field{Content: "set; " + countText(connectedCount(list, client), "user", 0, 1) + " connected", Color: go3270.Blue})
 	}
 	screen = append(screen, placeLine(2, cols, header)...)
-	for i, s := range googleClientSteps {
+	base := ""
+	if site != nil {
+		base = site.BaseURL
+	}
+	steps := googleClientSteps(base)
+	for i, s := range steps {
 		screen = append(screen, placeLine(4+i, cols, line{{Content: s, Color: go3270.Green}})...)
 	}
 
@@ -743,7 +696,7 @@ func buildGoogleClient(rows, cols int, now time.Time, list []users.User, client 
 	width := cols - gClientLabelWidth - 2
 	r := []rune(id)
 	first, more := string(r[:min(len(r), width)]), string(r[min(len(r), width):])
-	row := 5 + len(googleClientSteps)
+	row := 5 + len(steps)
 	input := func(row int, name, content string, hidden bool) go3270.Field {
 		return go3270.Field{
 			Row: row, Col: gClientLabelWidth, Write: true, Name: name, Content: content, Hidden: hidden,

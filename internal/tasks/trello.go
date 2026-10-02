@@ -8,12 +8,34 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 )
 
-// defaultTrelloURL is where the Trello API lives, unless the configuration
-// says otherwise.
-const defaultTrelloURL = "https://trello.com/"
+// DefaultBaseURL is where the Trello API lives; tests point a Config's
+// BaseURL elsewhere.
+const DefaultBaseURL = "https://trello.com/"
+
+// AuthorizeEndpoint is Trello's page for granting an app a token; tests
+// point it elsewhere.
+var AuthorizeEndpoint = "https://trello.com/1/authorize"
+
+// AuthorizeURL is where to send a browser for its user to grant the app
+// appName, whose API key is key, a token to read and write their boards,
+// that does not expire. Trello sends the browser back to returnURL with
+// the token in its fragment, #token=..., which the server never sees; the
+// page there reads it out.
+func AuthorizeURL(key, appName, returnURL string) string {
+	return AuthorizeEndpoint + "?" + url.Values{
+		"key":             {key},
+		"name":            {appName},
+		"scope":           {"read,write"},
+		"expiration":      {"never"},
+		"response_type":   {"token"},
+		"callback_method": {"fragment"},
+		"return_url":      {returnURL},
+	}.Encode()
+}
 
 // trelloClient makes the few Trello API requests the dashboard needs.
 type trelloClient struct {
@@ -25,13 +47,72 @@ type trelloClient struct {
 // it has none.
 func newTrelloClient(cfg Config) (*trelloClient, error) {
 	if cfg.APIKey == "" || cfg.Token == "" {
-		return nil, errors.New("no Trello api-key and token are configured in ~/.task.secret.yaml")
+		return nil, errors.New("no Trello authorization")
 	}
 	base := cfg.BaseURL
 	if base == "" {
-		base = defaultTrelloURL
+		base = DefaultBaseURL
 	}
 	return &trelloClient{key: cfg.APIKey, token: cfg.Token, baseURL: base, http: &http.Client{Timeout: 30 * time.Second}}, nil
+}
+
+// Board is one of a user's open Trello boards, with its open lists.
+type Board struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Lists []List `json:"lists"`
+}
+
+// List is a list on a Trello board.
+type List struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Boards are the open boards cfg's token can see, each with its open lists,
+// in Trello's order.
+func Boards(ctx context.Context, cfg Config) ([]Board, error) {
+	c, err := newTrelloClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var boards []Board
+	q := url.Values{"filter": {"open"}, "fields": {"name"}, "lists": {"open"}, "list_fields": {"name"}}
+	err = c.do(ctx, http.MethodGet, "1/members/me/boards", q, &boards)
+	return boards, err
+}
+
+// Member is the user name of the Trello member cfg's token is for, which
+// checks that the token works.
+func Member(ctx context.Context, cfg Config) (string, error) {
+	c, err := newTrelloClient(cfg)
+	if err != nil {
+		return "", err
+	}
+	var m struct {
+		Username string `json:"username"`
+	}
+	if err := c.do(ctx, http.MethodGet, "1/members/me", url.Values{"fields": {"username"}}, &m); err != nil {
+		return "", err
+	}
+	if m.Username == "" {
+		return "", errors.New("trello: 1/members/me: no user name in the reply")
+	}
+	return m.Username, nil
+}
+
+// Revoke withdraws cfg's token at Trello.
+func Revoke(ctx context.Context, cfg Config) error {
+	c, err := newTrelloClient(cfg)
+	if err != nil {
+		return err
+	}
+	var out struct{}
+	if err := c.do(ctx, http.MethodDelete, "1/tokens/"+url.PathEscape(cfg.Token), url.Values{}, &out); err != nil {
+		// The path is the token: keep it out of the message.
+		return errors.New(strings.ReplaceAll(err.Error(), url.PathEscape(cfg.Token), "<token>"))
+	}
+	return nil
 }
 
 // trelloItem is a board, list or card: the fields of each the dashboard
@@ -86,64 +167,14 @@ func (c *trelloClient) get(ctx context.Context, path, fields string) ([]trelloIt
 	return out, err
 }
 
-// boardIDs are the IDs of the boards the credentials can see, by name.
-func (c *trelloClient) boardIDs(ctx context.Context) (map[string]string, error) {
-	boards, err := c.get(ctx, "1/members/me/boards", "name")
-	if err != nil {
-		return nil, err
-	}
-	ids := map[string]string{}
-	for _, b := range boards {
-		if _, dup := ids[b.Name]; dup {
-			return nil, fmt.Errorf("two Trello boards are called %q", b.Name)
-		}
-		ids[b.Name] = b.ID
-	}
-	return ids, nil
-}
-
 // fetchTasks reads the open cards of each of lists, as tasks in the order of
-// lists and then of the cards on each, numbered from 1, and the IDs of the
-// lists.
-func fetchTasks(ctx context.Context, c *trelloClient, lists []Destination) ([]Task, map[Destination]string, error) {
-	boards, err := c.boardIDs(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	type board struct {
-		lists []trelloItem
-		cards []trelloItem
-	}
-	fetched := map[string]*board{}
-	listIDs := map[Destination]string{}
+// lists and then of the cards on each, numbered from 1.
+func fetchTasks(ctx context.Context, c *trelloClient, lists []Destination) ([]Task, error) {
 	var out []Task
 	for _, d := range lists {
-		b, ok := fetched[d.Board]
-		if !ok {
-			id, ok := boards[d.Board]
-			if !ok {
-				return nil, nil, fmt.Errorf("there is no Trello board %q", d.Board)
-			}
-			b = &board{}
-			if b.lists, err = c.get(ctx, "1/boards/"+url.PathEscape(id)+"/lists", "name"); err != nil {
-				return nil, nil, err
-			}
-			if b.cards, err = c.get(ctx, "1/boards/"+url.PathEscape(id)+"/cards", "name,idList,pos"); err != nil {
-				return nil, nil, err
-			}
-			fetched[d.Board] = b
-		}
-		i := slices.IndexFunc(b.lists, func(l trelloItem) bool { return l.Name == d.List })
-		if i < 0 {
-			return nil, nil, fmt.Errorf("there is no list %q on Trello board %q", d.List, d.Board)
-		}
-		listIDs[d] = b.lists[i].ID
-
-		var cards []trelloItem
-		for _, card := range b.cards {
-			if card.IDList == b.lists[i].ID {
-				cards = append(cards, card)
-			}
+		cards, err := c.get(ctx, "1/lists/"+url.PathEscape(d.ListID)+"/cards", "name,pos")
+		if err != nil {
+			return nil, fmt.Errorf("the list %s: %w", d, err)
 		}
 		slices.SortStableFunc(cards, func(x, y trelloItem) int {
 			switch {
@@ -155,32 +186,11 @@ func fetchTasks(ctx context.Context, c *trelloClient, lists []Destination) ([]Ta
 			return 0
 		})
 		for _, card := range cards {
-			out = append(out, Task{Title: card.Name, Tags: []string{d.Tag}, CardID: card.ID, Dest: d})
+			out = append(out, Task{Title: card.Name, Tags: d.tags(), CardID: card.ID, Dest: d})
 		}
 	}
 	renumber(out)
-	return out, listIDs, nil
-}
-
-// listID finds the ID of d's list.
-func (c *trelloClient) listID(ctx context.Context, d Destination) (string, error) {
-	boards, err := c.boardIDs(ctx)
-	if err != nil {
-		return "", err
-	}
-	id, ok := boards[d.Board]
-	if !ok {
-		return "", fmt.Errorf("there is no Trello board %q", d.Board)
-	}
-	lists, err := c.get(ctx, "1/boards/"+url.PathEscape(id)+"/lists", "name")
-	if err != nil {
-		return "", err
-	}
-	i := slices.IndexFunc(lists, func(l trelloItem) bool { return l.Name == d.List })
-	if i < 0 {
-		return "", fmt.Errorf("there is no list %q on Trello board %q", d.List, d.Board)
-	}
-	return lists[i].ID, nil
+	return out, nil
 }
 
 // createCard adds a card named name at the bottom of list listID, returning

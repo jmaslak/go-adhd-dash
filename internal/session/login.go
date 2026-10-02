@@ -243,7 +243,7 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 		logf("login as %q: %v", l.name, err)
 		l.message = "Could not check the password: " + err.Error()
 		return nil, false, ""
-	case ok && isDefaultLogin(u.Name, password):
+	case ok && users.IsDefaultLogin(u.Name, password):
 		// Right, but the default: it works only on the console, which
 		// needs no password, so that the admin sets a real one there
 		// before anyone can log in as admin from anywhere.
@@ -260,12 +260,6 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 		return nil, true, "Too many failed logins. Goodbye."
 	}
 	return nil, false, ""
-}
-
-// isDefaultLogin reports whether name and password are the first user's,
-// as made with a new users file: admin, with the password admin.
-func isDefaultLogin(name, password string) bool {
-	return strings.EqualFold(name, users.FirstName) && password == users.FirstPassword
 }
 
 // buildFarewell is the screen left on a terminal as it is disconnected,

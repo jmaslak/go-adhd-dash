@@ -46,12 +46,62 @@ type User struct {
 
 	// Google is the user's connected Google calendar; nil for none.
 	Google *GoogleLink `json:"google,omitempty"`
+
+	// Trello is the user's linked Trello account; nil for none.
+	Trello *TrelloLink `json:"trello,omitempty"`
+}
+
+// TrelloClient is the Trello API key users link their Trello accounts
+// through.
+type TrelloClient struct {
+	APIKey string `json:"api_key"`
+}
+
+// TrelloLink is a user's token for their Trello account, and the lists
+// whose cards are their tasks.
+type TrelloLink struct {
+	// APIKey is the key the token was granted to; it is no use with any
+	// other.
+	APIKey   string `json:"api_key"`
+	Token    string `json:"token"`
+	Username string `json:"username,omitempty"` // their Trello user name, to show
+
+	Lists []TrelloList `json:"lists"`
+}
+
+// TrelloList is a Trello list a user chose, and the tag its tasks are
+// shown with. The IDs find it; the names are as they were when chosen.
+type TrelloList struct {
+	BoardID string `json:"board_id"`
+	Board   string `json:"board"`
+	ListID  string `json:"list_id"`
+	List    string `json:"list"`
+	Tag     string `json:"tag,omitempty"`
+}
+
+// TrelloLinked reports whether u's Trello account can be read through
+// client: they have a token, granted to its key.
+func (u User) TrelloLinked(client *TrelloClient) bool {
+	return client != nil && u.Trello != nil && u.Trello.Token != "" && u.Trello.APIKey == client.APIKey
 }
 
 // GoogleClient is the OAuth client users connect their calendars through.
 type GoogleClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+}
+
+// Site is what the web site's pages say about where they are and whose the
+// service is.
+type Site struct {
+	// BaseURL is the address the pages are reached at from outside, such
+	// as https://adhd.example.com/, ending in a slash.
+	BaseURL string `json:"base_url"`
+
+	// Organization runs the service; Contact is an email address for
+	// questions about the privacy policy and terms.
+	Organization string `json:"organization,omitempty"`
+	Contact      string `json:"contact,omitempty"`
 }
 
 // GoogleLink is a user's authorization to read their Google calendars, and
@@ -98,6 +148,12 @@ type file struct {
 
 	// GoogleClient is the OAuth client for Google calendars; nil for none.
 	GoogleClient *GoogleClient `json:"google_client,omitempty"`
+
+	// TrelloClient is the Trello API key for Trello accounts; nil for none.
+	TrelloClient *TrelloClient `json:"trello_client,omitempty"`
+
+	// Site describes the web site, set by an admin; nil until then.
+	Site *Site `json:"site,omitempty"`
 
 	// LastID is the highest ID ever given, so that a removed user's is not
 	// given again: their checklists, kept by user ID, would go with it.
@@ -156,6 +212,95 @@ func (s *Store) GoogleClient() ([]User, *GoogleClient, error) {
 	defer s.mu.Unlock()
 	f, err := s.read()
 	return f.Users, f.GoogleClient, err
+}
+
+// ErrNoUser reports a change to a user who is no longer there.
+var ErrNoUser = errors.New("that user no longer exists")
+
+// ConnectGoogle stores the Google refresh token issued through clientID to
+// the user with id, keeping any calendars they chose before: connecting
+// again is usually only for a new authorization.
+func (s *Store) ConnectGoogle(id int, clientID, refreshToken string) error {
+	return s.Update(func(list *[]User, _ func() int) error {
+		for i := range *list {
+			u := &(*list)[i]
+			if u.ID != id {
+				continue
+			}
+			var keep []Calendar
+			if u.Google != nil {
+				keep = u.Google.Calendars
+			}
+			u.Google = &GoogleLink{ClientID: clientID, RefreshToken: refreshToken, Calendars: keep}
+			return nil
+		}
+		return ErrNoUser
+	})
+}
+
+// TrelloClient returns the users and the Trello API key, nil if none is
+// set, as one read of the file.
+func (s *Store) TrelloClient() ([]User, *TrelloClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	return f.Users, f.TrelloClient, err
+}
+
+// SetTrelloClient sets the Trello API key, or with nil removes it.
+func (s *Store) SetTrelloClient(client *TrelloClient) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if err != nil {
+		return err
+	}
+	f.TrelloClient = client
+	return s.write(f)
+}
+
+// ConnectTrello stores the Trello token granted to apiKey for the user with
+// id, whose Trello user name is username, keeping any lists they chose
+// before.
+func (s *Store) ConnectTrello(id int, apiKey, token, username string) error {
+	return s.Update(func(list *[]User, _ func() int) error {
+		for i := range *list {
+			u := &(*list)[i]
+			if u.ID != id {
+				continue
+			}
+			var keep []TrelloList
+			if u.Trello != nil {
+				keep = u.Trello.Lists
+			}
+			u.Trello = &TrelloLink{APIKey: apiKey, Token: token, Username: username, Lists: keep}
+			return nil
+		}
+		return ErrNoUser
+	})
+}
+
+// Site returns the web site's settings, nil if none are set.
+func (s *Store) Site() (*Site, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return f.Site, err
+}
+
+// SetSite sets the web site's settings, or with nil removes them.
+func (s *Store) SetSite(site *Site) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if err != nil {
+		return err
+	}
+	f.Site = site
+	return s.write(f)
 }
 
 // SetGoogleClient sets the Google OAuth client, or with nil removes it.
@@ -289,6 +434,14 @@ func defaultConsole(list []User) {
 	if pick >= 0 {
 		list[pick].Console = true
 	}
+}
+
+// IsDefaultLogin reports whether name and password are the first user's,
+// as made with a new users file: FirstName, with FirstPassword. They work
+// only on the console, which needs no password, so that the admin sets a
+// real one there before anyone can sign in as them from anywhere.
+func IsDefaultLogin(name, password string) bool {
+	return strings.EqualFold(name, FirstName) && password == FirstPassword
 }
 
 // Authenticate returns the user called name (ignoring case) if password is

@@ -6,58 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
-
-func TestParseConfig(t *testing.T) {
-	main := []byte(`
-theme: dark
-ignore-tags: [shopping]
-monitor: {display-time: false}
-trello:
-  api-key: main-key
-  tasks:
-    "Work Tasks": {"Today": work, "Later": later}
-    "Goals": {"Today": theme}
-`)
-	secret := []byte(`
-trello:
-  api-key: secret-key
-  token: tok
-`)
-	c, err := parseConfig(main, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.APIKey != "secret-key" || c.Token != "tok" || c.BaseURL != "" || fmt.Sprint(c.IgnoreTags) != "[shopping]" {
-		t.Errorf("config %+v", c)
-	}
-	var lists []string
-	for _, d := range c.Lists {
-		lists = append(lists, d.String()+" ["+d.Tag+"]")
-	}
-	if got := strings.Join(lists, ", "); got != "Goals / Today [theme], Work Tasks / Later [later], Work Tasks / Today [work]" {
-		t.Errorf("lists %s", got)
-	}
-
-	if _, err := parseConfig([]byte("trello: [")); err == nil {
-		t.Error("bad YAML accepted")
-	}
-}
-
-func TestVisible(t *testing.T) {
-	all := []Task{{Title: "a", Tags: []string{"work"}}, {Title: "b", Tags: []string{"shopping"}}, {Title: "c"}}
-	var got []string
-	for _, tk := range Visible(all, []string{"shopping"}) {
-		got = append(got, tk.Title)
-	}
-	if fmt.Sprint(got) != "[a c]" {
-		t.Errorf("visible %v", got)
-	}
-}
 
 // fakeTrello is two boards: Work, with lists Today (l1) and Later (l2), and
 // Home, with Inbox (l3). It adds and archives cards, and can be made to fail
@@ -115,16 +69,29 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	reply := func(v any) { json.NewEncoder(w).Encode(v) } //nolint:errcheck
 	switch p := r.URL.Path; {
-	case r.Method == http.MethodGet && p == "/1/members/me/boards":
-		reply([]trelloItem{{ID: "b1", Name: "Work"}, {ID: "b2", Name: "Home"}})
-	case r.Method == http.MethodGet && p == "/1/boards/b1/lists":
-		reply([]trelloItem{{ID: "l1", Name: "Today"}, {ID: "l2", Name: "Later"}})
-	case r.Method == http.MethodGet && p == "/1/boards/b2/lists":
-		reply([]trelloItem{{ID: "l3", Name: "Inbox"}})
-	case r.Method == http.MethodGet && strings.HasSuffix(p, "/cards"):
+	case r.Method == http.MethodGet && p == "/1/members/me/boards" && q.Get("lists") == "open":
+		reply([]Board{
+			{ID: "b1", Name: "Work", Lists: []List{{ID: "l1", Name: "Today"}, {ID: "l2", Name: "Later"}}},
+			{ID: "b2", Name: "Home", Lists: []List{{ID: "l3", Name: "Inbox"}}},
+		})
+	case r.Method == http.MethodGet && p == "/1/members/me":
+		reply(map[string]string{"id": "m1", "username": "joelle"})
+	case r.Method == http.MethodDelete && p == "/1/tokens/tok":
+		reply(map[string]any{})
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "/1/lists/") && strings.HasSuffix(p, "/cards"):
+		list := strings.TrimSuffix(strings.TrimPrefix(p, "/1/lists/"), "/cards")
+		if list != "l1" && list != "l2" && list != "l3" {
+			http.Error(w, "The requested resource was not found.", http.StatusNotFound)
+			return
+		}
 		f.mu.Lock()
 		f.fetches++
-		cards := append([]trelloItem(nil), f.cards...)
+		var cards []trelloItem
+		for _, c := range f.cards {
+			if c.IDList == list {
+				cards = append(cards, c)
+			}
+		}
 		f.mu.Unlock()
 		if hold != nil {
 			if held != nil {
@@ -156,19 +123,21 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// testLists are the lists the test configuration names, as parseConfig
-// orders them.
-var testLists = []Destination{{"Home", "Inbox", "home"}, {"Work", "Later", "later"}, {"Work", "Today", "work"}}
+// testLists are the lists the test configuration names, in order.
+var testLists = []Destination{
+	{BoardID: "b2", Board: "Home", ListID: "l3", List: "Inbox", Tag: "home"},
+	{BoardID: "b1", Board: "Work", ListID: "l2", List: "Later", Tag: "later"},
+	{BoardID: "b1", Board: "Work", ListID: "l1", List: "Today", Tag: "work"},
+}
 
 // newTestCache is a cache of the fake Trello's lists, its clock at *clock.
 func newTestCache(t *testing.T, f *fakeTrello, clock *time.Time) *Cache {
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	c := NewCache()
-	c.loadConfig = func() (Config, error) {
-		return Config{APIKey: "key", Token: "tok", BaseURL: srv.URL, Lists: testLists, IgnoreTags: []string{"x"}}, nil
-	}
+	c := NewCache(func() (Config, error) {
+		return Config{APIKey: "key", Token: "tok", BaseURL: srv.URL, Lists: testLists}, nil
+	})
 	var mu sync.Mutex
 	c.now = func() time.Time {
 		mu.Lock()
@@ -205,18 +174,18 @@ func TestCacheFetchesInBackground(t *testing.T) {
 	if got := titles(s); got != "1:home[home] 2:later[later] 3:first[work] 4:second[work]" {
 		t.Errorf("tasks %s", got)
 	}
-	if s.Loading || s.Err != nil || !s.Fetched.Equal(clock) || fmt.Sprint(s.IgnoreTags) != "[x]" {
+	if s.Loading || s.Err != nil || !s.Fetched.Equal(clock) {
 		t.Errorf("snapshot %+v", s)
 	}
-	if n := f.fetchCount(); n != 2 {
-		t.Errorf("%d card fetches, want one per board", n)
+	if n := f.fetchCount(); n != 3 {
+		t.Errorf("%d card fetches, want one per list", n)
 	}
 
 	// Within the TTL, nothing is fetched.
 	clock = clock.Add(cacheTTL - time.Second)
 	c.Snapshot()
 	c.fetches.Wait()
-	if f.fetchCount() != 2 {
+	if f.fetchCount() != 3 {
 		t.Errorf("fetched again within the TTL")
 	}
 
@@ -289,7 +258,7 @@ func TestCacheArchiveAndAdd(t *testing.T) {
 	if err := c.Archive(ctx, s.Tasks[2]); err != nil {
 		t.Fatal(err)
 	}
-	n, err := c.Add(ctx, "new", Destination{"Work", "Later", "later"})
+	n, err := c.Add(ctx, "new", testLists[1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +281,7 @@ func TestCacheArchiveAndAdd(t *testing.T) {
 	if err := c.Archive(ctx, c.Snapshot().Tasks[0]); err == nil {
 		t.Error("archive with Trello failing succeeded")
 	}
-	if _, err := c.Add(ctx, "x", Destination{"Home", "Inbox", "home"}); err == nil {
+	if _, err := c.Add(ctx, "x", testLists[0]); err == nil {
 		t.Error("add with Trello failing succeeded")
 	}
 	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:new[later] 4:second[work]" {
@@ -347,8 +316,8 @@ func TestCacheDiscardsOvertakenFetch(t *testing.T) {
 	if got := titles(c.Snapshot()); got != "1:later[later] 2:first[work] 3:second[work]" {
 		t.Errorf("after the overtaken fetch: %s", got)
 	}
-	if n := f.fetchCount(); n != 6 {
-		t.Errorf("%d card fetches, want 6: the overtaken fetch's result thrown away and another made", n)
+	if n := f.fetchCount(); n != 9 {
+		t.Errorf("%d card fetches, want 9: the overtaken fetch's result thrown away and another made", n)
 	}
 }
 
@@ -358,11 +327,10 @@ func TestCacheNotConfigured(t *testing.T) {
 		cfg  Config
 		want string
 	}{
-		{Config{Lists: testLists}, "api-key and token"},
-		{Config{APIKey: "k", Token: "t"}, "no Trello lists are configured"},
+		{Config{Lists: testLists}, "no Trello authorization"},
+		{Config{APIKey: "k", Token: "t"}, "no Trello lists are chosen"},
 	} {
-		cache := NewCache()
-		cache.loadConfig = func() (Config, error) { return c.cfg, nil }
+		cache := NewCache(func() (Config, error) { return c.cfg, nil })
 		cache.now = func() time.Time { return clock }
 		cache.Snapshot()
 		cache.fetches.Wait()
@@ -383,12 +351,68 @@ func TestFetchTasksErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for lists, want := range map[Destination]string{
-		{"Nope", "Today", "x"}: `no Trello board "Nope"`,
-		{"Work", "Nope", "x"}:  `no list "Nope" on Trello board "Work"`,
+	gone := Destination{BoardID: "b1", Board: "Work", ListID: "lx", List: "Gone", Tag: "x"}
+	if _, err := fetchTasks(context.Background(), client, []Destination{gone}); err == nil || !strings.Contains(err.Error(), "the list Work / Gone") || !strings.Contains(err.Error(), "404") {
+		t.Errorf("a list gone: %v", err)
+	}
+}
+
+func TestTrelloHelpers(t *testing.T) {
+	srv := httptest.NewServer(newFakeTrello())
+	defer srv.Close()
+	cfg := Config{APIKey: "key", Token: "tok", BaseURL: srv.URL}
+	ctx := context.Background()
+
+	boards, err := Boards(ctx, cfg)
+	if err != nil || len(boards) != 2 || boards[0].Name != "Work" || len(boards[0].Lists) != 2 || boards[1].Lists[0].ID != "l3" {
+		t.Errorf("boards %+v, %v", boards, err)
+	}
+	if name, err := Member(ctx, cfg); err != nil || name != "joelle" {
+		t.Errorf("member %q, %v", name, err)
+	}
+	if err := Revoke(ctx, cfg); err != nil {
+		t.Errorf("revoke: %v", err)
+	}
+	bad := cfg
+	bad.Token = "wrong"
+	if _, err := Member(ctx, bad); err == nil || strings.Contains(err.Error(), "wrong") {
+		t.Errorf("bad token: %v; want an error, without the token in it", err)
+	}
+	if err := Revoke(ctx, bad); err == nil || strings.Contains(err.Error(), "wrong") {
+		t.Errorf("revoking a bad token: %v; want an error, without the token in it", err)
+	}
+	if _, err := Boards(ctx, Config{}); err == nil {
+		t.Errorf("boards with no authorization")
+	}
+
+	u, err := url.Parse(AuthorizeURL("key", "exec-3270", "https://adhd.example.com/trello/callback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	for k, want := range map[string]string{
+		"key": "key", "name": "exec-3270", "scope": "read,write", "expiration": "never",
+		"response_type": "token", "callback_method": "fragment", "return_url": "https://adhd.example.com/trello/callback",
 	} {
-		if _, _, err := fetchTasks(context.Background(), client, []Destination{lists}); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%v: got %v, want %q", lists, err, want)
+		if q.Get(k) != want {
+			t.Errorf("authorize %s = %q, want %q", k, q.Get(k), want)
 		}
+	}
+}
+
+func TestPool(t *testing.T) {
+	p := NewPool()
+	made := 0
+	config := func() (Config, error) { made++; return Config{}, nil }
+	a := p.Get("a", config)
+	if p.Get("a", config) != a || p.Get("b", config) == a {
+		t.Errorf("caches not kept by key")
+	}
+	p.mu.Lock()
+	p.entries["a"].lastUsed = time.Now().Add(-poolIdle - time.Minute)
+	p.mu.Unlock()
+	p.Get("b", config)
+	if p.Get("a", config) == a {
+		t.Errorf("idle cache kept")
 	}
 }

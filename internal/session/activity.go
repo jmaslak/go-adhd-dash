@@ -505,6 +505,12 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Google calendar"
 	case modeGoogleClient:
 		return "Google client"
+	case modeSite:
+		return "Web site"
+	case modeTrello:
+		return "Trello"
+	case modeTrelloKey:
+		return "Trello API key"
 	case modeAdmin:
 		return "Admin menu"
 	case modeShutdownConfirm:

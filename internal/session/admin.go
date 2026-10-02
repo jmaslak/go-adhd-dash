@@ -23,6 +23,8 @@ var adminOptions = []struct{ number, what string }{
 	{"3", "Clear the chat"},
 	{"4", "Users: add, remove, change passwords and admins"},
 	{"5", "Google client: what users connect their calendars through"},
+	{"6", "Web site: its public address, and who its privacy policy names"},
+	{"7", "Trello API key: what users link their Trello accounts through"},
 }
 
 // buildAdmin renders the admin menu, with message below the option field,
@@ -74,6 +76,8 @@ const (
 	adminClearChat                       // the confirmation for clearing the chat
 	adminUsers                           // the user editor
 	adminGoogleClient                    // the Google client
+	adminSite                            // the web site
+	adminTrelloKey                       // the Trello API key
 )
 
 // adminChoice is what the admin menu's key asks for, and when it is to stay
@@ -98,6 +102,10 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 		return adminUsers, ""
 	case "5":
 		return adminGoogleClient, ""
+	case "6":
+		return adminSite, ""
+	case "7":
+		return adminTrelloKey, ""
 	default:
 		return adminStay, fmt.Sprintf("There is no option %q.", typed)
 	}

@@ -207,7 +207,7 @@ func TestIsDefaultLogin(t *testing.T) {
 		{"admin", "admin ", false},
 		{"bob", "admin", false},
 	} {
-		if got := isDefaultLogin(c.name, c.password); got != c.want {
+		if got := users.IsDefaultLogin(c.name, c.password); got != c.want {
 			t.Errorf("%q/%q: %v", c.name, c.password, got)
 		}
 	}

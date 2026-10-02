@@ -33,8 +33,13 @@ var nextSessionID atomic.Uint64
 
 // Config holds what every session shares.
 type Config struct {
-	// Tasks holds the tasks, fetched from Trello; nil when there are none.
-	Tasks *tasks.Cache
+	// TaskPool keeps each user's tasks, from their Trello lists, while in
+	// use; nil for no tasks.
+	TaskPool *tasks.Pool
+
+	// TrelloBaseURL is the Trello API's address; "" for Trello's own.
+	// Tests replace it.
+	TrelloBaseURL string
 
 	// Busy supplies the busy indicator's status; nil when none is
 	// configured.
@@ -43,14 +48,6 @@ type Config struct {
 	// BusyControl sends keys to the busy indicator; nil when its control
 	// port is not configured.
 	BusyControl *busy.Control
-
-	// Archiver archives tasks from the task screen; nil when archiving is
-	// not available.
-	Archiver TaskArchiver
-
-	// Adder adds tasks from the add-task screen; nil when adding is not
-	// available.
-	Adder TaskAdder
 
 	// Agenda is a calendar shown to every user, for trying the dashboard
 	// without Google (-agenda-file); nil normally, when each user sees
@@ -95,6 +92,10 @@ type Config struct {
 
 	// Refresh is how often an idle screen is redrawn.
 	Refresh time.Duration
+
+	// HTTPListen is where the web pages are served, for the admin to see;
+	// "" when they are not.
+	HTTPListen string
 
 	// AgendaRefresh is how long the calendar screen reuses a month it has
 	// read before reading it again.
@@ -258,8 +259,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var ch chatState
 	var us usersState
 	var gs googleState
-	defer gs.close()
 	var gc googleClientState
+	var tr trelloState
+	var tk trelloKeyState
+	var site siteState
 	defer cfg.Chat.unwatch(sessionID)
 	var allTasks []tasks.Task      // the task screen's tasks, as last shown
 	var sessions []SessionActivity // the activity viewer's sessions, as last shown
@@ -284,6 +287,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 		mode = modeDashboard
 		switch c.name {
 		case "tasks":
+			if cfg.tasksFor(user) == nil {
+				message = "No Trello lists are linked; type TRELLO to link them."
+				break
+			}
 			mode, tp = modeTasks, taskPageState{}
 		case "cal":
 			mode = modeCalendar
@@ -319,13 +326,23 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if user != nil {
 				id = user.ID
 			}
-			g, why := startGoogle(cfg.Users, id)
+			g, why := startGoogle(cfg.Users, id, cfg.HTTPListen != "")
 			if why != "" {
 				message = why
 				break
 			}
-			gs.close()
 			mode, gs = modeGoogle, g
+		case "trello":
+			id := 0
+			if user != nil {
+				id = user.ID
+			}
+			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
+			if why != "" {
+				message = why
+				break
+			}
+			mode, tr = modeTrello, t
 		case "exit":
 			loggedOut = true
 			return true
@@ -384,7 +401,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			cal.load(cache, cfg.AgendaRefresh, now)
 			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, autoRefresh, cache != nil))
 		case modeTasks:
-			snap := cfg.Tasks.Snapshot()
+			snap := cfg.tasksFor(user).Snapshot()
 			allTasks = snap.Tasks
 			screen, tp.page, totalPages, cursorRow, cursorCol = buildTaskList(rows, cols, now, snap, &tp)
 			redrawOnTimer = false
@@ -402,7 +419,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildHelp(rows, cols, now, message)
 			redrawOnTimer = false
 		case modeAddTask:
-			screen, cursorRow, cursorCol = buildAddTask(rows, cols, now, cfg.Adder, &at)
+			screen, cursorRow, cursorCol = buildAddTask(rows, cols, now, taskAdder(cfg.tasksFor(user)), &at)
 			redrawOnTimer = false
 		case modeAdmin:
 			screen, cursorRow, cursorCol = buildAdmin(rows, cols, now, message, messageOK, cfg.Shutdown.Sessions())
@@ -423,13 +440,26 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modeGoogleClient:
 			list, client, err := cfg.Users.GoogleClient()
-			screen, cursorRow, cursorCol = buildGoogleClient(rows, cols, now, list, client, err, &gc)
+			settings, siteErr := cfg.Users.Site()
+			screen, cursorRow, cursorCol = buildGoogleClient(rows, cols, now, list, client, settings, errors.Join(err, siteErr), &gc)
+			redrawOnTimer = false
+		case modeTrello:
+			screen, cursorRow, cursorCol = tr.build(rows, cols, now)
+			redrawOnTimer = false
+		case modeTrelloKey:
+			list, client, err := cfg.Users.TrelloClient()
+			settings, siteErr := cfg.Users.Site()
+			screen, cursorRow, cursorCol = buildTrelloKey(rows, cols, now, list, client, settings, errors.Join(err, siteErr), &tk)
+			redrawOnTimer = false
+		case modeSite:
+			settings, err := cfg.Users.Site()
+			screen, cursorRow, cursorCol = buildSite(rows, cols, now, settings, err, cfg.HTTPListen, &site)
 			redrawOnTimer = false
 		case modeShutdownConfirm:
 			screen, cursorRow, cursorCol = buildShutdownConfirm(rows, cols, now, cfg.Shutdown.Sessions()), rows-1, 0
 			redrawOnTimer = false
 		default:
-			v := gather(cfg, now, cfg.agendaFor(user), ownerOf(user))
+			v := gather(cfg, now, cfg.agendaFor(user), cfg.tasksFor(user), ownerOf(user))
 			v.AutoRefresh, v.BusyControl, v.Message = autoRefresh, cfg.BusyControl != nil, message
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
@@ -515,7 +545,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				}
 			}
 		case modeTasks:
-			switch tp.handleList(resp, allTasks, totalPages, cfg.Archiver) {
+			switch tp.handleList(resp, allTasks, totalPages, taskArchiver(cfg.tasksFor(user))) {
 			case taskListLeave:
 				mode = modeDashboard
 			case taskListConfirm:
@@ -524,7 +554,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode, at = modeAddTask, addTaskState{}
 			}
 		case modeConfirm:
-			if tp.handleConfirm(resp, cfg.Archiver, logf) {
+			if tp.handleConfirm(resp, taskArchiver(cfg.tasksFor(user)), logf) {
 				mode = modeTasks
 			}
 		case modeCalc:
@@ -542,7 +572,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeDashboard
 			}
 		case modeAddTask:
-			if leave, added := at.handle(resp, cfg.Adder); leave {
+			if leave, added := at.handle(resp, taskAdder(cfg.tasksFor(user))); leave {
 				mode = modeTasks
 				if added != "" {
 					tp.message, tp.isError = added, false
@@ -560,11 +590,19 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case action == adminUsers && cfg.Users == nil:
 				message = "There is no user database."
 			case action == adminUsers:
-				mode, us = modeUsers, usersState{checklists: cfg.Checklists}
+				mode, us = modeUsers, usersState{checklists: cfg.Checklists, trelloBaseURL: cfg.TrelloBaseURL}
 			case action == adminGoogleClient && cfg.Users == nil:
 				message = "There is no user database to keep a Google client in."
 			case action == adminGoogleClient:
 				mode, gc = modeGoogleClient, googleClientState{}
+			case action == adminTrelloKey && cfg.Users == nil:
+				message = "There is no user database to keep a Trello API key in."
+			case action == adminTrelloKey:
+				mode, tk = modeTrelloKey, trelloKeyState{}
+			case action == adminSite && cfg.Users == nil:
+				message = "There is no user database to keep the web site's settings in."
+			case action == adminSite:
+				mode, site = modeSite, siteState{}
 			case action == adminClearChat:
 				mode = modeClearChatConfirm
 			case action == adminActivity:
@@ -609,11 +647,22 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modeGoogle:
 			if leave, said := gs.handle(resp, cfg.Users, logf); leave {
-				gs.close()
 				mode, message = modeDashboard, said
 			}
 		case modeGoogleClient:
 			if gc.handle(resp, cfg.Users, logf) {
+				mode = modeAdmin
+			}
+		case modeTrello:
+			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
+				mode, message = modeDashboard, said
+			}
+		case modeTrelloKey:
+			if tk.handle(resp, cfg.Users, logf) {
+				mode = modeAdmin
+			}
+		case modeSite:
+			if site.handle(resp, cfg.Users, logf) {
 				mode = modeAdmin
 			}
 		case modeClearChatConfirm:
@@ -683,6 +732,9 @@ const (
 	modeLogin
 	modeGoogle
 	modeGoogleClient
+	modeSite
+	modeTrello
+	modeTrelloKey
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
@@ -692,6 +744,23 @@ func chatName(u *users.User, lu string) string {
 		return lu
 	}
 	return u.Name
+}
+
+// taskArchiver is c as a TaskArchiver, nil (not a nil *tasks.Cache in an
+// interface) when c is nil.
+func taskArchiver(c *tasks.Cache) TaskArchiver {
+	if c == nil {
+		return nil
+	}
+	return c
+}
+
+// taskAdder is c as a TaskAdder, nil when c is nil.
+func taskAdder(c *tasks.Cache) TaskAdder {
+	if c == nil {
+		return nil
+	}
+	return c
 }
 
 // ownerOf is the owner of u's checklists: their ID, or zero with no user.
@@ -772,6 +841,10 @@ type view struct {
 	AgendaEnabled bool
 	Agenda        agenda.Snapshot
 
+	// TasksEnabled is whether the user has Trello lists linked; without,
+	// there are no tasks, and nothing of Trello is shown.
+	TasksEnabled bool
+
 	// Tasks are those the dashboard shows. TasksErr is why the last fetch
 	// of them failed, TasksFetched when they were last fetched (zero if
 	// never: with TasksErr, there are none), and TasksLoading whether the
@@ -785,9 +858,10 @@ type view struct {
 	ChecklistsErr error
 }
 
-// gather reads the current state of every source, the agenda from
-// agendaCache, nil for none, and the checklists owner's.
-func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, owner int) view {
+// gather reads the current state of every source: the agenda from
+// agendaCache and the tasks from taskCache, nil for none, and the
+// checklists owner's.
+func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tasks.Cache, owner int) view {
 	v := view{Now: now}
 	if cfg.Busy != nil {
 		v.BusyEnabled = true
@@ -803,8 +877,10 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, owner int) vie
 		v.Checklists = checklist.Owned(v.Checklists, owner)
 	}
 
-	snap := cfg.Tasks.Snapshot()
-	v.Tasks = tasks.Visible(snap.Tasks, snap.IgnoreTags)
-	v.TasksErr, v.TasksFetched, v.TasksLoading = snap.Err, snap.Fetched, snap.Loading
+	if taskCache != nil {
+		snap := taskCache.Snapshot()
+		v.TasksEnabled = true
+		v.Tasks, v.TasksErr, v.TasksFetched, v.TasksLoading = snap.Tasks, snap.Err, snap.Fetched, snap.Loading
+	}
 	return v
 }
