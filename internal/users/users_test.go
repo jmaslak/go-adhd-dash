@@ -88,7 +88,11 @@ func TestUpdateValidates(t *testing.T) {
 	if err := add("joelle", false); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"Joelle": "already a user", "": "must have a name", "a b": "space", "a\u001db": "control character", "x\u009f": "control character"} {
+	for name, want := range map[string]string{
+		"Joelle": "already a user", "JOELLE": "already a user", "": "must have a name",
+		"a b": "' ' in it", "a\u001db": "'\\x1d' in it", "x\u009f": "'\\u009f' in it", "jo@x": "'@' in it", "josé": "'é' in it",
+		".jo": "starts with '.'", "-jo": "starts with '-'",
+	} {
 		if err := add(name, false); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: got %v, want %q", name, err, want)
 		}
@@ -465,12 +469,25 @@ func TestCheckNewPassword(t *testing.T) {
 }
 
 func TestNameLength(t *testing.T) {
-	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "éééééééé"}}
+	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "eightchr"}}
 	if err := Validate(list); err != nil {
-		t.Errorf("eight characters (more bytes) refused: %v", err)
+		t.Errorf("eight characters refused: %v", err)
 	}
 	list[1].Name = "ninechars"
 	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "longer than 8 characters") {
 		t.Errorf("nine characters: %v", err)
+	}
+}
+
+func TestCheckName(t *testing.T) {
+	for _, name := range []string{"joelle", "J.Maslak", "a-b", "_x", "x_", "x.", "x-", "A1.b-c_D"} {
+		if err := CheckName(name); err != nil {
+			t.Errorf("%q refused: %v", name, err)
+		}
+	}
+	for _, name := range []string{".x", "-x", "a b", "a/b", "a+b", "ü", "a\tb"} {
+		if CheckName(name) == nil {
+			t.Errorf("%q allowed", name)
+		}
 	}
 }

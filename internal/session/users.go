@@ -386,6 +386,8 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 	switch {
 	case e.newName == "" && (e.newPassword != "" || e.newAdmin || e.newRes):
 		return e, "Type the new user's name."
+	case e.newName != "" && users.CheckName(e.newName) != nil:
+		return e, fmt.Sprintf("The new user's name %s.", users.CheckName(e.newName))
 	case e.newName != "" && e.newPassword == "":
 		return e, "Type the new user's password."
 	}

@@ -435,3 +435,21 @@ func TestUsersNameLength(t *testing.T) {
 		t.Errorf("eight-character name refused: %q", r.u.message)
 	}
 }
+
+func TestUsersNameCharacters(t *testing.T) {
+	r := newUsersRig(t)
+	for name, want := range map[string]string{
+		"jo@x":  `The new user's name has '@' in it`,
+		".jo":   `The new user's name starts with '.'`,
+		"ADMIN": "already a user",
+	} {
+		r.key(go3270.AIDEnter, map[string]string{usNewName: name, usNewPassword: "long enough pw"})
+		if !strings.Contains(r.u.message, want) || len(r.list()) != 1 {
+			t.Errorf("%q: message %q, want %q", name, r.u.message, want)
+		}
+	}
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "j.m-a_1", usNewPassword: "long enough pw"})
+	if len(r.list()) != 2 {
+		t.Errorf("j.m-a_1 refused: %q", r.u.message)
+	}
+}

@@ -187,11 +187,13 @@ hidden, and `Enter`. It is refused if the current one is wrong, the two
 new ones differ, or it is the same as the old one; `admin` cannot go back
 to the default password `admin`.
 
-A user name has at most 8 characters, no spaces, and is unique, ignoring
-case; the login screen's and the user editor's name fields hold no more.
-The rule holds for the whole users file: one with a longer name in it
+A user name has at most 8 characters, only ASCII letters, digits, `.`,
+`-` and `_`, not starting with `.` or `-`, and is unique, ignoring case
+(logging in ignores case too); the login screen's and the user editor's
+name fields hold no more.
+The rule holds for the whole users file: one with a name breaking it
 (written by hand, or by an older version) refuses every change until that
-name is shortened, and says which.
+name is fixed in the file, and says which. Such a user can still log in.
 
 A password, set here or by an admin (adding a user, or `P` in the user
 editor), must have at least 8 characters, and must not contain the user
@@ -234,7 +236,7 @@ each with a one-character command field and `Admin`, `Restricted`,
   no room there for `Console`: add the user, then type `Y` on their row.
 
 `Enter` (or paging) saves everything typed at once. Names must be unique
-(ignoring case) and have no spaces, no admin may be restricted, at least
+(ignoring case) and made only of the characters allowed, no admin may be restricted, at least
 one user must stay an admin, and exactly one user must be the console's (so
 the console's user can be deleted only once another is given `Y` under
 `Console`): a change that would break any of these is refused whole, with what was

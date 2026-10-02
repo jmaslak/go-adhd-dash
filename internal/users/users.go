@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -351,9 +350,8 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 }
 
 // Validate reports why list is not a valid set of users: a name empty,
-// holding a space, longer than MaxNameLength, or used twice (ignoring
-// case), a user both an admin and
-// restricted, or both restricted and controlling the busy light, no admin,
+// longer than MaxNameLength, not made as CheckName says, or used twice
+// (ignoring case), a user both an admin and restricted, or both restricted and controlling the busy light, no admin,
 // or not exactly one user the console's.
 func Validate(list []User) error {
 	seen := map[string]bool{}
@@ -362,12 +360,10 @@ func Validate(list []User) error {
 		switch key := strings.ToLower(u.Name); {
 		case u.Name == "":
 			return errors.New("a user must have a name")
-		case strings.ContainsAny(u.Name, " \t"):
-			return fmt.Errorf("user name %q has a space in it", u.Name)
 		case utf8.RuneCountInString(u.Name) > MaxNameLength:
 			return fmt.Errorf("user name %q is longer than %d characters", u.Name, MaxNameLength)
-		case strings.ContainsFunc(u.Name, unicode.IsControl):
-			return fmt.Errorf("user name %q has a control character in it", u.Name)
+		case CheckName(u.Name) != nil:
+			return fmt.Errorf("user name %q %w", u.Name, CheckName(u.Name))
 		case seen[key]:
 			return fmt.Errorf("there is already a user called %q", u.Name)
 		default:
@@ -450,6 +446,25 @@ func defaultConsole(list []User) {
 
 // MaxNameLength is the most characters a user name may have.
 const MaxNameLength = 8
+
+// CheckName reports what is wrong with the characters of the user name
+// name, as the rest of a sentence starting with the name, or nil if
+// nothing is: it may have only ASCII letters and digits, dots, hyphens and
+// underscores, and may not start with a dot or a hyphen.
+func CheckName(name string) error {
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		case r == '.' || r == '-':
+			if i == 0 {
+				return fmt.Errorf("starts with %q", r)
+			}
+		default:
+			return fmt.Errorf("has %q in it; only letters, digits, '.', '-' and '_' are allowed", r)
+		}
+	}
+	return nil
+}
 
 // MinPasswordLength is the fewest characters a password may have.
 const MinPasswordLength = 8
