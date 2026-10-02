@@ -265,33 +265,25 @@ func banner(row, cols int, f go3270.Field) go3270.Field {
 	return f
 }
 
-// nextMeetingText describes the meeting under way or the next one. With a
-// calendar it is read from there, by the same rules as the agenda, so the two
-// agree: the indicator's feed counts to its next calendar entry of any kind,
-// all-day ones included. Without one it is the feed's minutes-to-next, less
-// the time since the feed's last message to keep it current in between.
+// nextMeetingText describes the user's meeting under way or the next one,
+// from their calendar, by the same rules as the agenda and within the same
+// agendaWindow, so that the two agree. It is "" for a user with no calendar,
+// and until theirs has been read: the busy indicator's feed counts to its
+// own owner's next calendar entry of any kind, all-day ones included,
+// which is no one else's to show.
 func nextMeetingText(v view) string {
-	if v.AgendaEnabled && !v.Agenda.Fetched.IsZero() {
-		if names := meetingsNow(v); len(names) > 0 {
-			return "Meeting now: " + strings.Join(names, ", ")
+	if !v.AgendaEnabled || v.Agenda.Fetched.IsZero() {
+		return ""
+	}
+	if names := meetingsNow(v); len(names) > 0 {
+		return "Meeting now: " + strings.Join(names, ", ")
+	}
+	for _, e := range v.Agenda.Upcoming(v.Now) {
+		if isMeeting(e) && e.Start.After(v.Now) && e.Start.Before(v.Now.Add(agendaWindow)) {
+			return "Next meeting in " + duration(e.Start.Sub(v.Now)) + ": " + meetingName(e)
 		}
-		for _, e := range v.Agenda.Upcoming(v.Now) {
-			if isMeeting(e) && e.Start.After(v.Now) {
-				return "Next meeting in " + duration(e.Start.Sub(v.Now)) + ": " + meetingName(e)
-			}
-		}
-		return "No more meetings today or tomorrow"
 	}
-
-	s := v.Busy
-	if s.MinutesToNext == nil {
-		return "No more meetings today"
-	}
-	until := s.Updated.Add(time.Duration(*s.MinutesToNext) * time.Minute).Sub(v.Now)
-	if until <= 0 {
-		return "Meeting now"
-	}
-	return "Next meeting in " + duration(until)
+	return "No meetings in next 24 hours"
 }
 
 // meetingsNow names the calendar's timed meetings under way.

@@ -184,10 +184,15 @@ func TestNextMeetingText(t *testing.T) {
 				{Summary: "Standup", Start: tomorrow.Add(9 * time.Hour), End: tomorrow.Add(10 * time.Hour)},
 			}, true, "Next meeting in 23h00: Standup",
 		},
-		{"calendar empty", at(20), []agenda.Event{}, true, "No more meetings today or tomorrow"},
-		{"no calendar", at(20), nil, false, "Next meeting in 15m"},
-		{"no calendar, in progress", at(-25), nil, false, "Meeting now"},
-		{"no calendar, none left", nil, nil, false, "No more meetings today"},
+		{"calendar empty", at(20), []agenda.Event{}, true, "No meetings in next 24 hours"},
+		{"next past 24 hours", at(20), []agenda.Event{
+			{Summary: "Later", Start: now.Add(25 * time.Hour), End: now.Add(26 * time.Hour)},
+		}, true, "No meetings in next 24 hours"},
+		// With no calendar of their own, nothing: the feed counts to its
+		// owner's meetings, not the user's.
+		{"no calendar", at(20), nil, false, ""},
+		{"no calendar, the feed's under way", at(-25), nil, false, ""},
+		{"no calendar, none left", nil, nil, false, ""},
 	} {
 		v := sampleView(0)
 		if c.events != nil {
@@ -200,10 +205,10 @@ func TestNextMeetingText(t *testing.T) {
 		}
 	}
 
-	// A calendar not yet read falls back to the feed.
+	// A calendar not yet read says nothing yet.
 	v := sampleView(0)
 	v.Agenda = agenda.Snapshot{}
-	if got := nextMeetingText(v); got != "Next meeting in 15m" {
+	if got := nextMeetingText(v); got != "" {
 		t.Errorf("calendar not yet read: got %q", got)
 	}
 }
@@ -600,3 +605,18 @@ func TestHeaderColor(t *testing.T) {
 type staticBusy busy.Status
 
 func (s staticBusy) Status() busy.Status { return busy.Status(s) }
+
+// TestNoCalendarNoMeetingLine checks that a user with no calendar sees the
+// busy indicator, but nothing of the meetings its feed counts to, which are
+// its owner's: not "Meeting now" under a banner saying otherwise.
+func TestNoCalendarNoMeetingLine(t *testing.T) {
+	minutes := -30 // the feed's entry began 25 minutes ago
+	v := view{Now: now, BusyEnabled: true, Busy: busy.Status{
+		Connected: true, Light: "off", MinutesToNext: &minutes, Updated: now.Add(-5 * time.Minute),
+	}}
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
+	text := strings.Join(screenText(t, s, 24, 80), "\n")
+	if !strings.Contains(text, "NOT IN MEETING") || strings.Contains(text, "Meeting now") || strings.Contains(text, "meeting in") {
+		t.Errorf("no calendar:\n%s", text)
+	}
+}

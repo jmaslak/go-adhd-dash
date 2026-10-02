@@ -3,9 +3,10 @@
 `adhd-dash` serves a dashboard to TN3270 (mainframe) terminal clients. One
 screen shows:
 
-- the **busy indicator**: whether the light is red, green or off, and how
-  long until the next meeting, from
-  [go-busy-indicator](../go-busy-indicator)'s WebSocket status feed;
+- the **busy indicator**: whether the light is red, green or off, from
+  [go-busy-indicator](../go-busy-indicator)'s WebSocket status feed, and,
+  for a user with a calendar connected, their meeting under way or how long
+  until their next one (or "No meetings in next 24 hours");
 - the **agenda**: every meeting under way or starting in the next 24 hours,
   from the Google calendars the user has connected (see [Agenda](#agenda)),
   with the one in progress marked `NOW` and a
@@ -412,8 +413,10 @@ unless it is also given `--ws-host`, e.g. `--ws-host=0.0.0.0`, so
 `adhd-dash` on another machine needs that (the feed is unauthenticated,
 so firewall it) or a tunnel.
 
-The indicator publishes on its own `--interval` (60 seconds by default), so
-the countdown is adjusted locally between messages. A dropped feed is
+The indicator publishes on its own `--interval` (60 seconds by default). Its
+`minutes-to-next` counts to its own owner's calendar, so the dashboard does
+not show it: the line under the light is the user's own next meeting, from
+their calendar, and is blank for a user with none. A dropped feed is
 redialed every 5 seconds; while it is down the screen says so and shows the
 last state received.
 
