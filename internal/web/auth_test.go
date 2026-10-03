@@ -154,7 +154,7 @@ func TestSignInAndConnect(t *testing.T) {
 	if resp, body := r.login("joelle", "wrong"); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Wrong user name or password.") {
 		t.Errorf("wrong password: %s", resp.Status)
 	}
-	if _, body := r.login("admin", "admin"); !strings.Contains(body, "only works on the console") {
+	if _, body := r.login("admin", "admin"); !strings.Contains(body, "Change the default admin password on the terminal first") {
 		t.Errorf("default password not refused")
 	}
 	if _, body := r.login("signup", "secret"); !strings.Contains(body, "cannot use these pages") {

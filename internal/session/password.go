@@ -28,6 +28,10 @@ const (
 
 // passwordState is one session's place on the password screen.
 type passwordState struct {
+	// forced is set for a user logged in with the default password, who
+	// must change it to go on (leaving logs off); changed once they have.
+	forced, changed bool
+
 	failures int
 	message  string
 	isError  bool
@@ -56,16 +60,22 @@ func buildPassword(rows, cols int, now time.Time, name string, p *passwordState)
 			go3270.Field{Row: row, Col: pwLabelWidth + 1 + pwWidth},
 		)
 	}
-	screen = appendMessageRows(screen, rows, cols, p.message, p.isError,
-		"Type your current password, then the new one twice, and press Enter.", "PF3=Back Enter=Change")
+	prompt, help := "Type your current password, then the new one twice, and press Enter.", "PF3=Back Enter=Change"
+	if p.forced {
+		screen = append(screen, placeLine(pwFirstRow+7, cols, line{{
+			Content: "You logged in with the default password: choose a new one to go on.", Color: go3270.Yellow, Intense: true,
+		}})...)
+		help = "PF3=Log off Enter=Change"
+	}
+	screen = appendMessageRows(screen, rows, cols, p.message, p.isError, prompt, help)
 	return screen, pwFirstRow, pwLabelWidth + 1
 }
 
 // handle acts on a key on the password screen for user u, returning whether
 // to leave for the dashboard, and what to say there. Enter changes the
 // password, if the current one is right, the new one typed the same twice,
-// and not the first user's default (which works only on the console). Too
-// many wrong current passwords go back to the dashboard.
+// and not the first user's default. Too many wrong current passwords go
+// back to the dashboard (or for a forced change, log off).
 func (p *passwordState) handle(resp go3270.Response, store *users.Store, u *users.User, logf func(string, ...any)) (leave bool, message string) {
 	p.message, p.isError = "", false
 	switch resp.AID {
@@ -88,7 +98,7 @@ func (p *passwordState) handle(resp go3270.Response, store *users.Store, u *user
 	case next == current:
 		return fail("The new password is the same as the old one.")
 	case users.IsDefaultLogin(u.Name, next):
-		return fail("That is the default password, which works only on the console.")
+		return fail("That is the default password; choose another.")
 	}
 	if err := users.CheckNewPassword(u.Name, next); err != nil {
 		return fail("That password will not do: " + err.Error() + ".")
@@ -126,5 +136,6 @@ func (p *passwordState) handle(resp go3270.Response, store *users.Store, u *user
 		return fail("Could not save: " + err.Error())
 	}
 	logf("%q changed their password", u.Name)
+	p.changed = true
 	return true, "Your password is changed."
 }

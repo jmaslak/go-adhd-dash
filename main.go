@@ -118,7 +118,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("users: %v", err)
 	} else if created {
-		log.Printf("created %s with the user %q, password %q, which is refused at the login screen: connect as the CONSOLE LU from this machine and change it", userStore.Path(), users.FirstName, users.FirstPassword)
+		log.Printf("created %s with the user %q, password %q: log in with them, and you are asked to change the password before anything else", userStore.Path(), users.FirstName, users.FirstPassword)
 	}
 
 	// Checklists made before each was a user's become the admin's, and any

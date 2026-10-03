@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +47,7 @@ func TestLoadMakesFirstUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created || len(list) != 1 || list[0].Name != "admin" || !list[0].Admin || !list[0].Console || !CheckPassword(list[0].Password, "admin") {
+	if !created || len(list) != 1 || list[0].Name != "admin" || !list[0].Admin || !CheckPassword(list[0].Password, "admin") {
 		t.Fatalf("first load: created %v, %+v", created, list)
 	}
 	info, err := os.Stat(path)
@@ -119,19 +118,9 @@ func TestUpdateValidates(t *testing.T) {
 		t.Errorf("after refused changes: %+v", list)
 	}
 
-	// Nor can the console's user be removed, even with another admin.
+	// With admin handed over, the old admin can be removed.
 	err = s.Update(func(list *[]User, _ func() int) error {
 		(*list)[1].Admin = true
-		*list = (*list)[1:]
-		return nil
-	})
-	if !errors.Is(err, ErrNoConsole) {
-		t.Errorf("removing the console's user: %v", err)
-	}
-
-	// With the console handed over too, it can.
-	err = s.Update(func(list *[]User, _ func() int) error {
-		(*list)[1].Admin, (*list)[1].Console = true, true
 		*list = (*list)[1:]
 		return nil
 	})
@@ -157,51 +146,13 @@ func TestLoadBadFile(t *testing.T) {
 }
 
 func TestRestrictedAdmin(t *testing.T) {
-	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "calc", Restricted: true}}
+	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "calc", Restricted: true}}
 	if err := Validate(list); err != nil {
 		t.Errorf("restricted non-admin: %v", err)
 	}
 	list[0].Restricted = true
 	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "both an admin and restricted") {
 		t.Errorf("restricted admin: %v", err)
-	}
-}
-
-func TestConsole(t *testing.T) {
-	// A file from before there was a console user gets one: admin, if an
-	// admin, else the first admin.
-	for _, c := range []struct{ json, want string }{
-		{`{"users":[{"id":1,"name":"joelle","admin":true},{"id":2,"name":"Admin","admin":true}]}`, "Admin"},
-		{`{"users":[{"id":1,"name":"admin"},{"id":2,"name":"joelle","admin":true}]}`, "joelle"},
-		{`{"users":[{"id":1,"name":"admin","admin":true},{"id":2,"name":"joelle","console":true}]}`, "joelle"},
-	} {
-		path := filepath.Join(t.TempDir(), "users.json")
-		if err := os.WriteFile(path, []byte(c.json), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		list, _, err := NewStore(path).Load()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if u, ok := ConsoleUser(list); !ok || u.Name != c.want {
-			t.Errorf("%s: console user %+v, %v; want %s", c.json, u, ok, c.want)
-		}
-		if err := Validate(list); err != nil {
-			t.Errorf("%s: %v", c.json, err)
-		}
-	}
-
-	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "joelle"}}
-	if err := Validate(list); !errors.Is(err, ErrNoConsole) {
-		t.Errorf("no console user: %v", err)
-	}
-	list[0].Console, list[1].Console = true, true
-	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "only one") {
-		t.Errorf("two console users: %v", err)
-	}
-	list[0].Console = false
-	if err := Validate(list); err != nil {
-		t.Errorf("a non-admin console user: %v", err)
 	}
 }
 
@@ -307,9 +258,8 @@ func TestAdmin(t *testing.T) {
 		list []User
 		want string
 	}{
-		{[]User{{Name: "joelle", Admin: true, Console: true}, {Name: "Admin", Admin: true}}, "Admin"},
-		{[]User{{Name: "admin"}, {Name: "joelle", Admin: true}, {Name: "ops", Admin: true, Console: true}}, "ops"},
-		{[]User{{Name: "bob", Console: true}, {Name: "joelle", Admin: true}, {Name: "ops", Admin: true}}, "joelle"},
+		{[]User{{Name: "joelle", Admin: true}, {Name: "Admin", Admin: true}}, "Admin"},
+		{[]User{{Name: "admin"}, {Name: "joelle", Admin: true}, {Name: "ops", Admin: true}}, "joelle"},
 		{[]User{{Name: "bob"}}, ""},
 	} {
 		u, ok := Admin(c.list)
@@ -440,7 +390,7 @@ func TestTrello(t *testing.T) {
 }
 
 func TestFlagNotRestricted(t *testing.T) {
-	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "calc", Restricted: true, Flag: true}}
+	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "calc", Restricted: true, Flag: true}}
 	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "busy light") {
 		t.Errorf("restricted user controlling the light: %v", err)
 	}
@@ -470,7 +420,7 @@ func TestCheckNewPassword(t *testing.T) {
 }
 
 func TestNameLength(t *testing.T) {
-	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "eightchr"}}
+	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "eightchr"}}
 	if err := Validate(list); err != nil {
 		t.Errorf("eight characters refused: %v", err)
 	}
@@ -513,7 +463,7 @@ func TestKind(t *testing.T) {
 		t.Errorf("a kind not one of Kinds was set: %+v", u)
 	}
 
-	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "x", NewUser: true}}
+	list := []User{{ID: 1, Name: "admin", Admin: true}, {ID: 2, Name: "x", NewUser: true}}
 	if err := Validate(list); err != nil {
 		t.Errorf("a new user refused: %v", err)
 	}
@@ -522,11 +472,8 @@ func TestKind(t *testing.T) {
 		t.Errorf("a restricted new user: %v", err)
 	}
 	list[1].Restricted = false
-	for _, set := range []func(x []User){func(x []User) { x[1].Flag = true }, func(x []User) { x[0].Console, x[1].Console = false, true }} {
-		x := slices.Clone(list)
-		set(x)
-		if err := Validate(x); err == nil || !strings.Contains(err.Error(), "only sign others up") {
-			t.Errorf("a new user with the flag or the console: %v", err)
-		}
+	list[1].Flag = true
+	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "only sign others up") {
+		t.Errorf("a new user controlling the busy light: %v", err)
 	}
 }

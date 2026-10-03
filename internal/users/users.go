@@ -1,8 +1,7 @@
 // Package users keeps the user database in a JSON file: each user's name,
 // whether they are an admin, their password, hashed with Argon2id, and the
 // Google calendar they have connected, if any. At least one user is always
-// an admin, and exactly one is the console's: the user the console is
-// logged in as. The file also holds the Google OAuth client every user's
+// an admin. The file also holds the Google OAuth client every user's
 // calendar is connected through, set by an admin.
 //
 // Users carry IDs, unique across the file and never reused while it lasts,
@@ -41,12 +40,8 @@ type User struct {
 
 	// NewUser marks a new-user account (see KindNewUser): logging in as
 	// it does nothing but sign up a user of one's own. It is neither an
-	// admin nor restricted, nor the console's, nor controls the busy light.
+	// admin nor restricted, nor controls the busy light.
 	NewUser bool `json:"new_user,omitempty"`
-
-	// Console is set for the one user the console is logged in as, with no
-	// login screen.
-	Console bool `json:"console,omitempty"`
 
 	// Flag is set for a user who controls the busy light: their calendar's
 	// meetings light it, and they can set it by hand.
@@ -184,9 +179,6 @@ func (u *User) SetKind(kind string) bool {
 // ErrNoAdmin reports a change that would leave no admin.
 var ErrNoAdmin = errors.New("at least one user must be an admin")
 
-// ErrNoConsole reports a change that would leave no user for the console.
-var ErrNoConsole = errors.New("one user must be the console's")
-
 // file is the JSON file's contents.
 type file struct {
 	Users []User `json:"users"`
@@ -243,7 +235,7 @@ func (s *Store) Load() (list []User, created bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	list = []User{{ID: 1, Name: FirstName, Admin: true, Console: true, Password: hash}}
+	list = []User{{ID: 1, Name: FirstName, Admin: true, Password: hash}}
 	if err := s.write(file{Users: list}); err != nil {
 		return nil, false, err
 	}
@@ -362,9 +354,8 @@ func (s *Store) SetGoogleClient(client *GoogleClient) error {
 
 // Update reads the users, passes them to change, and writes back what it
 // leaves, unless it returns an error or the users it leaves are not valid:
-// names must be given and unique (ignoring case), at least one user an admin
-// (else ErrNoAdmin), and exactly one the console's (else ErrNoConsole, for
-// none). NextID gives change IDs for users it adds.
+// names must be given and unique (ignoring case), and at least one user an
+// admin (else ErrNoAdmin). NextID gives change IDs for users it adds.
 func (s *Store) Update(change func(list *[]User, nextID func() int) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -393,11 +384,10 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 // Validate reports why list is not a valid set of users: a name empty,
 // longer than MaxNameLength, not made as CheckName says, or used twice
 // (ignoring case), a user of more than one kind (see Kind), restricted and
-// controlling the busy light, no admin, or not exactly one user the
-// console's.
+// controlling the busy light, or no admin.
 func Validate(list []User) error {
 	seen := map[string]bool{}
-	admins, consoles := 0, 0
+	admins := 0
 	for _, u := range list {
 		switch key := strings.ToLower(u.Name); {
 		case u.Name == "":
@@ -417,8 +407,8 @@ func Validate(list []User) error {
 		if u.NewUser && (u.Admin || u.Restricted) {
 			return fmt.Errorf("%s cannot be both a new user and an admin or restricted", u.Name)
 		}
-		if u.NewUser && (u.Console || u.Flag) {
-			return fmt.Errorf("%s is a new user, which can only sign others up: not the console's, nor controlling the busy light", u.Name)
+		if u.NewUser && u.Flag {
+			return fmt.Errorf("%s is a new user, which can only sign others up, not control the busy light", u.Name)
 		}
 		if u.Flag && u.Restricted {
 			return fmt.Errorf("%s cannot both control the busy light and be restricted", u.Name)
@@ -426,41 +416,20 @@ func Validate(list []User) error {
 		if u.Admin {
 			admins++
 		}
-		if u.Console {
-			consoles++
-		}
 	}
-	switch {
-	case admins == 0:
+	if admins == 0 {
 		return ErrNoAdmin
-	case consoles == 0:
-		return ErrNoConsole
-	case consoles > 1:
-		return errors.New("only one user can be the console's")
 	}
 	return nil
 }
 
-// ConsoleUser returns the user the console is logged in as.
-func ConsoleUser(list []User) (User, bool) {
-	for _, u := range list {
-		if u.Console {
-			return u, true
-		}
-	}
-	return User{}, false
-}
-
 // Admin returns the admin user: the one called FirstName if they are an
-// admin, else the console's user if they are, else the first admin.
+// admin, else the first admin.
 func Admin(list []User) (User, bool) {
 	for _, u := range list {
 		if u.Admin && strings.EqualFold(u.Name, FirstName) {
 			return u, true
 		}
-	}
-	if u, ok := ConsoleUser(list); ok && u.Admin {
-		return u, true
 	}
 	for _, u := range list {
 		if u.Admin {
@@ -468,28 +437,6 @@ func Admin(list []User) (User, bool) {
 		}
 	}
 	return User{}, false
-}
-
-// defaultConsole marks the console's user in a list that has none, as a
-// file from before there was one has: the first user, FirstName, if they
-// are still there and an admin, else the first admin.
-func defaultConsole(list []User) {
-	if _, ok := ConsoleUser(list); ok {
-		return
-	}
-	pick := -1
-	for i, u := range list {
-		switch {
-		case u.Admin && strings.EqualFold(u.Name, FirstName):
-			list[i].Console = true
-			return
-		case u.Admin && pick < 0:
-			pick = i
-		}
-	}
-	if pick >= 0 {
-		list[pick].Console = true
-	}
 }
 
 // MaxNameLength is the most characters a user name may have.
@@ -531,9 +478,9 @@ func CheckNewPassword(name, password string) error {
 }
 
 // IsDefaultLogin reports whether name and password are the first user's,
-// as made with a new users file: FirstName, with FirstPassword. They work
-// only on the console, which needs no password, so that the admin sets a
-// real one there before anyone can sign in as them from anywhere.
+// as made with a new users file: FirstName, with FirstPassword. Logged in
+// with them, the user can do nothing but change the password, and they
+// are refused on the web site.
 func IsDefaultLogin(name, password string) bool {
 	return strings.EqualFold(name, FirstName) && password == FirstPassword
 }
@@ -600,7 +547,6 @@ func (s *Store) read() (file, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return file{}, fmt.Errorf("reading users from %s: %w", s.path, err)
 	}
-	defaultConsole(f.Users)
 	return f, nil
 }
 

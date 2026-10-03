@@ -14,7 +14,8 @@ import (
 // use. A nil ConnLimiter admits everything.
 //
 // Connections from this machine are not counted: were they, a flood from
-// elsewhere could fill every place and lock out the console.
+// elsewhere could fill every place and lock out an admin connecting from
+// here.
 type ConnLimiter struct {
 	total, perAddr int // zero for no limit
 

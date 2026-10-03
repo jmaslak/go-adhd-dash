@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	tn3270e "github.com/jmaslak/go-3270e"
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -93,54 +92,26 @@ func bannerLines() []line {
 	return out
 }
 
-// consoleLU is the LU name of the console: the one session that need not
-// log in, being logged in as the user marked as the console's, which must
-// connect from this machine and asks for it by name.
-const consoleLU = "CONSOLE"
-
-// errConsoleInUse refuses the console's LU name while another session has
-// it, with DEVICE-TYPE REJECT reason DEVICE-IN-USE.
-var errConsoleInUse = fmt.Errorf("the CONSOLE LU is in use by another session (%w)", tn3270e.ErrDeviceInUse)
-
-// errConsoleRemote refuses the console's LU name to a client not on this
-// machine.
-var errConsoleRemote = errors.New("the CONSOLE LU is only for connections from this machine")
-
-// chooseLU picks the LU name for session id, whose client asked for
-// requested (empty if it named none), local if it connected from this
-// machine: CONSOLE (asked for in any case) if it asked for it and is local,
-// refused if it asked for it and is not, and otherwise a name of the
-// session's own, whatever it asked for.
-func chooseLU(requested string, local bool, id uint64) (string, error) {
-	if strings.EqualFold(requested, consoleLU) {
-		if !local {
-			return "", errConsoleRemote
-		}
-		return consoleLU, nil
-	}
-	return fmt.Sprintf("AD%06X", id&0xFFFFFF), nil
+// sessionLUName is the LU name of session id, given to its client
+// whatever it asks for.
+func sessionLUName(id uint64) string {
+	return fmt.Sprintf("AD%06X", id&0xFFFFFF)
 }
 
-// consoleLogin returns the user the console is logged in as, from store:
-// nil, for everything, when there is no store.
-func consoleLogin(store *users.Store) (*users.User, error) {
-	if store == nil {
-		return nil, nil
+// sessionLU is the LU name session id goes by: negotiated, the one its
+// client was given, or for a client without TN3270E, which negotiates none,
+// its own name all the same (sessionLUName), reporting that it was named
+// here. That name is never sent to the client; it names the session
+// on the activity viewer, in the logs and on its screens.
+func sessionLU(negotiated string, id uint64) (lu string, named bool) {
+	if negotiated != "" {
+		return negotiated, false
 	}
-	list, _, err := store.Load()
-	if err != nil {
-		return nil, err
-	}
-	u, ok := users.ConsoleUser(list)
-	if !ok {
-		return nil, errors.New("no user is marked as the console's")
-	}
-	return &u, nil
+	return sessionLUName(id), true
 }
 
 // isLocal reports whether addr is this machine's loopback address,
-// 127.0.0.1 or ::1 (or 127.0.0.1 mapped into IPv6), the only place the
-// console may connect from.
+// 127.0.0.1 or ::1 (or 127.0.0.1 mapped into IPv6).
 func isLocal(addr net.Addr) bool {
 	host := addr.String()
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -159,6 +130,10 @@ type loginState struct {
 
 	// failReason is why the last try failed, for the audit log.
 	failReason string
+
+	// mustChange is set once logged in with the default password, which
+	// the user must change before doing anything else.
+	mustChange bool
 
 	message string
 }
@@ -245,10 +220,10 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 		l.message = "Could not check the password: " + err.Error()
 		return nil, false, ""
 	case ok && users.IsDefaultLogin(u.Name, password):
-		// Right, but the default: it works only on the console, which
-		// needs no password, so that the admin sets a real one there
-		// before anyone can log in as admin from anywhere.
-		l.failReason, l.message = "default password", "The default admin password only works on the CONSOLE; change it there."
+		// Right, but the default: logged in only to change it.
+		logf("logged in as %q with the default password, to change it", u.Name)
+		l.mustChange = true
+		return &u, false, ""
 	case ok:
 		logf("logged in as %q", u.Name)
 		return &u, false, ""
@@ -268,13 +243,4 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 func buildFarewell(cols int, now time.Time, text string) go3270.Screen {
 	screen := titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", now)
 	return append(screen, placeLine(2, cols, line{{Content: text, Color: go3270.Yellow, Intense: true}})...)
-}
-
-// auditName is how the audit log names user: by name, or for a console
-// with no user database, and so no user, as (console).
-func auditName(user *users.User) string {
-	if user == nil {
-		return "(console)"
-	}
-	return user.Name
 }

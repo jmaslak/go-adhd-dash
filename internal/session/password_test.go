@@ -98,3 +98,38 @@ func TestPasswordChange(t *testing.T) {
 		t.Errorf("default password: %q", p.message)
 	}
 }
+
+// TestPasswordForced checks the password screen for admin logged in with
+// the default password: it says why, offers only logging off, and records
+// the change once made.
+func TestPasswordForced(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	list, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := &list[0]
+	p := passwordState{forced: true}
+	s, _, _ := buildPassword(24, 80, now, admin.Name, &p)
+	text := strings.Join(screenText(t, s, 24, 80), "\n")
+	for _, want := range []string{"You logged in with the default password: choose a new one to go on.", "PF3=Log off"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("forced screen lacks %q:\n%s", want, text)
+		}
+	}
+	key := func(aid go3270.AID, current, next, again string) (bool, string) {
+		return p.handle(go3270.Response{AID: aid, Values: map[string]string{pwCurrentField: current, pwNewField: next, pwAgainField: again}}, store, admin, noLog)
+	}
+	if leave, _ := key(go3270.AIDEnter, users.FirstPassword, users.FirstPassword, users.FirstPassword); leave || p.changed || !strings.Contains(p.message, "the same as the old one") {
+		t.Errorf("kept the default: leave %v, changed %v, %q", leave, p.changed, p.message)
+	}
+	if leave, _ := key(go3270.AIDPF3, "", "", ""); !leave || p.changed {
+		t.Errorf("PF3: leave %v, changed %v", leave, p.changed)
+	}
+	if leave, said := key(go3270.AIDEnter, users.FirstPassword, "a real one now", "a real one now"); !leave || !p.changed || said != "Your password is changed." {
+		t.Errorf("changed: leave %v, changed %v, %q", leave, p.changed, said)
+	}
+	if _, ok, _ := store.Authenticate(t.Context(), "admin", "a real one now"); !ok {
+		t.Error("the new password does not work")
+	}
+}

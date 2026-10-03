@@ -16,8 +16,8 @@ import (
 )
 
 func TestControlsLight(t *testing.T) {
-	if !controlsLight(nil) {
-		t.Errorf("a console with no user database cannot set the light")
+	if controlsLight(nil) {
+		t.Errorf("a session not logged in can set the light")
 	}
 	if controlsLight(&users.User{Name: "a", Admin: true}) || !controlsLight(&users.User{Name: "b", Flag: true}) {
 		t.Errorf("light control not by the flag setting")

@@ -24,12 +24,12 @@ import (
 //
 // Each user's row is a one-character command field (D deletes the user, P
 // changes their password), the name, their type (user, admin, restricted
-// or newuser: see users.Kinds), and one-character console and flag
-// (controls the busy light) fields, Y or N. Autoskip after each input
-// field sends the cursor on to the next.
+// or newuser: see users.Kinds), and a one-character flag (controls the
+// busy light) field, Y or N. Autoskip after each input field sends the
+// cursor on to the next.
 //
-// The rows for adding a user have no console or flag field, as there is no
-// room: a user is given them once added.
+// The rows for adding a user have no flag field, as there is no room: a
+// user is given it once added.
 const (
 	usHeaderRow  = 2
 	usColumnRow  = 3
@@ -39,14 +39,11 @@ const (
 	usTypeCol    = usNameCol + 1 + usNameWidth
 	usTypeWidth  = len(users.KindRestricted)   // the longest type
 	usTypeEndCol = usTypeCol + 1 + usTypeWidth // the attribute byte ending the type field
-	usConCol     = usTypeEndCol + 2            // the console field, under "Console"
-	usConEndCol  = usConCol + 2
-	usFlagCol    = usConCol + 8 // the flag field, under "Flag"
+	usFlagCol    = usTypeEndCol + 2            // the flag field, under "Flag"
 	usFlagEndCol = usFlagCol + 2
 
 	usSelField      = "usel:"
 	usTypeField     = "utype:"
-	usConField      = "ucon:"
 	usFlagField     = "uflag:"
 	usPasswordField = "upw:" // then the ID of the user whose password is changing
 	usNewName       = "unew"
@@ -60,7 +57,7 @@ const (
 	// (see users.MaxConcurrentHashes) before giving up.
 	usersHashWait = 30 * time.Second
 
-	usPrompt         = "D deletes, P password; types: user, admin, restricted, newuser; else Y or N."
+	usPrompt         = "D deletes, P password; types: user, admin, restricted, newuser; Flag Y or N."
 	usPasswordPrompt = "Type the new password and press Enter. PF3 cancels."
 )
 
@@ -153,10 +150,9 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 
 	if end > start {
 		// Aligned with a user's row: the command in column 1, the name
-		// from column 3, the type, console and flag fields under their
-		// headings. The first command field stops the underline.
-		headings := fmt.Sprintf("%-2s%-*s%-*s%-*s%s", "S", usTypeCol-usNameCol, "Name", usConCol-usTypeCol, "Type",
-			usFlagCol-usConCol, "Console", "Flag")
+		// from column 3, the type and flag fields under their headings.
+		// The first command field stops the underline.
+		headings := fmt.Sprintf("%-2s%-*s%-*s%s", "S", usTypeCol-usNameCol, "Name", usFlagCol-usTypeCol, "Type", "Flag")
 		screen = append(screen, go3270.Field{
 			Row: usColumnRow, Col: 0, Color: go3270.Turquoise, Highlighting: go3270.Underscore,
 			Content: headings + strings.Repeat(" ", max(cols-1-len(headings), 0)),
@@ -186,11 +182,6 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
 			},
 			go3270.Field{Row: row, Col: usTypeEndCol, Autoskip: true},
-			go3270.Field{
-				Row: row, Col: usConCol, Write: true, Name: usConField + id, Content: u.fieldValue(usConField+id, yesNo(x.Console)),
-				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
-			},
-			go3270.Field{Row: row, Col: usConEndCol, Autoskip: true},
 			go3270.Field{
 				Row: row, Col: usFlagCol, Write: true, Name: usFlagField + id, Content: u.fieldValue(usFlagField+id, yesNo(x.Flag)),
 				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
@@ -275,7 +266,6 @@ func buildUsers(rows, cols int, now time.Time, list []users.User, loadErr error,
 type usersEdit struct {
 	deletes     map[int]bool
 	kind        map[int]string // new types (users.Kinds), by ID
-	console     map[int]bool   // new console flags, by ID
 	flag        map[int]bool   // new busy light flags, by ID
 	passwordFor int            // a user picked, with P, to change the password of
 	newName     string
@@ -287,7 +277,7 @@ type usersEdit struct {
 // parse checks what was typed over the fields drawn last, returning why it
 // cannot be used when it cannot.
 func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
-	e.deletes, e.kind, e.console, e.flag = map[int]bool{}, map[int]string{}, map[int]bool{}, map[int]bool{}
+	e.deletes, e.kind, e.flag = map[int]bool{}, map[int]string{}, map[int]bool{}
 	for name, shown := range u.shown {
 		v, ok := values[name]
 		if !ok || v == shown {
@@ -318,15 +308,6 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 			default:
 				return e, fmt.Sprintf("Type D to delete a user or P to change their password, not %q.", v)
 			}
-		case usConField:
-			switch v {
-			case "Y", "N":
-				if v != shown {
-					e.console[id] = v == "Y"
-				}
-			default:
-				return e, fmt.Sprintf("Type Y or N under Console, not %q.", v)
-			}
 		case usFlagField:
 			switch v {
 			case "Y", "N":
@@ -338,10 +319,6 @@ func (u *usersState) parse(values map[string]string) (e usersEdit, bad string) {
 			}
 		}
 	}
-	if e.consoleTo() < 0 {
-		return e, "Type Y under Console for only one user."
-	}
-
 	if u.passwordFor != 0 {
 		e.setPassword = values[usPasswordField+strconv.Itoa(u.passwordFor)]
 		return e, ""
@@ -385,25 +362,9 @@ func (u *usersState) checkPasswords(e usersEdit, store *users.Store) string {
 	return ""
 }
 
-// consoleTo is the user given Y under Console, zero for none, or -1 for
-// more than one.
-func (e usersEdit) consoleTo() int {
-	to := 0
-	for id, c := range e.console {
-		switch {
-		case !c:
-		case to != 0:
-			return -1
-		default:
-			to = id
-		}
-	}
-	return to
-}
-
 // changesFlags reports whether e changes any user's flags.
 func (e usersEdit) changesFlags() bool {
-	return len(e.kind) > 0 || len(e.console) > 0 || len(e.flag) > 0
+	return len(e.kind) > 0 || len(e.flag) > 0
 }
 
 // usersPending is a save holding deletions, awaiting confirmation: the
@@ -430,7 +391,6 @@ type usersResult struct {
 	revokeTrello    []tasks.Config
 	changedPassword string
 	added           string
-	console         string // the user the console was handed to
 }
 
 // applyEdit applies e to list, with hash for the password it sets or the
@@ -448,19 +408,8 @@ func applyEdit(list *[]users.User, e usersEdit, passwordFor int, hash string, ne
 		}
 		return e.deletes[x.ID]
 	})
-	// Y under Console for one user takes it from whoever had it.
-	to := e.consoleTo()
 	for i := range *list {
 		x := &(*list)[i]
-		switch c, ok := e.console[x.ID]; {
-		case to > 0:
-			x.Console = x.ID == to
-			if x.Console {
-				r.console = x.Name
-			}
-		case ok:
-			x.Console = c
-		}
 		if kind, ok := e.kind[x.ID]; ok {
 			x.SetKind(kind)
 		}
@@ -488,8 +437,6 @@ func editError(err error) string {
 	switch {
 	case errors.Is(err, users.ErrNoAdmin):
 		return "At least one user must be an admin: that would leave none."
-	case errors.Is(err, users.ErrNoConsole):
-		return "The console must log in as someone: type Y under Console for another user."
 	}
 	msg := err.Error()
 	return strings.ToUpper(msg[:1]) + msg[1:] + "."
@@ -682,10 +629,6 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 			logf("user %d busy light control set to %v", id, flag)
 		}
 		said = append(said, "Changed "+countText(n, "flag setting", 0, 1)+".")
-	}
-	if r.console != "" {
-		logf("console user set to %q", r.console)
-		said = append(said, "The console now logs in as "+r.console+".")
 	}
 	u.message = strings.Join(said, " ")
 	if e.passwordFor != 0 {

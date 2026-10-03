@@ -252,7 +252,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, p page, site *use
 		fail("", "Could not check the password.", false)
 		return
 	case ok && users.IsDefaultLogin(u.Name, password):
-		fail("default password", "The default admin password only works on the console; change it there.", true)
+		fail("default password", "Change the default admin password on the terminal first.", true)
 		return
 	case !ok:
 		fail("wrong password", "Wrong user name or password.", true)

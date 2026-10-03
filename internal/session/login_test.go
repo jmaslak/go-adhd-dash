@@ -2,15 +2,12 @@ package session
 
 import (
 	"context"
-	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	tn3270e "github.com/jmaslak/go-3270e"
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -119,12 +116,12 @@ func TestLoginHandle(t *testing.T) {
 	if u, quit, _ := enter(&l, "admin", ""); u != nil || quit || l.message != "Type both your user name and your password." {
 		t.Errorf("no password: %v %v %q", u, quit, l.message)
 	}
-	// The default password is right, but refused: it only works on the
-	// console, which does not ask for it. It counts as a try.
-	if u, quit, _ := enter(&l, " Admin ", "admin"); u != nil || quit || !strings.Contains(l.message, "only works on the CONSOLE") || l.failures != 1 || l.failReason != "default password" {
-		t.Errorf("default password: %+v %v %q, %d failures, reason %q", u, quit, l.message, l.failures, l.failReason)
+	// The default password logs in, but only to change it.
+	if u, quit, _ := enter(&l, " Admin ", "admin"); u == nil || quit || u.Name != "admin" || !l.mustChange || l.failures != 0 {
+		t.Errorf("default password: %+v %v %q, must change %v, %d failures", u, quit, l.message, l.mustChange, l.failures)
 	}
-	// Once changed, admin logs in.
+	// Once changed, admin logs in as any user does.
+	l = loginState{}
 	if err := store.Update(func(list *[]users.User, _ func() int) error {
 		h, err := users.HashPassword(context.Background(), "s3cret")
 		(*list)[0].Password = h
@@ -132,7 +129,7 @@ func TestLoginHandle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if u, quit, _ := enter(&l, " Admin ", "s3cret"); u == nil || quit || u.Name != "admin" || !u.Admin {
+	if u, quit, _ := enter(&l, " Admin ", "s3cret"); u == nil || quit || u.Name != "admin" || !u.Admin || l.mustChange {
 		t.Errorf("changed password: %+v %v %q", u, quit, l.message)
 	}
 	// Another user whose password is "admin" is not the default login.
@@ -143,8 +140,9 @@ func TestLoginHandle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if u, _, _ := enter(&loginState{}, "bob", "admin"); u == nil {
-		t.Error("bob with the password admin refused")
+	bob := loginState{}
+	if u, _, _ := enter(&bob, "bob", "admin"); u == nil || bob.mustChange {
+		t.Errorf("bob with the password admin: %+v, must change %v", u, bob.mustChange)
 	}
 
 	l = loginState{}
@@ -168,31 +166,12 @@ func TestLoginHandle(t *testing.T) {
 	}
 }
 
-func TestChooseLU(t *testing.T) {
-	for _, c := range []struct {
-		requested string
-		local     bool
-		want      string
-		refused   bool
-	}{
-		{"", true, "AD00002A", false},
-		{"", false, "AD00002A", false},
-		{"CONSOLE", true, "CONSOLE", false},
-		{"console", true, "CONSOLE", false},
-		{"CONSOLE", false, "", true},
-		{"LU0001", true, "AD00002A", false},
-		{"LU0001", false, "AD00002A", false},
-	} {
-		got, err := chooseLU(c.requested, c.local, 42)
-		if got != c.want || (err != nil) != c.refused {
-			t.Errorf("%q local %v: %q, %v", c.requested, c.local, got, err)
-		}
+func TestSessionLUName(t *testing.T) {
+	if got := sessionLUName(42); got != "AD00002A" {
+		t.Errorf("session 42's LU is %q", got)
 	}
-}
-
-func TestAuditName(t *testing.T) {
-	if auditName(nil) != "(console)" || auditName(&users.User{Name: "bob"}) != "bob" {
-		t.Error("audit names wrong")
+	if got := sessionLUName(0x1234567); got != "AD234567" {
+		t.Errorf("session 0x1234567's LU is %q", got)
 	}
 }
 
@@ -213,29 +192,13 @@ func TestIsDefaultLogin(t *testing.T) {
 	}
 }
 
-func TestConsoleLogin(t *testing.T) {
-	if u, err := consoleLogin(nil); u != nil || err != nil {
-		t.Errorf("no store: %+v, %v", u, err)
+func TestSessionLU(t *testing.T) {
+	if lu, named := sessionLU("AD000007", 7); lu != "AD000007" || named {
+		t.Errorf("negotiated: %q, %v", lu, named)
 	}
-	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
-	if u, err := consoleLogin(store); err != nil || u == nil || u.Name != users.FirstName {
-		t.Errorf("new store: %+v, %v", u, err)
-	}
-	bad := filepath.Join(t.TempDir(), "users.json")
-	if err := os.WriteFile(bad, []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if u, err := consoleLogin(users.NewStore(bad)); err == nil || u != nil {
-		t.Errorf("bad file: %+v, %v", u, err)
-	}
-}
-
-func TestConsoleRejectReasons(t *testing.T) {
-	// In use is DEVICE-IN-USE; asked for from elsewhere is INV-NAME.
-	if !errors.Is(errConsoleInUse, tn3270e.ErrDeviceInUse) {
-		t.Error("in use is not ErrDeviceInUse")
-	}
-	if errors.Is(errConsoleRemote, tn3270e.ErrDeviceInUse) {
-		t.Error("remote is ErrDeviceInUse")
+	// Without TN3270E, a name like a negotiated one's, which no client asking
+	// for it could take, as each is the session's own.
+	if lu, named := sessionLU("", 0x1A2B); lu != "AD001A2B" || !named {
+		t.Errorf("not negotiated: %q, %v", lu, named)
 	}
 }

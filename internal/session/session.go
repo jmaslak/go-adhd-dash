@@ -5,6 +5,7 @@
 package session
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"log"
@@ -137,22 +138,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 	sessionID := nextSessionID.Add(1)
 	cfg.Activity.add(sessionID, rawConn, time.Now())
 	defer cfg.Activity.remove(sessionID)
-	local := isLocal(rawConn.RemoteAddr())
 	// Negotiation reads what the client sends with deadlines of its own,
 	// which it clears as it goes; this bounds the whole of it, so that a
 	// client cannot hold a connection by stalling partway through.
 	watchdog := time.AfterFunc(negotiateTimeout, func() { _ = rawConn.Close() })
-	neg, err := tn3270e.NegotiateLU(rawConn, func(requested string) (string, error) {
-		lu, err := chooseLU(requested, local, sessionID)
-		// There is one console: claimed here, so that a client asking for
-		// it while another has it is refused it, as a remote one is.
-		if err == nil && lu == consoleLU && !cfg.Activity.claimLU(sessionID, consoleLU) {
-			lu, err = "", errConsoleInUse
-		}
-		if err != nil {
-			log.Printf("session %d (%s): refused LU %q: %v", sessionID, rawConn.RemoteAddr(), requested, err)
-		}
-		return lu, err
+	// Whatever LU name a client asks for, it gets one of the session's own.
+	neg, err := tn3270e.NegotiateLU(rawConn, func(string) (string, error) {
+		return sessionLUName(sessionID), nil
 	})
 	if !watchdog.Stop() {
 		log.Printf("session %d (%s): negotiation took over %v", sessionID, rawConn.RemoteAddr(), negotiateTimeout)
@@ -163,14 +155,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 		return
 	}
 	conn, devinfo := neg.Conn, neg.DevInfo
-	log.Printf("session %d (%s): connected, LU %s", sessionID, rawConn.RemoteAddr(), neg.LUName)
+	if lu, named := sessionLU(neg.LUName, sessionID); named {
+		neg.LUName = lu
+		log.Printf("session %d (%s): connected, without TN3270E; named LU %s here", sessionID, rawConn.RemoteAddr(), lu)
+	} else {
+		log.Printf("session %d (%s): connected, LU %s", sessionID, rawConn.RemoteAddr(), lu)
+	}
 	defer log.Printf("session %d (%s): disconnected", sessionID, rawConn.RemoteAddr())
 	defer cfg.Viewers.Set(sessionID, 0)
-	// The console claimed its LU name while negotiating.
-	console := neg.LUName == consoleLU
-	if !console {
-		cfg.Activity.update(sessionID, func(s *SessionActivity) { s.LU = neg.LUName })
-	}
+	cfg.Activity.update(sessionID, func(s *SessionActivity) { s.LU = neg.LUName })
 
 	rows, cols := devinfo.AltDimensions()
 	// Every screen's text is made safe to show in the terminal's code page
@@ -182,10 +175,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 	page := 0
 	mode := modeDashboard
-	// Every session logs in first but the console, which is logged in as
-	// the user marked as the console's. user is who is logged in: nil until
-	// then, and for a console with no user database, which has everything.
-	// A console whose user cannot be read logs in like any other session.
+	// Every session logs in first. user is who is logged in: nil until
+	// then.
 	var user *users.User
 	var login loginState
 	var calc calcState // kept while the session lasts, as a calculator's stack is
@@ -193,7 +184,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 	// logIn makes u the session's user. A restricted user has the
 	// calculator, in either mode, and nothing else; a new-user account has
 	// the sign-up screen and nothing else.
-	logIn := func(u users.User) {
+	// One logged in with the default password has the password screen, and
+	// nothing else until it is changed.
+	var pw passwordState
+	logIn := func(u users.User, mustChange bool) {
 		user, mode = &u, modeDashboard
 		cfg.Activity.update(sessionID, func(s *SessionActivity) { s.User = u.Name })
 		switch {
@@ -202,29 +196,18 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case u.NewUser:
 			mode, su = modeSignup, signupState{}
 		}
-	}
-	consoleLoggedIn := false
-	if console {
-		switch u, err := consoleLogin(cfg.Users); {
-		case err != nil:
-			log.Printf("session %d (%s): console logs in: %v", sessionID, rawConn.RemoteAddr(), err)
-		case u != nil:
-			logIn(*u)
-			consoleLoggedIn = true
-		default:
-			consoleLoggedIn = true
+		if mustChange {
+			mode, pw = modePassword, passwordState{forced: true}
 		}
 	}
-	if !consoleLoggedIn {
-		timeout := cfg.LoginTimeout
-		if timeout <= 0 {
-			timeout = defaultLoginTimeout
-		}
-		mode, login.expires = modeLogin, time.Now().Add(timeout)
+	timeout := cfg.LoginTimeout
+	if timeout <= 0 {
+		timeout = defaultLoginTimeout
 	}
+	mode, login.expires = modeLogin, time.Now().Add(timeout)
 
 	// The audit log records each login, and how each session logged in
-	// (the console included) ended: logged out, or disconnected, and why.
+	// ended: logged out, or disconnected, and why.
 	// Every way out sets loggedOut or endReason first.
 	ip := rawConn.RemoteAddr().String()
 	if h, _, err := net.SplitHostPort(ip); err == nil {
@@ -238,16 +221,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 	loggedOut, endReason := false, "connection lost"
 	defer func() {
 		switch {
-		case user == nil && !consoleLoggedIn:
+		case user == nil:
 		case loggedOut:
-			cfg.Audit.Record(audit.Logout, auditFields(auditName(user))...)
+			cfg.Audit.Record(audit.Logout, auditFields(user.Name)...)
 		default:
-			cfg.Audit.Record(audit.Disconnect, auditFields(auditName(user), audit.F("reason", endReason))...)
+			cfg.Audit.Record(audit.Disconnect, auditFields(user.Name, audit.F("reason", endReason))...)
 		}
 	}()
-	if consoleLoggedIn {
-		cfg.Audit.Record(audit.Login, auditFields(auditName(user))...)
-	}
 	// tint colors screen's title row for the user's busy state (see
 	// lightFor), on every screen but the login screen, unless the user is
 	// restricted or a new-user account.
@@ -282,7 +262,6 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var gs googleState
 	var gc googleClientState
 	var tr trelloState
-	var pw passwordState
 	var tk trelloKeyState
 	var site siteState
 	defer cfg.Chat.unwatch(sessionID)
@@ -735,7 +714,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				bye(farewell)
 				return
 			case u != nil:
-				logIn(*u)
+				logIn(*u, login.mustChange)
 			}
 		case modeChat:
 			if ch.handle(resp, cfg.Chat, sessionID, chatName(user, neg.LUName), rows) {
@@ -758,7 +737,19 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeAdmin
 			}
 		case modePassword:
-			if leave, said := pw.handle(resp, cfg.Users, user, logf); leave {
+			leave, said := pw.handle(resp, cfg.Users, user, logf)
+			switch {
+			case !leave:
+			case pw.forced && pw.changed:
+				logIn(*user, false)
+				message = said
+			case pw.forced:
+				// Leaving without changing the default password logs off.
+				logf("logged off")
+				loggedOut = true
+				bye(cmp.Or(said, "Logged off. Goodbye."))
+				return
+			default:
 				mode, message, messageOK = settingsBack, said, true
 			}
 		case modeTrello:
@@ -872,7 +863,7 @@ const (
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
-// user (a console with no user database), its LU name.
+// user, before logging in, its LU name.
 func chatName(u *users.User, lu string) string {
 	if u == nil {
 		return lu
@@ -970,10 +961,9 @@ func (w *lightWatch) differs(drawn busy.Status) bool {
 }
 
 // controlsLight reports whether u controls the busy light, and so can set it
-// by hand: a user marked so, or a console with no user database, which has
-// everything.
+// by hand: a user marked so.
 func controlsLight(u *users.User) bool {
-	return u == nil || u.Flag
+	return u != nil && u.Flag
 }
 
 // lightFor is the busy state u sees and sets: the light, for a user who

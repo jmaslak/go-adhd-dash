@@ -117,7 +117,7 @@ func TestSignup(t *testing.T) {
 	}
 	list := r.list()
 	bob := list[len(list)-1]
-	if bob.Name != "bob" || bob.Kind() != users.KindUser || bob.Console || bob.Flag || !users.CheckPassword(bob.Password, "long enough") {
+	if bob.Name != "bob" || bob.Kind() != users.KindUser || bob.Flag || !users.CheckPassword(bob.Password, "long enough") {
 		t.Errorf("made %+v", bob)
 	}
 	if u, ok, _ := r.store.Authenticate(t.Context(), "BOB", "long enough"); !ok || u.ID != bob.ID {

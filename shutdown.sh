@@ -12,22 +12,18 @@ set -e
 # anything unexpected stops the script, showing the screen.
 #
 # The user name and password come from ADHD_USER and ADHD_PASSWORD
-# (default admin and admin). The server refuses admin with the password
-# admin at its login screen, so with those, use -c: it connects as the
-# CONSOLE LU, which is logged in without a password, and works only from
-# the server's own machine, with no other console connected.
+# (default admin and admin). admin with the password admin can only change
+# it, so the script stops, saying so: log in and change it first.
 
 usage() {
-    echo "usage: $0 [-c] [-h host] [-p port]" >&2
+    echo "usage: $0 [-h host] [-p port]" >&2
     exit 2
 }
 
 host=${ADHD_HOST-127.0.0.1}
 port=3270
-console=
-while getopts ch:p: opt; do
+while getopts h:p: opt; do
     case $opt in
-        c) console=1 ;;
         h) host=$OPTARG ;;
         p) port=$OPTARG ;;
         *) usage ;;
@@ -104,18 +100,21 @@ key() {
     run 'Wait(30,InputField)'
 }
 
-if [ -n "$console" ]; then
-    run "Connect(CONSOLE@$host:$port)"
-    run 'Wait(30,InputField)'
-else
-    run "Connect($host:$port)"
-    run 'Wait(30,InputField)'
-    expect 'Log in to continue.'
-    typetext "$user"
-    run 'Tab()'
-    typetext "$password"
-    key 'Enter()'
-fi
+run "Connect($host:$port)"
+run 'Wait(30,InputField)'
+expect 'Log in to continue.'
+typetext "$user"
+run 'Tab()'
+typetext "$password"
+key 'Enter()'
+
+run 'Ascii()'
+case "${out[*]}" in
+    *"You logged in with the default password"*)
+        echo "$0: $user still has the default password; log in and change it first" >&2
+        exit 1
+        ;;
+esac
 
 expect 'PF3=Exit'
 run 'String("admin")'

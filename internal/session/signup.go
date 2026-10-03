@@ -16,8 +16,8 @@ import (
 
 // The sign-up screen: all a new-user account (users.KindNewUser) can do,
 // on logging in, is make a user of one's own with it: an ordinary user,
-// not an admin nor restricted, nor the console's, nor controlling the busy
-// light. Then the session ends, to log in as that user.
+// not an admin nor restricted, nor controlling the busy light. Then the
+// session ends, to log in as that user.
 const (
 	suNameField  = "suname"
 	suPassField  = "supw"

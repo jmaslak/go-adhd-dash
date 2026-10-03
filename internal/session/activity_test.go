@@ -60,8 +60,8 @@ func TestActivityTerminate(t *testing.T) {
 		_, err := server.Read(make([]byte, 1))
 		woken <- err
 	}()
-	if !a.terminate(1) || !a.terminated(1) {
-		t.Fatal("session not terminated")
+	if !a.terminate(1) || !a.terminated(1) || a.farewellFor(1) != terminatedFarewell {
+		t.Fatalf("session not terminated, or farewell %q", a.farewellFor(1))
 	}
 	if list := a.List(); list[0].Screen != "Terminating" {
 		t.Errorf("terminated session on screen %q", list[0].Screen)
@@ -234,50 +234,6 @@ func TestScreenName(t *testing.T) {
 	}
 }
 
-func TestActivityClaimLU(t *testing.T) {
-	a := NewActivity()
-	old, oldPeer := net.Pipe()
-	other, otherPeer := net.Pipe()
-	mine, minePeer := net.Pipe()
-	for _, c := range []net.Conn{oldPeer, otherPeer, minePeer} {
-		defer c.Close() //nolint:errcheck
-	}
-	a.add(1, old, now)
-	a.add(2, other, now)
-	a.add(3, mine, now)
-	a.update(1, func(s *SessionActivity) { s.LU = consoleLU })
-	a.update(2, func(s *SessionActivity) { s.LU = "AD000002" })
-
-	// Refused while the console has it, with nobody booted.
-	if a.claimLU(3, consoleLU) {
-		t.Error("claimed while another console has it")
-	}
-	if a.terminated(1) || a.terminated(2) || a.List()[2].LU == consoleLU {
-		t.Errorf("refused claim changed things: %+v", a.List())
-	}
-	if !a.claimLU(1, consoleLU) {
-		t.Error("the console cannot claim its own LU again")
-	}
-
-	// Free once the console is terminated, or gone.
-	a.terminate(1)
-	if a.farewellFor(1) != terminatedFarewell {
-		t.Errorf("viewer farewell %q", a.farewellFor(1))
-	}
-	if !a.claimLU(3, consoleLU) || a.List()[2].LU != consoleLU {
-		t.Errorf("claim after the console was terminated: %+v", a.List())
-	}
-	a.remove(3)
-	if !a.claimLU(2, consoleLU) {
-		t.Error("claim after the console left")
-	}
-
-	var nilActivity *Activity
-	if !nilActivity.claimLU(1, consoleLU) || nilActivity.farewellFor(1) != "" {
-		t.Error("nil Activity refused a claim")
-	}
-}
-
 func TestKeepRows(t *testing.T) {
 	before := []SessionActivity{{ID: 1, Screen: "Dashboard"}, {ID: 3, Screen: "Calendar"}, {ID: 4, Screen: "Chat"}}
 	// 3 has gone, 1 has moved on, 2 was added late and 5 is new.
@@ -294,7 +250,7 @@ func TestKeepRows(t *testing.T) {
 
 func TestActivityGoneAndTimedRedraw(t *testing.T) {
 	sessions := []SessionActivity{
-		{ID: 1, LU: "CONSOLE", Screen: "Activity viewer", Connected: now, LastKey: now},
+		{ID: 1, LU: "AD000001", Screen: "Activity viewer", Connected: now, LastKey: now},
 		{ID: 2, LU: "AD000002", Screen: "Dashboard", Connected: now, LastKey: now, Gone: true},
 	}
 	a := &activityState{marked: map[uint64]bool{2: true}}

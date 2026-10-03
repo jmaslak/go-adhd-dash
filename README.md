@@ -183,8 +183,7 @@ there, but `help` does not list them. The dashboard's timed redraw writes over t
 without erasing it, so a command half typed survives it.
 
 The chat (`chat` or `PF11`) is shared by every session of this server, each
-posting as its user's name (the console with no user database, as its LU
-name). Names are shown as wide as the longest posted, up to 16 characters,
+posting as its user's name. Names are shown as wide as the longest posted, up to 16 characters,
 and cut beyond that. Type a message on the `Message ===>` line and press
 `Enter` to send it; the newest messages are at the bottom, above that line,
 with your own names in white. Every other session on the chat screen shows
@@ -207,7 +206,9 @@ The admin menu (`admin`) lists its options by number; type one on the
   session can do this; the server listens on `localhost` unless `-host` says
   otherwise.
 - `2`: the activity viewer: every session connected to this server, in
-  the order they connected, with its LU name, the screen it is on (a
+  the order they connected, with its LU name (one the server gave it, in
+  the same `AD` form, if its client does not speak TN3270E and so
+  negotiated none; blank only while it is still connecting), the screen it is on (a
   checklist by name), who it logged in as, when it connected, how long
   since a key was last pressed, and its IP address; this session is marked `*`. Type `X` in the
   `S` column beside sessions and press `PF6` to terminate them: a
@@ -261,17 +262,18 @@ so. An admin changes anyone's with `P` in the user editor, below.
 
 The users are kept in `-users-file`, which is made when the server starts
 if it does not exist, holding one user, `admin`, with the password `admin`.
-That password is refused at the login screen: the admin connects as the
-console (which is logged in as `admin` with no password) and changes it
-there first, and the log says so. The file is readable only by its owner and
+Logged in with it, at the login screen like anyone, the admin gets the
+CHANGE PASSWORD screen and nothing else until it is changed (`PF3` there,
+or three wrong current passwords, log off), and the log says so. The web
+site refuses it. The file is readable only by its owner and
 rewritten by atomic rename; passwords are stored hashed with Argon2id (RFC
 9106's second recommended parameters: 64 MiB, 3 passes, 4 lanes, a 16-byte
 random salt), in PHC string format, so the parameters can be raised later
 without breaking the hashes already stored.
 
 Admin menu option `4` lists the users, a page at a time (`PF7` / `PF8`),
-each with a one-character command field, a `Type` field, and `Console` and
-`Flag` fields:
+each with a one-character command field, a `Type` field, and a `Flag`
+field:
 
 - type `D` beside a user to delete them (a confirmation lists them first,
   and saves nothing until `PF4`; `PF3` goes back with what was typed left
@@ -286,58 +288,37 @@ each with a one-character command field, a `Type` field, and `Console` and
   are: `user`, an ordinary user; `admin`, who can open the admin menu;
   `restricted`, who can use the calculator and nothing else (see below); or
   `newuser`, an account for signing up users of their own (see below),
-  which cannot be the console's nor control the busy light. In the users
+  which cannot control the busy light. In the users
   file, `admin` and `restricted` are the `admin` and `restricted` flags,
   and `newuser` the `new_user` flag; at most one is set, and none for
   `user`;
-- type `Y` under `Console` to make a user the one the console logs in as
-  (see below), taking it from whoever had it;
 - type `Y` or `N` under `Flag` for a user to control the busy light or
   not: their calendar's meetings light it, and they can set it by hand
   (see [Busy light](#busy-light)). A restricted user cannot;
 - on the bottom rows, type a new user's name, their `Type` (blank is
   `user`), and their password, to add them. There is no room there for
-  `Console`: add the user, then type `Y` on their row.
+  `Flag`: add the user, then type `Y` on their row.
 
 `Enter` (or paging) saves everything typed at once. Names must be unique
 (ignoring case) and made only of the characters allowed, at least
-one user must stay an admin, and exactly one user must be the console's (so
-the console's user can be deleted only once another is given `Y` under
-`Console`): a change that would break any of these is refused whole, with what was
+one user must stay an admin: a change that would break any of these is refused whole, with what was
 typed left to fix (passwords aside, which are never drawn again). `PF3`
 goes back to the admin menu without saving.
 
 ### Login
 
 Every session logs in first, on a `LOGIN` screen under an `exec/3270`
-banner, with a user name (ignoring case) and password from the users,
-except the console. `admin` with the default password `admin` is refused
-(it counts as a wrong try); change it from the console. Three wrong tries,
+banner, with a user name (ignoring case) and password from the users.
+`admin` with the default password `admin` logs in only to change it (see
+[Users](#users)). Three wrong tries,
 or a minute without logging in (`-login-timeout`), disconnect it; `PF3` disconnects at once. Each login,
 and each failed one, is logged with the address it came from.
 
-The console is a session whose TN3270E client asks for the LU name
-`CONSOLE` (with `s3270` or `c3270`, connect to `CONSOLE@127.0.0.1:3270`),
-from this machine: `127.0.0.1` or `::1` (or `127.0.0.1` written as
-`::ffff:127.0.0.1`). It does not log in: it is logged in as the user with
-`Y` under `Console`, which a users file from before there was one takes to
-be `admin` (or, with no admin called that, the first admin). A change to
-which user that is takes effect when the console next connects. If the
-users file cannot be read, the console gets the login screen like any other
-session. There is only ever one: while a console is connected, any other
-client on this machine asking for `CONSOLE` is refused it (TN3270E
-`DEVICE-TYPE REJECT`, reason `DEVICE-IN-USE`), and logged; an
-administrator can free it by terminating the console from the activity
-viewer. A client anywhere else asking for `CONSOLE` is refused it (reason
-`INV-NAME`, whether or not a console is connected), and logged; it may ask again for another name, or none,
-and log in, but most clients give up. Any other name a client asks for is
-not honoured: it gets one of the server's own, `AD` and a number. A client
-that does not speak TN3270E cannot ask for a name, so cannot be the
-console.
+Every session goes by an LU name of the server's own, `AD` and a number,
+whatever name its client asks for; one without TN3270E, which asks for
+none, is given one all the same.
 
-A user who is not an admin cannot open the admin menu, and neither can the
-console when its user is not an admin; a restricted console user has only
-the calculator, and logging off there disconnects the console.
+A user who is not an admin cannot open the admin menu.
 
 ### Audit log
 
@@ -354,8 +335,7 @@ readable only by its owner). Each line is the time, the event, and
 2026-09-29T20:54:10-06:00 USER-CREATED user=amy lu=AD000004 ip=127.0.0.1 session=4 by=signup
 ```
 
-`LOGIN-FAILED` names the user as typed, with `try` counting the tries. The
-console counts as logging in when it connects, as its user. A
+`LOGIN-FAILED` names the user as typed, with `try` counting the tries. A
 session that logged in ends with `LOGOUT` when the user leaves (`PF3` or
 `exit` on the dashboard, `PF3` in a restricted user's calculator, or `PF3`
 or signing up on the sign-up screen), or
@@ -375,7 +355,7 @@ themselves up: give out its name and password, and whoever logs in as it
 gets the SIGN UP screen and nothing else. There they type a user name of
 their own (by the same rules as any) and a password twice (at least 8
 characters, not containing the name), and press `Enter`: an ordinary
-user is made (type `user`, not the console's, not controlling the busy
+user is made (type `user`, not controlling the busy
 light), recorded in the audit log, and the session ends, saying to
 connect again and log in as the new user. `PF3` logs off. One user is
 made per connection; a name taken, or a password that will not do, is
@@ -383,8 +363,8 @@ said so, and the passwords must be typed again. A new-user account cannot
 sign in on the web site. If an admin changes its type while someone is on
 the sign-up screen, it makes no user, and the session ends.
 
-The activity viewer shows who each session logged in as, the console
-included; so does the chat. Someone on the chat screen in two sessions is
+The activity viewer shows who each session logged in as; so does the
+chat. Someone on the chat screen in two sessions is
 listed there once.
 
 On the calendar, a month is shown with the selected day's events beside it. Move the cursor onto a day and press
@@ -509,8 +489,7 @@ The checklists (`checklist` or `cl`) are named lists of items, each
 checked off with an `X`, kept for reuse. Each user has their own: no one
 sees, changes or moves another's, and the dashboard lists only the user's
 own starred ones. Checklists from before they were each a user's are given
-to the admin user (the admin called `admin`, else the console's user if an
-admin, else the first admin) when the server starts, which it logs. `PF6` unchecks every item, after
+to the admin user (the admin called `admin`, else the first admin) when the server starts, which it logs. `PF6` unchecks every item, after
 confirmation, to start the list over. The first screen lists the
 checklists, with how many of each one's items are done: green when they
 all are, red when some are not.
@@ -895,7 +874,8 @@ is tried again after a minute.
 A connection over `-max-connections` in all, or `-max-connections-per-ip`
 from one address (an IPv6 address counted by its /64), is closed before
 anything is sent to it. Connections from this machine are not counted, so
-that a flood from elsewhere cannot lock out the console. Refusals are
+that a flood from elsewhere cannot lock out an admin connecting from
+there. Refusals are
 logged at most once every 10 seconds, with a count of those not logged.
 
 Telnet and TN3270E negotiation must finish within 30 seconds, and the login

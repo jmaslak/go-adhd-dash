@@ -58,8 +58,8 @@ func TestUsersScreen(t *testing.T) {
 	r := newUsersRig(t)
 	for i, want := range map[int]string{
 		usHeaderRow: " USERS 1 user, 1 admin",
-		usColumnRow: " S Name                      Type         Console Flag",
-		usFirstRow:  "   admin                     admin        Y       N",
+		usColumnRow: " S Name                      Type         Flag",
+		usFirstRow:  "   admin                     admin        N",
 		20:          " New user ===>           Type ===>",
 		22:          " " + usPrompt, // all of it, on 80 columns
 		21:          " Password ===>",
@@ -75,7 +75,7 @@ func TestUsersScreen(t *testing.T) {
 		switch {
 		case f.Name == usNewPassword && !f.Hidden:
 			t.Error("password field shows what is typed")
-		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usTypeEndCol || f.Col == usConEndCol || f.Col == usFlagEndCol) && !f.Autoskip:
+		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usTypeEndCol || f.Col == usFlagEndCol) && !f.Autoskip:
 			t.Errorf("field at col %d does not skip on", f.Col)
 		}
 	}
@@ -124,13 +124,9 @@ func TestUsersAddChangeRemove(t *testing.T) {
 		t.Errorf("bad command: %q", r.u.message)
 	}
 
-	// Handing over admin and the console and removing the old one, in one
-	// go: asked first, with nothing saved until PF4.
+	// Handing over admin and removing the old one, in one go: asked
+	// first, with nothing saved until PF4.
 	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "usel:1": "D"})
-	if !strings.Contains(r.u.message, "The console must log in as someone") || r.u.pending != nil {
-		t.Errorf("remove the console's user: %q, pending %v; want refused before asking", r.u.message, r.u.pending)
-	}
-	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "ucon:2": "y", "usel:1": "D"})
 	text := strings.Join(r.rows, "\n")
 	for _, want := range []string{"DELETE USERS", "Delete this user?", "admin (admin)", "other changes typed with it are saved with it", "PF4=Delete"} {
 		if !strings.Contains(text, want) {
@@ -148,16 +144,16 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	if r.u.pending != nil || r.u.message != "Nothing was saved." || len(r.list()) != 2 || r.u.typed["usel:1"] != "D" || r.u.typed["utype:2"] != "admin" {
 		t.Fatalf("PF3: message %q, typed %v", r.u.message, r.u.typed)
 	}
-	if !strings.Contains(strings.Join(r.rows, "\n"), "joelle                    admin        y") {
+	if !strings.Contains(strings.Join(r.rows, "\n"), "joelle                    admin") {
 		t.Errorf("typed not drawn again after PF3:\n%s", strings.Join(r.rows, "\n"))
 	}
-	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "ucon:2": "y", "usel:1": "D"})
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "usel:1": "D"})
 	r.key(go3270.AIDPF4, nil)
 	list = r.list()
-	if r.u.isError || len(list) != 1 || list[0].Name != "joelle" || !list[0].Admin || !list[0].Console {
+	if r.u.isError || len(list) != 1 || list[0].Name != "joelle" || !list[0].Admin {
 		t.Fatalf("hand over: message %q, users %+v", r.u.message, list)
 	}
-	if r.u.message != "Removed 1 user. Changed 1 user type. The console now logs in as joelle." {
+	if r.u.message != "Removed 1 user. Changed 1 user type." {
 		t.Errorf("hand over message %q", r.u.message)
 	}
 
@@ -276,42 +272,6 @@ func TestUsersRestricted(t *testing.T) {
 	}
 }
 
-func TestUsersConsole(t *testing.T) {
-	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewType: "restricted"})
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "long enough pw"})
-	if len(r.list()) != 3 {
-		t.Fatalf("adding: %q", r.u.message)
-	}
-
-	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "q"})
-	if !strings.Contains(r.u.message, `under Console, not "Q"`) {
-		t.Errorf("bad flag: %q", r.u.message)
-	}
-	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "y", "ucon:3": "Y"})
-	if r.u.message != "Type Y under Console for only one user." || r.u.typed["ucon:3"] != "Y" {
-		t.Errorf("two console users: %q, typed %v", r.u.message, r.u.typed)
-	}
-	r.key(go3270.AIDEnter, map[string]string{"ucon:1": "N"})
-	if !strings.Contains(r.u.message, "The console must log in as someone") || !r.list()[0].Console {
-		t.Errorf("no console user: %q", r.u.message)
-	}
-
-	// Y for another takes it from whoever had it, N typed there or not; a
-	// restricted user may have it.
-	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "y"})
-	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "calc" || r.u.message != "The console now logs in as calc." {
-		t.Errorf("hand to calc: %q, console user %+v", r.u.message, u)
-	}
-	if !strings.Contains(r.rows[usFirstRow], "admin                     admin        N") {
-		t.Errorf("row %q", r.rows[usFirstRow])
-	}
-	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "N", "ucon:3": "Y"})
-	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "joelle" {
-		t.Errorf("hand to joelle: %q, console user %+v", r.u.message, u)
-	}
-}
-
 // TestUsersRemoveWithCalendar checks that a user's checklists and Google
 // calendar go with them: their link with their entry, and their
 // authorization at Google.
@@ -385,7 +345,7 @@ func TestUsersFlag(t *testing.T) {
 
 	// Y under Flag gives a user control of the busy light.
 	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "y"})
-	if !r.list()[0].Flag || r.u.message != "Changed 1 flag setting." || !strings.HasSuffix(r.rows[usFirstRow], "Y       Y") {
+	if !r.list()[0].Flag || r.u.message != "Changed 1 flag setting." || !strings.HasSuffix(r.rows[usFirstRow], "admin        Y") {
 		t.Errorf("flag: message %q, row %q", r.u.message, r.rows[usFirstRow])
 	}
 	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "z"})

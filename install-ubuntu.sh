@@ -325,10 +325,10 @@ EOF
 if [ "$reinstall" -eq 0 ]; then
     cat <<EOF
 
-A new server has one user, admin, whose password admin works only on the
-console: connect from this machine as the CONSOLE LU (for example
-c3270 CONSOLE@localhost:$port), and change it on the admin menu, option 4.
-There, give the users who control the busy light Y under Flag.
+A new server has one user, admin, with the password admin: connect (for
+example c3270 localhost:$port), log in with them, and change the password,
+as it asks before anything else. Then, on the admin menu, option 4, give
+the users who control the busy light Y under Flag.
 EOF
 fi
 if [ "$quirk" -eq 1 ]; then
