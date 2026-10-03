@@ -206,7 +206,8 @@ func (s *Server) csrfOK(r *http.Request, sess *session) bool {
 
 // login checks the user name and password posted, by the terminal's rules:
 // the default admin password is refused, and so is a restricted user, who
-// has only the calculator. A name with too many failed sign-ins is refused
+// has only the calculator, and a new-user account, which only signs users
+// up. A name with too many failed sign-ins is refused
 // without checking.
 func (s *Server) login(w http.ResponseWriter, r *http.Request, p page, site *users.Site) {
 	name, password := strings.TrimSpace(r.PostFormValue("name")), r.PostFormValue("password")
@@ -258,6 +259,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, p page, site *use
 		return
 	case u.Restricted:
 		fail("restricted", "Your account cannot use these pages.", true)
+		return
+	case u.NewUser:
+		fail("new-user account", "Your account cannot use these pages.", true)
 		return
 	}
 
@@ -411,7 +415,8 @@ func (s *Server) renderConnect(w http.ResponseWriter, r *http.Request, p page, s
 }
 
 // lookup returns the session the request's cookie names, and its token, or
-// nil for none, or one expired or of a user since removed or restricted.
+// nil for none, or one expired or of a user since removed, restricted, or
+// made a new-user account.
 func (s *Server) lookup(r *http.Request) (*session, string) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
@@ -431,7 +436,7 @@ func (s *Server) lookup(r *http.Request) (*session, string) {
 	if err != nil {
 		return nil, ""
 	}
-	if i := slices.IndexFunc(list, func(u users.User) bool { return u.ID == sess.userID }); i < 0 || list[i].Restricted {
+	if i := slices.IndexFunc(list, func(u users.User) bool { return u.ID == sess.userID }); i < 0 || list[i].Restricted || list[i].NewUser {
 		s.mu.Lock()
 		delete(s.sessions, c.Value)
 		s.mu.Unlock()

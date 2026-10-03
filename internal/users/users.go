@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -37,6 +38,11 @@ type User struct {
 	// Restricted users can use the calculator and nothing else. No admin
 	// is restricted.
 	Restricted bool `json:"restricted,omitempty"`
+
+	// NewUser marks a new-user account (see KindNewUser): logging in as
+	// it does nothing but sign up a user of one's own. It is neither an
+	// admin nor restricted, nor the console's, nor controls the busy light.
+	NewUser bool `json:"new_user,omitempty"`
 
 	// Console is set for the one user the console is logged in as, with no
 	// login screen.
@@ -139,6 +145,41 @@ const (
 	FirstName     = "admin"
 	FirstPassword = "admin"
 )
+
+// The kinds of user, as typed in the user editor: an ordinary user, an
+// admin, a restricted user, or a new user.
+const (
+	KindUser       = "user"
+	KindAdmin      = "admin"
+	KindRestricted = "restricted"
+	KindNewUser    = "newuser"
+)
+
+// Kinds are the kinds of user, in the order to list them.
+var Kinds = []string{KindUser, KindAdmin, KindRestricted, KindNewUser}
+
+// Kind is what kind of user u is, one of Kinds.
+func (u User) Kind() string {
+	switch {
+	case u.Admin:
+		return KindAdmin
+	case u.Restricted:
+		return KindRestricted
+	case u.NewUser:
+		return KindNewUser
+	}
+	return KindUser
+}
+
+// SetKind makes u the kind of user kind is, one of Kinds, reporting
+// whether it is one.
+func (u *User) SetKind(kind string) bool {
+	if !slices.Contains(Kinds, kind) {
+		return false
+	}
+	u.Admin, u.Restricted, u.NewUser = kind == KindAdmin, kind == KindRestricted, kind == KindNewUser
+	return true
+}
 
 // ErrNoAdmin reports a change that would leave no admin.
 var ErrNoAdmin = errors.New("at least one user must be an admin")
@@ -351,8 +392,9 @@ func (s *Store) Update(change func(list *[]User, nextID func() int) error) error
 
 // Validate reports why list is not a valid set of users: a name empty,
 // longer than MaxNameLength, not made as CheckName says, or used twice
-// (ignoring case), a user both an admin and restricted, or both restricted and controlling the busy light, no admin,
-// or not exactly one user the console's.
+// (ignoring case), a user of more than one kind (see Kind), restricted and
+// controlling the busy light, no admin, or not exactly one user the
+// console's.
 func Validate(list []User) error {
 	seen := map[string]bool{}
 	admins, consoles := 0, 0
@@ -371,6 +413,12 @@ func Validate(list []User) error {
 		}
 		if u.Admin && u.Restricted {
 			return fmt.Errorf("%s cannot be both an admin and restricted", u.Name)
+		}
+		if u.NewUser && (u.Admin || u.Restricted) {
+			return fmt.Errorf("%s cannot be both a new user and an admin or restricted", u.Name)
+		}
+		if u.NewUser && (u.Console || u.Flag) {
+			return fmt.Errorf("%s is a new user, which can only sign others up: not the console's, nor controlling the busy light", u.Name)
 		}
 		if u.Flag && u.Restricted {
 			return fmt.Errorf("%s cannot both control the busy light and be restricted", u.Name)

@@ -1,6 +1,6 @@
 // Package audit keeps the audit log: a file of one line per event (a user
-// logging in or out, or being disconnected), appended to and flushed to
-// disk as each is written.
+// logging in or out, or being disconnected, or a user signing up),
+// appended to and flushed to disk as each is written.
 //
 // A line is the time, the event, then key=value fields, a value quoted (as
 // Go quotes strings) when it is empty or holds a space, quote or equals
@@ -25,6 +25,7 @@ const (
 	LoginFailed = "LOGIN-FAILED"
 	Logout      = "LOGOUT"
 	Disconnect  = "DISCONNECT"
+	UserCreated = "USER-CREATED"
 )
 
 // Field is one key=value of an event.

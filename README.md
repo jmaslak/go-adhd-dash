@@ -270,8 +270,8 @@ random salt), in PHC string format, so the parameters can be raised later
 without breaking the hashes already stored.
 
 Admin menu option `4` lists the users, a page at a time (`PF7` / `PF8`),
-each with a one-character command field and `Admin`, `Restricted`,
-`Console` and `Flag` fields:
+each with a one-character command field, a `Type` field, and `Console` and
+`Flag` fields:
 
 - type `D` beside a user to delete them (a confirmation lists them first,
   and saves nothing until `PF4`; `PF3` goes back with what was typed left
@@ -282,19 +282,25 @@ each with a one-character command field and `Admin`, `Restricted`,
   checklists of a user no longer there are deleted when the server starts. Or type `P` to change their password:
   the bottom rows then ask for it (typed hidden), `Enter` saves it and
   `PF3` cancels;
-- type `Y` or `N` under `Admin` to make a user an admin or not, and under
-  `Restricted` to restrict them or not (see below);
+- type over a user's `Type` (in any case) to change what kind of user they
+  are: `user`, an ordinary user; `admin`, who can open the admin menu;
+  `restricted`, who can use the calculator and nothing else (see below); or
+  `newuser`, an account for signing up users of their own (see below),
+  which cannot be the console's nor control the busy light. In the users
+  file, `admin` and `restricted` are the `admin` and `restricted` flags,
+  and `newuser` the `new_user` flag; at most one is set, and none for
+  `user`;
 - type `Y` under `Console` to make a user the one the console logs in as
   (see below), taking it from whoever had it;
 - type `Y` or `N` under `Flag` for a user to control the busy light or
   not: their calendar's meetings light it, and they can set it by hand
   (see [Busy light](#busy-light)). A restricted user cannot;
-- on the bottom rows, type a new user's name, `Y` or `N` for `Admin` and
-  `Restricted` (blank is `N`), and their password, to add them. There is
-  no room there for `Console`: add the user, then type `Y` on their row.
+- on the bottom rows, type a new user's name, their `Type` (blank is
+  `user`), and their password, to add them. There is no room there for
+  `Console`: add the user, then type `Y` on their row.
 
 `Enter` (or paging) saves everything typed at once. Names must be unique
-(ignoring case) and made only of the characters allowed, no admin may be restricted, at least
+(ignoring case) and made only of the characters allowed, at least
 one user must stay an admin, and exactly one user must be the console's (so
 the console's user can be deleted only once another is given `Y` under
 `Console`): a change that would break any of these is refused whole, with what was
@@ -345,21 +351,37 @@ readable only by its owner). Each line is the time, the event, and
 2026-09-29T20:53:56-06:00 LOGIN user=bob lu=AD000002 ip=127.0.0.1 session=2
 2026-09-29T20:53:56-06:00 LOGOUT user=bob lu=AD000002 ip=127.0.0.1 session=2
 2026-09-29T20:53:57-06:00 DISCONNECT user=bob lu=AD000003 ip=127.0.0.1 session=3 reason="connection lost: EOF"
+2026-09-29T20:54:10-06:00 USER-CREATED user=amy lu=AD000004 ip=127.0.0.1 session=4 by=signup
 ```
 
 `LOGIN-FAILED` names the user as typed, with `try` counting the tries. The
 console counts as logging in when it connects, as its user. A
 session that logged in ends with `LOGOUT` when the user leaves (`PF3` or
-`exit` on the dashboard, or `PF3` in a restricted user's calculator), or
+`exit` on the dashboard, `PF3` in a restricted user's calculator, or `PF3`
+or signing up on the sign-up screen), or
 else `DISCONNECT` with a `reason`: `connection lost` (and why), `terminated
 by an administrator`, or `server shut down`.
 Connections that never log in are not logged there, only in the server's
-own log.
+own log. `USER-CREATED` records a user signing up on the sign-up screen:
+`user` is the user made, `by` the new-user account they signed in as.
 
 A restricted user goes straight to the calculator on logging in, and has
 nothing else: `PF9` switches between it and the dBm calculator, and `PF3`
 (shown as `PF3=Log off`) logs them off. A change to a user's restricted
 flag takes effect at their next login.
+
+A user of type `newuser` is an account for letting people sign
+themselves up: give out its name and password, and whoever logs in as it
+gets the SIGN UP screen and nothing else. There they type a user name of
+their own (by the same rules as any) and a password twice (at least 8
+characters, not containing the name), and press `Enter`: an ordinary
+user is made (type `user`, not the console's, not controlling the busy
+light), recorded in the audit log, and the session ends, saying to
+connect again and log in as the new user. `PF3` logs off. One user is
+made per connection; a name taken, or a password that will not do, is
+said so, and the passwords must be typed again. A new-user account cannot
+sign in on the web site. If an admin changes its type while someone is on
+the sign-up screen, it makes no user, and the session ends.
 
 The activity viewer shows who each session logged in as, the console
 included; so does the chat. Someone on the chat screen in two sessions is

@@ -45,7 +45,8 @@ func newAuthRig(t *testing.T) *authRig {
 	if err := r.store.Update(func(list *[]users.User, nextID func() int) error {
 		*list = append(*list,
 			users.User{ID: nextID(), Name: "joelle", Password: hash},
-			users.User{ID: nextID(), Name: "calc", Password: hash, Restricted: true})
+			users.User{ID: nextID(), Name: "calc", Password: hash, Restricted: true},
+			users.User{ID: nextID(), Name: "signup", Password: hash, NewUser: true})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -155,6 +156,9 @@ func TestSignInAndConnect(t *testing.T) {
 	}
 	if _, body := r.login("admin", "admin"); !strings.Contains(body, "only works on the console") {
 		t.Errorf("default password not refused")
+	}
+	if _, body := r.login("signup", "secret"); !strings.Contains(body, "cannot use these pages") {
+		t.Errorf("a new-user account signed in:\n%s", body)
 	}
 	if _, body := r.login("calc", "secret"); !strings.Contains(body, "cannot use these pages") {
 		t.Errorf("restricted user not refused")

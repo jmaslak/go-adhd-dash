@@ -189,13 +189,18 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var user *users.User
 	var login loginState
 	var calc calcState // kept while the session lasts, as a calculator's stack is
+	var su signupState
 	// logIn makes u the session's user. A restricted user has the
-	// calculator, in either mode, and nothing else.
+	// calculator, in either mode, and nothing else; a new-user account has
+	// the sign-up screen and nothing else.
 	logIn := func(u users.User) {
 		user, mode = &u, modeDashboard
 		cfg.Activity.update(sessionID, func(s *SessionActivity) { s.User = u.Name })
-		if u.Restricted {
+		switch {
+		case u.Restricted:
 			mode, calc = modeCalc, calcState{logOff: true}
+		case u.NewUser:
+			mode, su = modeSignup, signupState{}
 		}
 	}
 	consoleLoggedIn := false
@@ -245,9 +250,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 	// tint colors screen's title row for the user's busy state (see
 	// lightFor), on every screen but the login screen, unless the user is
-	// restricted.
+	// restricted or a new-user account.
 	tint := func(screen go3270.Screen) go3270.Screen {
-		if mode == modeLogin || (user != nil && user.Restricted) {
+		if mode == modeLogin || (user != nil && (user.Restricted || user.NewUser)) {
 			return screen
 		}
 		src, _ := cfg.lightFor(user)
@@ -507,6 +512,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modePassword:
 			screen, cursorRow, cursorCol = buildPassword(rows, cols, now, user.Name, &pw)
 			redrawOnTimer = false
+		case modeSignup:
+			screen, cursorRow, cursorCol = buildSignup(rows, cols, now, user.Name, &su)
+			redrawOnTimer = false
 		case modeSettings:
 			screen, cursorRow, cursorCol = buildSettings(rows, cols, now, user.Name, settingsStatus(cfg.Users, user.ID), message, !messageOK)
 			redrawOnTimer = false
@@ -757,6 +765,16 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
 				mode, message, messageOK = settingsBack, said, true
 			}
+		case modeSignup:
+			created := func(name string) {
+				cfg.Audit.Record(audit.UserCreated, auditFields(name, audit.F("by", user.Name))...)
+			}
+			if quit, farewell := su.handle(resp, cfg.Users, *user, logf, created); quit {
+				logf("logged off")
+				loggedOut = true
+				bye(farewell)
+				return
+			}
 		case modeSettings:
 			switch command, leave, bad := settingsChoice(resp); {
 			case leave:
@@ -850,6 +868,7 @@ const (
 	modeMoveTask
 	modeSettings
 	modeBrowse
+	modeSignup
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

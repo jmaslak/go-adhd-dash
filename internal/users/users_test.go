@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -488,6 +489,44 @@ func TestCheckName(t *testing.T) {
 	for _, name := range []string{".x", "-x", "a b", "a/b", "a+b", "ü", "a\tb"} {
 		if CheckName(name) == nil {
 			t.Errorf("%q allowed", name)
+		}
+	}
+}
+
+func TestKind(t *testing.T) {
+	for _, c := range []struct {
+		kind                    string
+		admin, restricted, newU bool
+	}{
+		{KindUser, false, false, false},
+		{KindAdmin, true, false, false},
+		{KindRestricted, false, true, false},
+		{KindNewUser, false, false, true},
+	} {
+		u := User{Admin: true, Restricted: true, NewUser: true}
+		if !u.SetKind(c.kind) || u.Admin != c.admin || u.Restricted != c.restricted || u.NewUser != c.newU || u.Kind() != c.kind {
+			t.Errorf("%s: %+v, kind %q", c.kind, u, u.Kind())
+		}
+	}
+	u := User{Admin: true}
+	if u.SetKind("Admin") || u.SetKind("superuser") || !u.Admin {
+		t.Errorf("a kind not one of Kinds was set: %+v", u)
+	}
+
+	list := []User{{ID: 1, Name: "admin", Admin: true, Console: true}, {ID: 2, Name: "x", NewUser: true}}
+	if err := Validate(list); err != nil {
+		t.Errorf("a new user refused: %v", err)
+	}
+	list[1].Restricted = true
+	if err := Validate(list); err == nil || !strings.Contains(err.Error(), "new user") {
+		t.Errorf("a restricted new user: %v", err)
+	}
+	list[1].Restricted = false
+	for _, set := range []func(x []User){func(x []User) { x[1].Flag = true }, func(x []User) { x[0].Console, x[1].Console = false, true }} {
+		x := slices.Clone(list)
+		set(x)
+		if err := Validate(x); err == nil || !strings.Contains(err.Error(), "only sign others up") {
+			t.Errorf("a new user with the flag or the console: %v", err)
 		}
 	}
 }

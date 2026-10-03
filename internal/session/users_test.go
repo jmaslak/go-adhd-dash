@@ -58,9 +58,10 @@ func TestUsersScreen(t *testing.T) {
 	r := newUsersRig(t)
 	for i, want := range map[int]string{
 		usHeaderRow: " USERS 1 user, 1 admin",
-		usColumnRow: " S Name                      Admin Restricted Console Flag",
-		usFirstRow:  "   admin                     Y     N          Y       N",
-		20:          " New user ===>           Admin ===>   Restricted ===>",
+		usColumnRow: " S Name                      Type         Console Flag",
+		usFirstRow:  "   admin                     admin        Y       N",
+		20:          " New user ===>           Type ===>",
+		22:          " " + usPrompt, // all of it, on 80 columns
 		21:          " Password ===>",
 	} {
 		if r.rows[i] != want {
@@ -74,7 +75,7 @@ func TestUsersScreen(t *testing.T) {
 		switch {
 		case f.Name == usNewPassword && !f.Hidden:
 			t.Error("password field shows what is typed")
-		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usEndCol || f.Col == usResEndCol || f.Col == usConEndCol || f.Col == usFlagEndCol) && !f.Autoskip:
+		case f.Row == usFirstRow && (f.Col == usNameCol || f.Col == usTypeEndCol || f.Col == usConEndCol || f.Col == usFlagEndCol) && !f.Autoskip:
 			t.Errorf("field at col %d does not skip on", f.Col)
 		}
 	}
@@ -92,11 +93,11 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	if r.u.message != "Type the new user's name." || r.u.typed[usNewPassword] != "" {
 		t.Errorf("no name: message %q, typed %v (a password must not be kept)", r.u.message, r.u.typed)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "pw", usNewAdmin: "q"})
-	if !strings.Contains(r.u.message, `not "Q"`) {
-		t.Errorf("bad admin: %q", r.u.message)
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "pw", usNewType: "boss"})
+	if !strings.Contains(r.u.message, `the new user's Type, not "boss"`) {
+		t.Errorf("bad type: %q", r.u.message)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: " joelle ", usNewPassword: "pass word one", usNewAdmin: "n"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: " joelle ", usNewPassword: "pass word one"})
 	list := r.list()
 	if r.u.isError || r.u.message != "Added joelle." || len(list) != 2 || list[1].Name != "joelle" || list[1].Admin || !users.CheckPassword(list[1].Password, "pass word one") {
 		t.Fatalf("add: message %q, users %+v", r.u.message, list)
@@ -110,8 +111,8 @@ func TestUsersAddChangeRemove(t *testing.T) {
 	}
 
 	// The only admin cannot lose it, nor be removed.
-	r.key(go3270.AIDEnter, map[string]string{"uadm:1": "N"})
-	if r.u.message != "At least one user must be an admin: that would leave none." || !r.list()[0].Admin || r.u.typed["uadm:1"] != "N" {
+	r.key(go3270.AIDEnter, map[string]string{"utype:1": "user"})
+	if r.u.message != "At least one user must be an admin: that would leave none." || !r.list()[0].Admin || r.u.typed["utype:1"] != "user" {
 		t.Errorf("unadmin last admin: message %q, typed %v", r.u.message, r.u.typed)
 	}
 	r.key(go3270.AIDEnter, map[string]string{"usel:1": "d"})
@@ -125,11 +126,11 @@ func TestUsersAddChangeRemove(t *testing.T) {
 
 	// Handing over admin and the console and removing the old one, in one
 	// go: asked first, with nothing saved until PF4.
-	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "usel:1": "D"})
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "usel:1": "D"})
 	if !strings.Contains(r.u.message, "The console must log in as someone") || r.u.pending != nil {
 		t.Errorf("remove the console's user: %q, pending %v; want refused before asking", r.u.message, r.u.pending)
 	}
-	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "ucon:2": "y", "usel:1": "D"})
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "ucon:2": "y", "usel:1": "D"})
 	text := strings.Join(r.rows, "\n")
 	for _, want := range []string{"DELETE USERS", "Delete this user?", "admin (admin)", "other changes typed with it are saved with it", "PF4=Delete"} {
 		if !strings.Contains(text, want) {
@@ -144,19 +145,19 @@ func TestUsersAddChangeRemove(t *testing.T) {
 		t.Fatal("Enter dismissed the confirmation")
 	}
 	r.key(go3270.AIDPF3, nil)
-	if r.u.pending != nil || r.u.message != "Nothing was saved." || len(r.list()) != 2 || r.u.typed["usel:1"] != "D" || r.u.typed["uadm:2"] != "y" {
+	if r.u.pending != nil || r.u.message != "Nothing was saved." || len(r.list()) != 2 || r.u.typed["usel:1"] != "D" || r.u.typed["utype:2"] != "admin" {
 		t.Fatalf("PF3: message %q, typed %v", r.u.message, r.u.typed)
 	}
-	if !strings.Contains(strings.Join(r.rows, "\n"), "joelle                    y") {
+	if !strings.Contains(strings.Join(r.rows, "\n"), "joelle                    admin        y") {
 		t.Errorf("typed not drawn again after PF3:\n%s", strings.Join(r.rows, "\n"))
 	}
-	r.key(go3270.AIDEnter, map[string]string{"uadm:2": "y", "ucon:2": "y", "usel:1": "D"})
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "admin", "ucon:2": "y", "usel:1": "D"})
 	r.key(go3270.AIDPF4, nil)
 	list = r.list()
 	if r.u.isError || len(list) != 1 || list[0].Name != "joelle" || !list[0].Admin || !list[0].Console {
 		t.Fatalf("hand over: message %q, users %+v", r.u.message, list)
 	}
-	if r.u.message != "Removed 1 user. Changed 1 admin setting. The console now logs in as joelle." {
+	if r.u.message != "Removed 1 user. Changed 1 user type. The console now logs in as joelle." {
 		t.Errorf("hand over message %q", r.u.message)
 	}
 
@@ -223,34 +224,53 @@ func TestDeleteUsersConfirm(t *testing.T) {
 
 func TestUsersRestricted(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewType: " Restricted "})
 	list := r.list()
 	if r.u.isError || len(list) != 2 || !list[1].Restricted || list[1].Admin {
 		t.Fatalf("add restricted: message %q, users %+v", r.u.message, list)
 	}
-	if !strings.Contains(r.rows[usFirstRow+1], "calc                      N     Y") {
+	if !strings.Contains(r.rows[usFirstRow+1], "calc                      restricted   N") {
 		t.Errorf("row %q", r.rows[usFirstRow+1])
 	}
 
-	r.key(go3270.AIDEnter, map[string]string{"ures:2": "N"})
-	if r.list()[1].Restricted || r.u.message != "Changed 1 restricted setting." {
-		t.Errorf("unrestrict: message %q", r.u.message)
+	// Each type sets admin and restricted to match.
+	for _, c := range []struct {
+		kind                  string
+		admin, restricted, nu bool
+	}{
+		{"user", false, false, false},
+		{"admin", true, false, false},
+		{"newuser", false, false, true},
+		{"restricted", false, true, false},
+	} {
+		r.key(go3270.AIDEnter, map[string]string{"utype:2": c.kind})
+		if x := r.list()[1]; x.Admin != c.admin || x.Restricted != c.restricted || x.NewUser != c.nu || r.u.message != "Changed 1 user type." {
+			t.Errorf("%s: %+v, message %q", c.kind, x, r.u.message)
+		}
+		if !strings.Contains(r.rows[usFirstRow+1], "calc                      "+c.kind) {
+			t.Errorf("%s: row %q", c.kind, r.rows[usFirstRow+1])
+		}
 	}
-	r.key(go3270.AIDEnter, map[string]string{"ures:2": "q"})
-	if !strings.Contains(r.u.message, `under Restricted, not "Q"`) {
-		t.Errorf("bad flag: %q", r.u.message)
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "boss"})
+	if !strings.Contains(r.u.message, `under Type, not "boss"`) || !r.list()[1].Restricted {
+		t.Errorf("bad type: %q", r.u.message)
+	}
+	// Typed as shown, in any case, changes nothing.
+	r.key(go3270.AIDEnter, map[string]string{"utype:2": "RESTRICTED"})
+	if r.u.isError || strings.Contains(r.u.message, "Changed") {
+		t.Errorf("same type: %q", r.u.message)
 	}
 
-	// No admin is restricted.
-	r.key(go3270.AIDEnter, map[string]string{"ures:1": "Y"})
-	if !strings.Contains(r.u.message, "cannot be both an admin and restricted") || r.list()[0].Restricted {
+	// The only admin cannot become anything else.
+	r.key(go3270.AIDEnter, map[string]string{"utype:1": "restricted"})
+	if !strings.Contains(r.u.message, "At least one user must be an admin") || !r.list()[0].Admin {
 		t.Errorf("restrict the admin: %q", r.u.message)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "both", usNewPassword: "long enough pw", usNewAdmin: "Y", usNewRes: "Y"})
-	if !strings.Contains(r.u.message, "cannot be both") || len(r.list()) != 2 {
-		t.Errorf("add a restricted admin: %q", r.u.message)
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "newbie", usNewPassword: "long enough pw", usNewType: "newuser"})
+	if x := r.list()[2]; !x.NewUser || x.Admin || x.Restricted {
+		t.Errorf("add a new user: %+v, %q", x, r.u.message)
 	}
-	r.key(go3270.AIDEnter, map[string]string{usNewRes: "Y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewType: "restricted"})
 	if r.u.message != "Type the new user's name." {
 		t.Errorf("restricted with no name: %q", r.u.message)
 	}
@@ -258,7 +278,7 @@ func TestUsersRestricted(t *testing.T) {
 
 func TestUsersConsole(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewType: "restricted"})
 	r.key(go3270.AIDEnter, map[string]string{usNewName: "joelle", usNewPassword: "long enough pw"})
 	if len(r.list()) != 3 {
 		t.Fatalf("adding: %q", r.u.message)
@@ -283,7 +303,7 @@ func TestUsersConsole(t *testing.T) {
 	if u, _ := users.ConsoleUser(r.list()); r.u.isError || u.Name != "calc" || r.u.message != "The console now logs in as calc." {
 		t.Errorf("hand to calc: %q, console user %+v", r.u.message, u)
 	}
-	if !strings.Contains(r.rows[usFirstRow], "admin                     Y     N          N") {
+	if !strings.Contains(r.rows[usFirstRow], "admin                     admin        N") {
 		t.Errorf("row %q", r.rows[usFirstRow])
 	}
 	r.key(go3270.AIDEnter, map[string]string{"ucon:2": "N", "ucon:3": "Y"})
@@ -361,7 +381,7 @@ func TestUsersRemoveWithCalendar(t *testing.T) {
 
 func TestUsersFlag(t *testing.T) {
 	r := newUsersRig(t)
-	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewRes: "y"})
+	r.key(go3270.AIDEnter, map[string]string{usNewName: "calc", usNewPassword: "long enough pw", usNewType: "restricted"})
 
 	// Y under Flag gives a user control of the busy light.
 	r.key(go3270.AIDEnter, map[string]string{"uflag:1": "y"})
