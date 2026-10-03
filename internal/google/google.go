@@ -1,6 +1,7 @@
 // Package google connects a user's Google calendar: the OAuth authorization
 // that gets a refresh token for the server's shared client, and the Calendar
-// API calls that list the calendars a user can choose from.
+// API calls that list the calendars a user can choose from, and read their
+// events.
 //
 // The authorization is a web one: the user's browser is sent to Google from
 // the server's web site, and comes back to it, at a redirect address
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jmaslak/go-busy-indicator/gauth"
 )
@@ -160,6 +162,133 @@ func LookupCalendar(ctx context.Context, tokens TokenSource, id string) (Calenda
 	var c Calendar
 	err := get(ctx, tokens, APIBase+"/calendars/"+url.PathEscape(id), &c)
 	return c, err
+}
+
+// Event is one event on a calendar.
+type Event struct {
+	Summary    string
+	Start, End time.Time
+
+	// AllDay marks an event given as a date rather than a time. Its End is
+	// midnight following the last day.
+	AllDay bool
+
+	// OthersDeclined marks an event others were invited to, every one of
+	// whom declined: there is no one to meet.
+	OthersDeclined bool
+}
+
+// eventFields limits the events read to what is used.
+const eventFields = "nextPageToken,items(status,summary,start,end,attendeesOmitted,attendees(self,resource,responseStatus))"
+
+// wireEvent is an event as the API gives it.
+type wireEvent struct {
+	Status           string     `json:"status"`
+	Summary          string     `json:"summary"`
+	Start            *eventTime `json:"start"`
+	End              *eventTime `json:"end"`
+	AttendeesOmitted bool       `json:"attendeesOmitted"`
+	Attendees        []struct {
+		Self           bool   `json:"self"`
+		Resource       bool   `json:"resource"`
+		ResponseStatus string `json:"responseStatus"`
+	} `json:"attendees"`
+}
+
+// eventTime is an event's start or end: a time, or for an all-day event, a
+// date.
+type eventTime struct {
+	DateTime string `json:"dateTime"`
+	Date     string `json:"date"`
+}
+
+// Events returns the events on the calendar with id overlapping from..to,
+// recurring ones as each occurrence, in order of their start. Cancelled
+// events, and those the user declined, are left out. A date (an all-day
+// event's) is read as midnight in loc.
+func Events(ctx context.Context, tokens TokenSource, id string, from, to time.Time, loc *time.Location) ([]Event, error) {
+	var out []Event
+	page := ""
+	for {
+		q := url.Values{
+			"timeMin":      {from.Format(time.RFC3339)},
+			"timeMax":      {to.Format(time.RFC3339)},
+			"singleEvents": {"true"},
+			"orderBy":      {"startTime"},
+			"maxResults":   {"2500"},
+			"fields":       {eventFields},
+		}
+		if page != "" {
+			q.Set("pageToken", page)
+		}
+		var resp struct {
+			Items         []wireEvent `json:"items"`
+			NextPageToken string      `json:"nextPageToken"`
+		}
+		if err := get(ctx, tokens, APIBase+"/calendars/"+url.PathEscape(id)+"/events?"+q.Encode(), &resp); err != nil {
+			return nil, fmt.Errorf("calendar %s: %w", id, err)
+		}
+		for _, w := range resp.Items {
+			e, ok, err := w.event(loc)
+			if err != nil {
+				return nil, fmt.Errorf("calendar %s: %w", id, err)
+			}
+			if ok {
+				out = append(out, e)
+			}
+		}
+		if page = resp.NextPageToken; page == "" {
+			return out, nil
+		}
+	}
+}
+
+// event is w as an Event, or false for one to leave out: cancelled,
+// declined by the user, or without a start and end.
+func (w wireEvent) event(loc *time.Location) (Event, bool, error) {
+	others, declined := 0, 0
+	for _, a := range w.Attendees {
+		switch {
+		case a.Self && a.ResponseStatus == "declined":
+			return Event{}, false, nil
+		case a.Self || a.Resource:
+			// The user, or a room or other resource: not someone to meet.
+		default:
+			others++
+			if a.ResponseStatus == "declined" {
+				declined++
+			}
+		}
+	}
+	if w.Status == "cancelled" || w.Start == nil || w.End == nil {
+		return Event{}, false, nil
+	}
+	start, allDay, err := w.Start.parse(loc)
+	if err != nil {
+		return Event{}, false, fmt.Errorf("event %q's start: %w", w.Summary, err)
+	}
+	end, _, err := w.End.parse(loc)
+	if err != nil {
+		return Event{}, false, fmt.Errorf("event %q's end: %w", w.Summary, err)
+	}
+	return Event{
+		Summary: w.Summary, Start: start, End: end, AllDay: allDay,
+		// Without the whole list of attendees, there is no telling.
+		OthersDeclined: !w.AttendeesOmitted && others > 0 && declined == others,
+	}, true, nil
+}
+
+// parse reads t, reporting whether it was a date.
+func (t eventTime) parse(loc *time.Location) (time.Time, bool, error) {
+	switch {
+	case t.DateTime != "":
+		at, err := time.Parse(time.RFC3339, t.DateTime)
+		return at.In(loc), false, err
+	case t.Date != "":
+		at, err := time.ParseInLocation(time.DateOnly, t.Date, loc)
+		return at, true, err
+	}
+	return time.Time{}, false, errors.New("neither a date nor a time")
 }
 
 // Revoke withdraws a refresh token at Google.

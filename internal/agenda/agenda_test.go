@@ -26,10 +26,10 @@ func (f *fakeSource) Events(context.Context, time.Time, time.Time) ([]Event, err
 
 func TestRefreshSortsDedupesAndKeepsOnFailure(t *testing.T) {
 	src := &fakeSource{events: []Event{
-		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work"},
-		{Summary: "A", Start: at(9, 0), End: at(10, 0), Calendar: "work"},
+		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work", OthersDeclined: true},
+		{Summary: "A", Start: at(9, 0), End: at(10, 0), Calendar: "work", OthersDeclined: true},
 		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "home"},
-		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work"},
+		{Summary: "B", Start: at(10, 0), End: at(11, 0), Calendar: "work", OthersDeclined: true},
 	}}
 	c := NewCache(src)
 	c.refresh(context.Background())
@@ -40,6 +40,10 @@ func TestRefreshSortsDedupesAndKeepsOnFailure(t *testing.T) {
 	}
 	if got := snap.Events[1].Calendar; got != "work,home" {
 		t.Errorf("merged duplicate's calendars are %q, want \"work,home\"", got)
+	}
+	// Marked as declined by everyone else only if every copy says so.
+	if !snap.Events[0].OthersDeclined || snap.Events[1].OthersDeclined {
+		t.Errorf("declined marks %v, %v; want A's alone", snap.Events[0].OthersDeclined, snap.Events[1].OthersDeclined)
 	}
 
 	src.err = errors.New("boom")
@@ -64,7 +68,7 @@ func TestUpcoming(t *testing.T) {
 
 func TestFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agenda.json")
-	data := `[{"summary":"In","start":"2026-09-27T09:00:00Z","end":"2026-09-27T10:00:00Z","calendar":"work"},
+	data := `[{"summary":"In","start":"2026-09-27T09:00:00Z","end":"2026-09-27T10:00:00Z","calendar":"work","others_declined":true},
 	          {"summary":"Out","start":"2026-09-30T09:00:00Z","end":"2026-09-30T10:00:00Z"}]`
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
@@ -73,7 +77,7 @@ func TestFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Summary != "In" || got[0].Calendar != "work" {
+	if len(got) != 1 || got[0].Summary != "In" || got[0].Calendar != "work" || !got[0].OthersDeclined {
 		t.Errorf("File.Events = %+v", got)
 	}
 }

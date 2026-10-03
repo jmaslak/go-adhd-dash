@@ -12,8 +12,9 @@ screen shows:
   from the Google calendars the user has connected (see [Agenda](#agenda)),
   with the one in progress marked `NOW` and a
   countdown to the next. All-day events and out-of-office events (by
-  title: "out of office" or the word "OOO") are left out. If they do not
-  all fit alongside the tasks, the first page gives them the room and the
+  title: "out of office" or the word "OOO") are left out. A meeting every
+  other person invited to declined has a red `X` before its title. If the
+  meetings do not all fit alongside the tasks, the first page gives them the room and the
   tasks move to later pages;
 - the **tasks**: the cards on the Trello lists the user has linked (see
   [Tasks](#tasks)), then their starred checklists.
@@ -35,7 +36,7 @@ Then connect a TN3270 emulator (c3270, x3270, s3270, ...) to `host:port`.
 Any screen size the client reports is used: Model 2's 24x80 up through
 Model 5's 27x132 or larger.
 
-The three files are kept in the home directory, under names `ls` shows.
+The files are kept in the home directory, under names `ls` shows.
 They were once dotfiles (`~/.adhd-dash-users.json` and so on): at startup,
 a file left at its default name that is missing, where its old dotfile is
 there, is given the dotfile, renamed, and the server logs it. With both,
@@ -72,6 +73,49 @@ the same place). Busy-indicator's old usbhid quirk
 (`/etc/modprobe.d/luxafor.conf`), which leaves the flag no `/dev/hidraw`
 node, is set aside likewise; the flag must then be plugged in again.
 
+### Backups
+
+`-backup`, or admin menu option `8`, saves the configuration and data,
+the users file (users, passwords, Google and Trello links, the OAuth
+clients, the site address) and the checklist database, in one archive in
+`-backup-dir` (`~/backup`), named for when it was made (`-backup` then
+exits):
+
+```
+adhd-dash -backup
+# backed up to /home/you/backup/adhd-dash-20261002-174428.tar.gz
+```
+
+It is safe while the server runs: the database is copied as it is at one
+moment. A second one in the same second is numbered (`...-174428-2`). The
+archive and its directory are readable only by their owner, since the users
+file holds password hashes and tokens. The audit log, and options kept
+outside these files (such as `/etc/default/adhd-dash`), are not backed up.
+
+`-restore FILE` puts them back, then exits. A file named without a
+directory is looked for in `-backup-dir` if it is not in the current one.
+The server must be stopped first: while it runs it holds
+`<checklist-db>.lock` locked, and a restore (or a second server on the
+same files) refuses to start. Everything in the archive is checked before
+anything is replaced (the users file must be valid, the database sound),
+and what is replaced is backed up first, to undo the restore with. What the
+archive does not hold is left as it is.
+
+```
+adhd-dash -restore adhd-dash-20261002-174428.tar.gz
+```
+
+Both take the same `-users-file` and `-checklist-db` as the server, so give
+them any it is given. Installed with `install-ubuntu.sh`, run them as its
+user, in its home:
+
+```
+sudo -u adhd-dash env HOME=/var/lib/adhd-dash adhd-dash -backup
+sudo systemctl stop adhd-dash
+sudo -u adhd-dash env HOME=/var/lib/adhd-dash adhd-dash -restore adhd-dash-20261002-174428.tar.gz
+sudo systemctl start adhd-dash
+```
+
 ### Flags
 
 | Flag | Default | Description |
@@ -86,8 +130,12 @@ node, is set aside likewise; the flag must then be plugged in again.
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
-| `-checklist-file` | `~/adhd-dash-checklists.json` | JSON file the checklists are kept in |
+| `-checklist-db` | `~/adhd-dash-checklists.db` | SQLite database the checklists are kept in |
+| `-checklist-json` | `~/adhd-dash-checklists.json` | JSON file checklists were kept in before `-checklist-db`, imported into it at startup, then renamed with `.imported` added |
 | `-users-file` | `~/adhd-dash-users.json` | JSON file the users are kept in |
+| `-backup` | `false` | back up `-users-file` and `-checklist-db` into `-backup-dir`, then exit (see [Backups](#backups)) |
+| `-restore` | (none) | restore `-users-file` and `-checklist-db` from a backup, backing up what it replaces first, then exit; the server must be stopped |
+| `-backup-dir` | `~/backup` | where `-backup` writes, and where `-restore` looks for a file named without a directory |
 | `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
 | `-max-connections-per-ip` | `16` | most open at once from one address (an IPv6 one by its /64); `0` for no limit |
 | `-login-timeout` | `60s` | how long the login screen waits for a login |
@@ -178,6 +226,9 @@ The admin menu (`admin`) lists its options by number; type one on the
   email its privacy policy and terms name (see [Web site](#web-site)).
 - `7`: the Trello API key every user links their Trello account through
   (see [Tasks](#tasks)).
+- `8`: back up the users and checklists, at once, as `-backup` does; the
+  menu says the archive's name and directory, or why it failed (see
+  [Backups](#backups)).
 
 ### Users
 
@@ -450,14 +501,26 @@ and what was typed is left on the screen to fix.
 Neither screen redraws on a timer, since that would wipe what was typed but
 not yet saved.
 
-The checklists are kept in `-checklist-file` as JSON, rewritten (by atomic
-rename) on every change and read on every redraw, so every session of a
-user sees the same checklists. `owner` is the user's ID in `-users-file`:
+The checklists are kept in `-checklist-db`, a SQLite database (in WAL
+mode, so it comes with `-wal` and `-shm` files beside it while the server
+runs, readable only by its owner). Each change is one transaction, and the
+checklists are read on every redraw, so every session of a user sees the
+same ones. Its tables:
 
-```json
-{"checklists": [{"id": 1, "name": "Morning", "active": true, "owner": 1,
-  "items": [{"id": 2, "text": "Pills", "done": true}]}]}
-```
+- `checklists`: `id`, `owner` (the user's ID in `-users-file`), `name`,
+  `active` (starred), `position`;
+- `items`: `id`, `checklist` (its checklist's `id`; removing the checklist
+  removes its items), `text`, `done`, `position`;
+- `meta`: `last_id`, the highest ID given, so that none is given twice.
+
+Checklists kept as JSON, as they were before, in `-checklist-json` are
+imported once at startup, IDs and all, and the file is renamed with
+`.imported` added. If any of their IDs is already in the database, the
+server refuses to start, saying so, and leaves the file as it is.
+
+To look at or back up the database while the server runs, use `sqlite3`
+(`.backup` makes a consistent copy); copying the `.db` file alone may miss
+changes still in its `-wal` file.
 
 A checklist's heading says how many other sessions of this server (its
 user's, logged in elsewhere) have it open too, e.g. `(1 other session viewing)`. Like the rest of the screen, it
@@ -619,19 +682,30 @@ reconnect.
 Cancelled events and events you declined are left out, as the busy indicator
 does.
 
-The token refresh and event reading are go-busy-indicator's `gauth` and
-`gcal` packages, imported rather than copied; the authorization flow and the
-calendar list are in `internal/google`.
+A meeting others were invited to, every one of whom declined, has a red
+`X` before its title (after its calendar alias, if it has one: `[work] X
+Standup`) wherever it is shown: the agenda, the next meeting or meetings under way
+below the banner, and the calendar's day list. Rooms and other resources
+are not counted as people. When Google leaves the guest list out (for an
+event with very many guests), there is no telling, and nothing is marked.
+A meeting on more than one of your calendars is marked only if every copy
+is. It still counts as a meeting for the busy light.
+
+The token refresh is go-busy-indicator's `gauth` package, imported rather
+than copied; the authorization flow, the calendar list and event reading
+are in `internal/google`.
 
 `-agenda-file` takes a JSON list, shown to every user in place of their
 Google calendars, for trying the dashboard without Google:
 
 ```json
 [{"summary": "Standup", "start": "2026-09-27T09:00:00-06:00",
-  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work"}]
+  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work",
+  "others_declined": false}]
 ```
 
 `calendar` is optional; it is shown in brackets as an alias is.
+`others_declined`, optional, marks the meeting with the red `X`.
 
 ### Web site
 

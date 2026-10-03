@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ var adminOptions = []struct{ number, what string }{
 	{"5", "Google client: what users connect their calendars through"},
 	{"6", "Web site: its public address, and who its privacy policy names"},
 	{"7", "Trello API key: what users link their Trello accounts through"},
+	{"8", "Back up the users and checklists"},
 }
 
 // buildAdmin renders the admin menu, with message below the option field,
@@ -78,6 +80,7 @@ const (
 	adminGoogleClient                    // the Google client
 	adminSite                            // the web site
 	adminTrelloKey                       // the Trello API key
+	adminBackup                          // a backup, made at once
 )
 
 // adminChoice is what the admin menu's key asks for, and when it is to stay
@@ -106,9 +109,27 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 		return adminSite, ""
 	case "7":
 		return adminTrelloKey, ""
+	case "8":
+		return adminBackup, ""
 	default:
 		return adminStay, fmt.Sprintf("There is no option %q.", typed)
 	}
+}
+
+// runBackup makes a backup with backup, returning what to say on the
+// admin menu, and whether it was made: the archive's name and directory,
+// or why it failed.
+func runBackup(backup func() (string, error), logf func(string, ...any)) (message string, ok bool) {
+	if backup == nil {
+		return "This server cannot make backups.", false
+	}
+	path, err := backup()
+	if err != nil {
+		logf("backup failed: %v", err)
+		return "Backup failed: " + err.Error(), false
+	}
+	logf("backed up to %s", path)
+	return fmt.Sprintf("Backed up to %s in %s.", filepath.Base(path), filepath.Dir(path)), true
 }
 
 // buildShutdownConfirm renders the confirmation for shutting the server

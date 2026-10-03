@@ -263,7 +263,7 @@ func dayEventLine(e agenda.Event, day, now time.Time) line {
 	case !e.Start.After(now):
 		color, intense = go3270.Yellow, true
 	}
-	return line{{Content: fmt.Sprintf("%-11s %s", when, meetingName(e)), Color: color, Intense: intense}}
+	return append(line{{Content: fmt.Sprintf("%-11s", when), Color: color, Intense: intense}}, meetingTitle(e, color, intense)...)
 }
 
 // isHomeDay reports whether e is an all-day event titled "Home", as Google

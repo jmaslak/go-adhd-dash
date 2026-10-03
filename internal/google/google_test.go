@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBegin(t *testing.T) {
@@ -120,5 +121,82 @@ func TestCalendars(t *testing.T) {
 	}
 	if _, err := LookupCalendar(context.Background(), tokens, "nope"); err == nil || !strings.Contains(err.Error(), "Not Found") {
 		t.Errorf("lookup of a calendar that is not there: %v", err)
+	}
+}
+
+func TestEvents(t *testing.T) {
+	// Each event's attendees, by its title, and whether it is to be marked
+	// as declined by every other person; "" for one left out.
+	page1 := `{"items": [
+		{"summary": "alone", "start": {"dateTime": "2026-09-27T09:00:00Z"}, "end": {"dateTime": "2026-09-27T10:00:00Z"}},
+		{"summary": "all declined", "start": {"dateTime": "2026-09-27T10:00:00Z"}, "end": {"dateTime": "2026-09-27T11:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "accepted"}, {"responseStatus": "declined"}, {"responseStatus": "declined"}]},
+		{"summary": "one coming", "start": {"dateTime": "2026-09-27T11:00:00Z"}, "end": {"dateTime": "2026-09-27T12:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "accepted"}, {"responseStatus": "declined"}, {"responseStatus": "needsAction"}]},
+		{"summary": "room only", "start": {"dateTime": "2026-09-27T12:00:00Z"}, "end": {"dateTime": "2026-09-27T13:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "accepted"}, {"resource": true, "responseStatus": "declined"}]},
+		{"summary": "declined but the room", "start": {"dateTime": "2026-09-27T13:00:00Z"}, "end": {"dateTime": "2026-09-27T14:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "accepted"}, {"responseStatus": "declined"}, {"resource": true, "responseStatus": "accepted"}]}
+	], "nextPageToken": "p2"}`
+	page2 := `{"items": [
+		{"summary": "I declined", "start": {"dateTime": "2026-09-27T14:00:00Z"}, "end": {"dateTime": "2026-09-27T15:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "declined"}, {"responseStatus": "declined"}]},
+		{"summary": "cancelled", "status": "cancelled", "start": {"dateTime": "2026-09-27T15:00:00Z"}, "end": {"dateTime": "2026-09-27T16:00:00Z"}},
+		{"summary": "too many to list", "attendeesOmitted": true, "start": {"dateTime": "2026-09-27T16:00:00Z"}, "end": {"dateTime": "2026-09-27T17:00:00Z"},
+		 "attendees": [{"self": true, "responseStatus": "accepted"}]},
+		{"summary": "holiday", "start": {"date": "2026-09-28"}, "end": {"date": "2026-09-29"},
+		 "attendees": [{"responseStatus": "declined"}]}
+	]}`
+	var queries []url.Values
+	fakeGoogle(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			w.Write([]byte(`{"access_token": "at", "expires_in": 3600}`)) //nolint:errcheck
+		case r.URL.Path != "/api/calendars/c_1@group.calendar.google.com/events" || r.Header.Get("Authorization") != "Bearer at":
+			w.WriteHeader(http.StatusNotFound)
+		case r.URL.Query().Get("pageToken") == "":
+			queries = append(queries, r.URL.Query())
+			w.Write([]byte(page1)) //nolint:errcheck
+		default:
+			queries = append(queries, r.URL.Query())
+			w.Write([]byte(page2)) //nolint:errcheck
+		}
+	})
+	loc := time.FixedZone("MDT", -6*3600)
+	from := time.Date(2026, 9, 27, 0, 0, 0, 0, loc)
+	events, err := Events(context.Background(), Tokens(Client{ID: "cid", Secret: "cs"}, "rt"), "c_1@group.calendar.google.com", from, from.AddDate(0, 0, 2), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"alone": false, "all declined": true, "one coming": false, "room only": false,
+		"declined but the room": true, "too many to list": false, "holiday": true,
+	}
+	if len(events) != len(want) {
+		t.Errorf("got %d events, want %d: %+v", len(events), len(want), events)
+	}
+	for _, e := range events {
+		if marked, ok := want[e.Summary]; !ok {
+			t.Errorf("%q not left out", e.Summary)
+		} else if e.OthersDeclined != marked {
+			t.Errorf("%q: OthersDeclined %v, want %v", e.Summary, e.OthersDeclined, marked)
+		}
+		if e.Start.Location() != loc {
+			t.Errorf("%q starts in %v, want %v", e.Summary, e.Start.Location(), loc)
+		}
+	}
+	if last := events[len(events)-1]; !last.AllDay || !last.Start.Equal(time.Date(2026, 9, 28, 0, 0, 0, 0, loc)) {
+		t.Errorf("all-day event: %+v", last)
+	}
+	if len(queries) != 2 || queries[1].Get("pageToken") != "p2" {
+		t.Fatalf("queries %v; want two pages", queries)
+	}
+	for k, want := range map[string]string{"singleEvents": "true", "orderBy": "startTime", "timeMin": "2026-09-27T00:00:00-06:00"} {
+		if queries[0].Get(k) != want {
+			t.Errorf("query %s = %q, want %q", k, queries[0].Get(k), want)
+		}
+	}
+	if f := queries[0].Get("fields"); !strings.Contains(f, "attendees(self,resource,responseStatus)") || !strings.Contains(f, "attendeesOmitted") {
+		t.Errorf("fields %q do not ask for the attendees", f)
 	}
 }

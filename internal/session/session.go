@@ -70,6 +70,10 @@ type Config struct {
 	// stopped from there.
 	Shutdown *Shutdown
 
+	// Backup backs up the users and checklists from the admin menu,
+	// returning the archive made; nil when it cannot.
+	Backup func() (string, error)
+
 	// Users keeps the user database; nil for none.
 	Users *users.Store
 
@@ -643,6 +647,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeClearChatConfirm
 			case action == adminActivity:
 				mode, act = modeActivity, activityState{}
+			case action == adminBackup:
+				message, messageOK = runBackup(cfg.Backup, logf)
 			default:
 				message = msg
 			}

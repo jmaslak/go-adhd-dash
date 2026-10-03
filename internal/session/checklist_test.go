@@ -23,7 +23,18 @@ type checklistRig struct {
 }
 
 func newChecklistRig(t *testing.T) *checklistRig {
-	return newChecklistRigOn(t, checklist.NewStore(filepath.Join(t.TempDir(), "cl.json")))
+	return newChecklistRigOn(t, openChecklists(t))
+}
+
+// openChecklists is a new checklist database, closed when the test ends.
+func openChecklists(t *testing.T) *checklist.Store {
+	t.Helper()
+	store, err := checklist.Open(filepath.Join(t.TempDir(), "cl.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() }) //nolint:errcheck
+	return store
 }
 
 // newChecklistRigOn is a rig on store, which may be another rig's, as

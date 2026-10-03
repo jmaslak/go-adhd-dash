@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmaslak/go-busy-indicator/gcal"
+	"github.com/jmaslak/go-adhd-dash/internal/google"
 )
 
 // Event is one meeting.
@@ -32,6 +32,10 @@ type Event struct {
 	// them, comma-separated, when it is on several; empty when no aliases
 	// are configured.
 	Calendar string
+
+	// OthersDeclined marks a meeting others were invited to, every one of
+	// whom declined.
+	OthersDeclined bool
 }
 
 // Source produces the events between two times.
@@ -179,7 +183,8 @@ func (c *Cache) Fetch(ctx context.Context, from, to time.Time) ([]Event, error) 
 // sortUnique orders events by start, end and title, merging duplicates,
 // which are common when one meeting is on more than one watched calendar.
 // A merged event keeps every calendar alias it had, in the order the
-// calendars were given.
+// calendars were given, and is marked OthersDeclined only if every copy
+// was.
 func sortUnique(events []Event) []Event {
 	compare := func(a, b Event) int {
 		return cmp.Or(a.Start.Compare(b.Start), a.End.Compare(b.End), cmp.Compare(a.Summary, b.Summary))
@@ -191,6 +196,7 @@ func sortUnique(events []Event) []Event {
 	for _, e := range sorted {
 		if n := len(out); n > 0 && compare(out[n-1], e) == 0 {
 			out[n-1].Calendar = mergeAliases(out[n-1].Calendar, e.Calendar)
+			out[n-1].OthersDeclined = out[n-1].OthersDeclined && e.OthersDeclined
 			continue
 		}
 		out = append(out, e)
@@ -219,13 +225,13 @@ type Google struct {
 	// Calendar; nil when they have none.
 	Aliases []string
 
-	Client *gcal.Client
+	Tokens google.TokenSource
 }
 
 // NewGoogle returns a source for calendars, authorized by tokens. aliases
 // is nil, or one name for each calendar.
-func NewGoogle(tokens gcal.TokenSource, calendars, aliases []string) *Google {
-	return &Google{Calendars: calendars, Aliases: aliases, Client: gcal.New(tokens)}
+func NewGoogle(tokens google.TokenSource, calendars, aliases []string) *Google {
+	return &Google{Calendars: calendars, Aliases: aliases, Tokens: tokens}
 }
 
 // Events reads every calendar. One calendar failing fails the whole fetch,
@@ -234,7 +240,7 @@ func NewGoogle(tokens gcal.TokenSource, calendars, aliases []string) *Google {
 func (g *Google) Events(ctx context.Context, from, to time.Time) ([]Event, error) {
 	var all []Event
 	for i, cal := range g.Calendars {
-		events, err := g.Client.Events(ctx, cal, from, to, from.Location())
+		events, err := google.Events(ctx, g.Tokens, cal, from, to, from.Location())
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +249,7 @@ func (g *Google) Events(ctx context.Context, from, to time.Time) ([]Event, error
 			alias = g.Aliases[i]
 		}
 		for _, e := range events {
-			all = append(all, Event{Summary: e.Summary, Start: e.Start, End: e.End, AllDay: e.AllDay, Calendar: alias})
+			all = append(all, Event{Summary: e.Summary, Start: e.Start, End: e.End, AllDay: e.AllDay, Calendar: alias, OthersDeclined: e.OthersDeclined})
 		}
 	}
 	return all, nil
@@ -254,7 +260,8 @@ func (g *Google) Events(ctx context.Context, from, to time.Time) ([]Event, error
 // alias.
 //
 //	[{"summary": "Standup", "start": "2026-09-27T09:00:00-06:00",
-//	  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work"}]
+//	  "end": "2026-09-27T09:15:00-06:00", "all_day": false, "calendar": "work",
+//	  "others_declined": false}]
 type File struct {
 	Path string
 }
@@ -271,6 +278,7 @@ func (f File) Events(_ context.Context, from, to time.Time) ([]Event, error) {
 		End      time.Time `json:"end"`
 		AllDay   bool      `json:"all_day"`
 		Calendar string    `json:"calendar"`
+		Declined bool      `json:"others_declined"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", f.Path, err)
@@ -279,7 +287,7 @@ func (f File) Events(_ context.Context, from, to time.Time) ([]Event, error) {
 	var out []Event
 	for _, r := range raw {
 		if r.End.After(from) && r.Start.Before(to) {
-			out = append(out, Event{Summary: r.Summary, Start: r.Start.In(from.Location()), End: r.End.In(from.Location()), AllDay: r.AllDay, Calendar: r.Calendar})
+			out = append(out, Event{Summary: r.Summary, Start: r.Start.In(from.Location()), End: r.End.In(from.Location()), AllDay: r.AllDay, Calendar: r.Calendar, OthersDeclined: r.Declined})
 		}
 	}
 	return out, nil

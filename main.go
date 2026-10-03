@@ -20,6 +20,7 @@ import (
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
 	"github.com/jmaslak/go-adhd-dash/internal/audit"
+	"github.com/jmaslak/go-adhd-dash/internal/backup"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/luxafor"
@@ -39,7 +40,8 @@ func main() {
 	controlPort := flag.Int("control-port", 0, "UDP port, on -host, for go-busy-indicator's busy command to set the busy light (0: none; unauthenticated)")
 	externalRGB := flag.String("externalrgb", "", "command run with red, green and blue arguments (0-255) at each change of the busy light's color")
 	agendaFile := flag.String("agenda-file", "", "show every user the agenda in this JSON file instead of their Google calendars")
-	checklistFile := flag.String("checklist-file", checklist.DefaultPath(), "JSON file the checklists are kept in")
+	checklistDB := flag.String("checklist-db", checklist.DefaultPath(), "SQLite database the checklists are kept in")
+	checklistJSON := flag.String("checklist-json", checklist.DefaultJSONPath(), "JSON file checklists were kept in before -checklist-db, imported into it at startup, then renamed with .imported added")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
 	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
 	maxConnsPerIP := flag.Int("max-connections-per-ip", 16, "most connections open at once from one address, an IPv6 one by its /64 (0: no limit)")
@@ -47,13 +49,16 @@ func main() {
 	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often a calendar is read")
 	httpPort := flag.Int("http-port", 3280, "TCP port the web pages (home, privacy policy, terms) are served on over HTTP, on -host (0: none)")
+	backupDir := flag.String("backup-dir", backup.DefaultDir(), "directory -backup writes to, and -restore looks in for a file named without a directory")
+	doBackup := flag.Bool("backup", false, "back up -users-file and -checklist-db into -backup-dir, then exit (safe while the server runs)")
+	restoreFrom := flag.String("restore", "", "restore -users-file and -checklist-db from this backup, backing up what it replaces first, then exit (the server must be stopped)")
 	flag.Parse()
 
 	// The files kept at their defaults were dotfiles once; those are
 	// moved to their visible names.
 	for _, f := range []struct{ path, def string }{
 		{*usersFile, users.DefaultPath()},
-		{*checklistFile, checklist.DefaultPath()},
+		{*checklistJSON, checklist.DefaultJSONPath()},
 		{*auditFile, defaultAuditPath()},
 	} {
 		if f.path != f.def {
@@ -65,6 +70,34 @@ func main() {
 			log.Print(said)
 		}
 	}
+
+	files := backup.Files{Users: *usersFile, Checklists: *checklistDB}
+	switch {
+	case *doBackup && *restoreFrom != "":
+		log.Fatal("-backup and -restore cannot be used together")
+	case *doBackup:
+		path, err := backup.Create(*backupDir, files, time.Now())
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("backed up to %s", path)
+		return
+	case *restoreFrom != "":
+		if err := restore(*restoreFrom, *backupDir, files); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	// Held while the server runs, so that nothing is restored under it,
+	// nor another server started on the same files.
+	unlock, err := backup.Lock(files.LockPath())
+	if errors.Is(err, backup.ErrInUse) {
+		log.Fatalf("another adhd-dash is using %s", *checklistDB)
+	} else if err != nil {
+		log.Fatal(err)
+	}
+	defer unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -90,7 +123,16 @@ func main() {
 
 	// Checklists made before each was a user's become the admin's, and any
 	// of a user no longer there, which no one could reach, are removed.
-	checklistStore := checklist.NewStore(*checklistFile)
+	checklistStore, err := checklist.Open(*checklistDB)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer checklistStore.Close() //nolint:errcheck
+	if n, err := checklistStore.ImportJSON(*checklistJSON); err != nil {
+		log.Fatal(err)
+	} else if n > 0 {
+		log.Printf("imported %d checklists from %s into %s; it is renamed %s.imported", n, *checklistJSON, *checklistDB, *checklistJSON)
+	}
 	userIDs := map[int]bool{}
 	for _, u := range userList {
 		userIDs[u.ID] = true
@@ -110,8 +152,11 @@ func main() {
 	cfg := session.Config{
 		Shutdown: shutdown,
 		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
-		TaskPool:     tasks.NewPool(),
-		Checklists:   checklistStore,
+		TaskPool:   tasks.NewPool(),
+		Checklists: checklistStore,
+		Backup: func() (string, error) {
+			return backup.Create(*backupDir, files, time.Now())
+		},
 		Users:        userStore,
 		Audit:        auditLog,
 		Limits:       session.NewConnLimiter(*maxConns, *maxConnsPerIP),
@@ -239,6 +284,29 @@ const shutdownGrace = 5 * time.Second
 
 // defaultAuditPath is where the audit log goes unless told otherwise:
 // adhd-dash-audit.log in the home directory.
+// restore restores files from the backup at path, or, if path names no
+// directory and is not in the current one, from that file in dir, and
+// says what it did.
+func restore(path, dir string, files backup.Files) error {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) && filepath.Base(path) == path {
+		path = filepath.Join(dir, path)
+	}
+	r, err := backup.Restore(path, files, dir, time.Now())
+	if err != nil {
+		return err
+	}
+	if r.Saved != "" {
+		log.Printf("backed up what was there to %s", r.Saved)
+	}
+	if r.Users {
+		log.Printf("restored %s from %s, made %s", files.Users, path, r.Created.Local().Format(time.DateTime))
+	}
+	if r.Checklists {
+		log.Printf("restored %s from %s, made %s", files.Checklists, path, r.Created.Local().Format(time.DateTime))
+	}
+	return nil
+}
+
 func defaultAuditPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, "adhd-dash-audit.log")

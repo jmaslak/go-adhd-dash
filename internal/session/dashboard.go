@@ -238,7 +238,7 @@ func placeLineAt(row, col, cols int, l line) []go3270.Field {
 // their calendar, and for a user who controls the light, anything wrong
 // with the flag. The badge is empty when no one controls the light.
 func busyState(v view) (badge go3270.Field, detail line) {
-	detail = line{{Content: nextMeetingText(v)}}
+	detail = nextMeeting(v)
 	if !v.BusyEnabled {
 		return go3270.Field{}, detail
 	}
@@ -269,39 +269,47 @@ func banner(row, cols int, f go3270.Field) go3270.Field {
 	return f
 }
 
-// nextMeetingText describes the user's meeting under way or the next one,
+// nextMeeting describes the user's meetings under way or the next one,
 // from their calendar, by the same rules as the agenda and within the same
-// agendaWindow, so that the two agree. It is "" for a user with no calendar,
-// and until theirs has been read: the busy indicator's feed counts to its
-// own owner's next calendar entry of any kind, all-day ones included,
-// which is no one else's to show.
-func nextMeetingText(v view) string {
+// agendaWindow, so that the two agree. It is empty for a user with no
+// calendar, and until theirs has been read: the busy indicator's feed
+// counts to its own owner's next calendar entry of any kind, all-day ones
+// included, which is no one else's to show.
+func nextMeeting(v view) line {
 	if !v.AgendaEnabled || v.Agenda.Fetched.IsZero() {
-		return ""
+		return line{{}}
 	}
-	if names := meetingsNow(v); len(names) > 0 {
-		return "Meeting now: " + strings.Join(names, ", ")
+	if now := meetingsNow(v); len(now) > 0 {
+		l := line{{Content: "Meeting now:"}}
+		for i, e := range now {
+			title := meetingTitle(e, 0, false)
+			if i < len(now)-1 {
+				title[len(title)-1].Content += ","
+			}
+			l = append(l, title...)
+		}
+		return l
 	}
 	for _, e := range v.Agenda.Upcoming(v.Now) {
 		if isMeeting(e) && e.Start.After(v.Now) && e.Start.Before(v.Now.Add(agendaWindow)) {
-			return "Next meeting in " + duration(e.Start.Sub(v.Now)) + ": " + meetingName(e)
+			return append(line{{Content: "Next meeting in " + duration(e.Start.Sub(v.Now)) + ":"}}, meetingTitle(e, 0, false)...)
 		}
 	}
-	return "No meetings in next 24 hours"
+	return line{{Content: "No meetings in next 24 hours"}}
 }
 
-// meetingsNow names the calendar's timed meetings under way.
-func meetingsNow(v view) []string {
+// meetingsNow are the calendar's timed meetings under way.
+func meetingsNow(v view) []agenda.Event {
 	if !v.AgendaEnabled {
 		return nil
 	}
-	var names []string
+	var out []agenda.Event
 	for _, e := range v.Agenda.Upcoming(v.Now) {
 		if isMeeting(e) && !e.Start.After(v.Now) {
-			names = append(names, meetingName(e))
+			out = append(out, e)
 		}
 	}
-	return names
+	return out
 }
 
 // outOfOfficeTitle matches the titles of out-of-office events. The calendar
@@ -318,14 +326,41 @@ func isMeeting(e agenda.Event) bool {
 // meetingName is e's title, or a stand-in when it has none, after its
 // calendar alias in brackets when it has one.
 func meetingName(e agenda.Event) string {
-	name := e.Summary
-	if name == "" {
-		name = "(No title)"
-	}
 	if e.Calendar != "" {
-		name = "[" + e.Calendar + "] " + name
+		return calendarTag(e) + " " + meetingTitleText(e)
 	}
-	return name
+	return meetingTitleText(e)
+}
+
+// meetingTitleText is e's title, or a stand-in when it has none.
+func meetingTitleText(e agenda.Event) string {
+	if e.Summary == "" {
+		return "(No title)"
+	}
+	return e.Summary
+}
+
+// calendarTag is e's calendar alias in brackets.
+func calendarTag(e agenda.Event) string {
+	return "[" + e.Calendar + "]"
+}
+
+// declinedMark goes before the title of a meeting every other person
+// invited to declined.
+var declinedMark = go3270.Field{Content: "X", Color: go3270.Red, Intense: true}
+
+// meetingTitle is e's name (see meetingName) in color, with declinedMark
+// between its calendar alias and its title when every other person invited
+// declined.
+func meetingTitle(e agenda.Event, color go3270.Color, intense bool) line {
+	if !e.OthersDeclined {
+		return line{{Content: meetingName(e), Color: color, Intense: intense}}
+	}
+	var l line
+	if e.Calendar != "" {
+		l = append(l, go3270.Field{Content: calendarTag(e), Color: color, Intense: intense})
+	}
+	return append(l, declinedMark, go3270.Field{Content: meetingTitleText(e), Color: color, Intense: intense})
 }
 
 // agendaHeader titles the agenda, noting a calendar that cannot be read.
@@ -410,8 +445,8 @@ func agendaContent(v view, limit, cols int) []line {
 			color, intense = go3270.Blue, false
 		}
 
-		text := fmt.Sprintf("%-5s %-11s %-8s %s", dayLabel, when, countdown, meetingName(e))
-		out = append(out, line{{Content: text, Color: color, Intense: intense}})
+		text := fmt.Sprintf("%-5s %-11s %-8s", dayLabel, when, countdown)
+		out = append(out, append(line{{Content: text, Color: color, Intense: intense}}, meetingTitle(e, color, intense)...))
 	}
 	if len(shown) < len(upcoming) {
 		out = append(out, line{{Content: fmt.Sprintf("      ... and %d more", len(upcoming)-len(shown)), Color: go3270.Blue}})

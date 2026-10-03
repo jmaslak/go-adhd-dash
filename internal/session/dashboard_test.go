@@ -311,8 +311,12 @@ func TestIsMeeting(t *testing.T) {
 	if strings.Contains(text, "OOO") || strings.Contains(text, "Out of office") {
 		t.Errorf("out-of-office event shown:\n%s", text)
 	}
-	if got := meetingsNow(v); fmt.Sprint(got) != "[Running]" {
-		t.Errorf("meetings under way are %v, want only Running", got)
+	var now []string
+	for _, e := range meetingsNow(v) {
+		now = append(now, meetingName(e))
+	}
+	if fmt.Sprint(now) != "[Running]" {
+		t.Errorf("meetings under way are %v, want only Running", now)
 	}
 }
 
@@ -618,5 +622,76 @@ func TestNoCalendarNoMeetingLine(t *testing.T) {
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	if !strings.Contains(text, "NOT IN MEETING") || strings.Contains(text, "Meeting now") || strings.Contains(text, "meeting in") {
 		t.Errorf("no calendar:\n%s", text)
+	}
+}
+
+// nextMeetingText is nextMeeting as it reads on the screen, each field
+// after the first one column on, for its attribute byte.
+func nextMeetingText(v view) string {
+	var parts []string
+	for _, f := range nextMeeting(v) {
+		parts = append(parts, f.Content)
+	}
+	return strings.Join(parts, " ")
+}
+
+// TestOthersDeclined checks that a meeting every other person invited to
+// declined has a red X before its title, wherever its title is shown, and
+// that the rest do not.
+func TestOthersDeclined(t *testing.T) {
+	// redXBefore reports whether s has a red X field just before the field
+	// starting with title, on the same row.
+	redXBefore := func(s go3270.Screen, title string) bool {
+		for i, f := range s {
+			if strings.HasPrefix(f.Content, title) && i > 0 {
+				x := s[i-1]
+				return x.Content == "X" && x.Color == go3270.Red && x.Row == f.Row && x.Col+2 == f.Col
+			}
+		}
+		return false
+	}
+
+	v := sampleView(0)
+	v.Agenda.Events[2].OthersDeclined = true // Soon
+	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
+	text := strings.Join(screenText(t, s, 24, 80), "\n")
+	if !redXBefore(s, "Soon") || !strings.Contains(text, "in 15m   X Soon") {
+		t.Errorf("agenda row lacks the red X before Soon:\n%s", text)
+	}
+	if redXBefore(s, "Running") || strings.Contains(text, "X Running") {
+		t.Errorf("Running marked:\n%s", text)
+	}
+
+	// The next meeting, and those under way.
+	v.Agenda.Events = v.Agenda.Events[2:]
+	if got := nextMeetingText(v); got != "Next meeting in 15m: X Soon" {
+		t.Errorf("next meeting %q", got)
+	}
+	v.Agenda.Events = []agenda.Event{
+		{Summary: "A", Start: now.Add(-time.Hour), End: now.Add(time.Hour), OthersDeclined: true},
+		{Summary: "B", Start: now.Add(-time.Hour), End: now.Add(time.Hour)},
+		{Summary: "C", Start: now.Add(-time.Hour), End: now.Add(time.Hour), OthersDeclined: true, Calendar: "work"},
+	}
+	if got := nextMeetingText(v); got != "Meeting now: X A, B, [work] X C" {
+		t.Errorf("meetings now %q", got)
+	}
+	for _, f := range nextMeeting(v) {
+		if f.Content == "X" && f.Color != go3270.Red {
+			t.Errorf("meetings now has an X not red: %+v", f)
+		}
+	}
+
+	// The calendar's day list.
+	day := dayOf(now)
+	l := dayEventLine(agenda.Event{Summary: "Review", Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), OthersDeclined: true}, day, now)
+	if len(l) != 3 || l[1] != declinedMark || l[2].Content != "Review" {
+		t.Errorf("calendar line %+v", l)
+	}
+	l = dayEventLine(agenda.Event{Summary: "Review", Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), OthersDeclined: true, Calendar: "work"}, day, now)
+	if len(l) != 4 || l[1].Content != "[work]" || l[2] != declinedMark || l[3].Content != "Review" {
+		t.Errorf("calendar line with an alias %+v", l)
+	}
+	if l := dayEventLine(agenda.Event{Summary: "Review", Start: now.Add(time.Hour), End: now.Add(2 * time.Hour)}, day, now); len(l) != 2 {
+		t.Errorf("unmarked calendar line %+v", l)
 	}
 }

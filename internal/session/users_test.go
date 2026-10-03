@@ -298,7 +298,7 @@ func TestUsersConsole(t *testing.T) {
 func TestUsersRemoveWithCalendar(t *testing.T) {
 	fake := newFakeGoogle(t)
 	r := newUsersRig(t)
-	r.u.checklists = checklist.NewStore(filepath.Join(t.TempDir(), "cl.json"))
+	r.u.checklists = openChecklists(t)
 	if err := r.u.checklists.Update(func(l *[]checklist.Checklist, nextID func() int) error {
 		*l = append(*l,
 			checklist.Checklist{ID: nextID(), Name: "admin's", Owner: 1},

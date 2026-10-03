@@ -146,7 +146,7 @@ else
     cat >"$options" <<EOF
 # adhd-dash's options, as its command line takes them (see adhd-dash -help,
 # and the README). Its files are in $home, its user's home: the users
-# (adhd-dash-users.json), checklists (adhd-dash-checklists.json) and audit
+# (adhd-dash-users.json), checklists (adhd-dash-checklists.db) and audit
 # log (adhd-dash-audit.log).
 #
 # -host localhost lets only this machine connect. To let terminals and a web

@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -137,6 +138,7 @@ func TestAdminMenu(t *testing.T) {
 		{go3270.AIDEnter, "2", adminActivity, false},
 		{go3270.AIDEnter, "3", adminClearChat, false},
 		{go3270.AIDEnter, "4", adminUsers, false},
+		{go3270.AIDEnter, "8", adminBackup, false},
 		{go3270.AIDEnter, "", adminStay, false},
 		{go3270.AIDEnter, "9", adminStay, true},
 		{go3270.AIDPF4, "1", adminStay, false},
@@ -160,5 +162,34 @@ func TestShutdownConfirm(t *testing.T) {
 	}
 	if c, ok := lookupCommand("ADMIN"); !ok || c.name != "admin" {
 		t.Error("admin command not found")
+	}
+}
+
+func TestAdminBackup(t *testing.T) {
+	var logged []string
+	logf := func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
+
+	msg, ok := runBackup(func() (string, error) { return "/var/lib/adhd-dash/backup/adhd-dash-20261002-174428.tar.gz", nil }, logf)
+	if !ok || msg != "Backed up to adhd-dash-20261002-174428.tar.gz in /var/lib/adhd-dash/backup." {
+		t.Errorf("made: %q, %v", msg, ok)
+	}
+	msg, ok = runBackup(func() (string, error) { return "", errors.New("disk full") }, logf)
+	if ok || msg != "Backup failed: disk full" {
+		t.Errorf("failed: %q, %v", msg, ok)
+	}
+	if len(logged) != 2 || !strings.Contains(logged[0], "backed up to") || !strings.Contains(logged[1], "disk full") {
+		t.Errorf("logged %q", logged)
+	}
+	if msg, ok := runBackup(nil, logf); ok || !strings.Contains(msg, "cannot make backups") {
+		t.Errorf("no backups: %q, %v", msg, ok)
+	}
+
+	// The menu shows it, and a message that long fits on a Model 2.
+	s, _, _ := buildAdmin(24, 80, time.Now(), "Backed up to adhd-dash-20261002-174428.tar.gz in /var/lib/adhd-dash/backup.", true, 1)
+	text := strings.Join(screenText(t, s, 24, 80), "\n")
+	for _, want := range []string{"8 Back up the users and checklists", "in /var/lib/adhd-dash/backup."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("admin menu lacks %q:\n%s", want, text)
+		}
 	}
 }

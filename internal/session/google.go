@@ -80,9 +80,7 @@ func (cfg Config) agendaFor(u *users.User) *agenda.Cache {
 	key := strings.Join(append([]string{strconv.Itoa(u.ID), client.ClientID, client.ClientSecret, link.RefreshToken},
 		fmt.Sprint(ids), fmt.Sprint(aliases)), "\x00")
 	return cfg.Agendas.Get(key, func() agenda.Source {
-		src := agenda.NewGoogle(google.Tokens(google.Client{ID: client.ClientID, Secret: client.ClientSecret}, link.RefreshToken), ids, aliases)
-		src.Client.BaseURL = google.APIBase
-		return src
+		return agenda.NewGoogle(google.Tokens(google.Client{ID: client.ClientID, Secret: client.ClientSecret}, link.RefreshToken), ids, aliases)
 	})
 }
 
