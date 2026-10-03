@@ -164,7 +164,7 @@ func TestEvents(t *testing.T) {
 	})
 	loc := time.FixedZone("MDT", -6*3600)
 	from := time.Date(2026, 9, 27, 0, 0, 0, 0, loc)
-	events, err := Events(context.Background(), Tokens(Client{ID: "cid", Secret: "cs"}, "rt"), "c_1@group.calendar.google.com", from, from.AddDate(0, 0, 2), loc)
+	events, err := Events(context.Background(), "", Tokens(Client{ID: "cid", Secret: "cs"}, "rt"), "c_1@group.calendar.google.com", from, from.AddDate(0, 0, 2), loc)
 	if err != nil {
 		t.Fatal(err)
 	}

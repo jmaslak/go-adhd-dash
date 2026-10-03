@@ -76,7 +76,7 @@ func TestTaskListScreen(t *testing.T) {
 	if rows[taskFirstRow] != " X    1 task 1" || rows[taskFirstRow+1] != "      2 task 2" {
 		t.Errorf("first rows are %q, %q", rows[taskFirstRow], rows[taskFirstRow+1])
 	}
-	if !strings.Contains(rows[22], "Type X beside each task") || !strings.Contains(rows[23], "PF3=Back") {
+	if !strings.Contains(rows[22], "Type X beside tasks") || !strings.Contains(rows[23], "PF3=Back") {
 		t.Errorf("message and help rows are %q, %q", rows[22], rows[23])
 	}
 	if crow != taskFirstRow || ccol != 1 {
@@ -134,7 +134,7 @@ func TestTaskListMarking(t *testing.T) {
 	arch := &fakeArchiver{}
 	tp := &taskPageState{}
 	key := func(aid go3270.AID, values map[string]string) (confirm, leave bool) {
-		a := tp.handleList(go3270.Response{AID: aid, Values: values}, all, 2, arch)
+		a := tp.handleList(go3270.Response{AID: aid, Values: values}, all, 2, arch, nil)
 		return a == taskListConfirm, a == taskListLeave
 	}
 
@@ -171,7 +171,7 @@ func TestTaskListMarking(t *testing.T) {
 	}
 
 	// PF4 goes to add a task, keeping the marks typed with it.
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF4, Values: map[string]string{"mark:103": "X"}}, all, 2, arch); a != taskListAdd || !tp.marked["103"] {
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF4, Values: map[string]string{"mark:103": "X"}}, all, 2, arch, nil); a != taskListAdd || !tp.marked["103"] {
 		t.Errorf("PF4: action %v, marked %v", a, tp.marked)
 	}
 }

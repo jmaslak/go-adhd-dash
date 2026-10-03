@@ -519,6 +519,10 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Shut down"
 	case modeAddTask:
 		return "Add task"
+	case modeMoveTask:
+		return "Move tasks"
+	case modeSettings:
+		return "Settings"
 	case modeActivity:
 		return "Activity viewer"
 	case modeTerminateConfirm:

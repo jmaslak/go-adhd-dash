@@ -30,21 +30,25 @@ const (
 	taskFirstRow    = 4
 	taskMarkField   = "mark:"
 	taskTitleCol    = 2
-	taskMarkMessage = "Type X beside each task to archive, then press PF6."
+	taskMarkMessage = "Type X beside tasks, then press PF5 to move them or PF6 to archive them."
 )
 
 // taskPageState is one session's place on the task screen: the page shown,
-// the tasks marked for archiving, and those awaiting confirmation.
+// the tasks marked, and those awaiting confirmation of their archiving.
 type taskPageState struct {
 	page int
 
-	// marked holds the card IDs of the tasks marked for archiving. They are
-	// kept by card because numbers shift when tasks are archived.
+	// marked holds the card IDs of the tasks marked, to move or archive.
+	// They are kept by card because numbers shift when tasks are archived.
 	marked map[string]bool
 
 	// confirming are the tasks shown on the confirmation screen, awaiting
 	// PF4.
 	confirming []tasks.Task
+
+	// moving are the tasks marked when PF5 was pressed, for the move-task
+	// screen.
+	moving []tasks.Task
 
 	// message reports the last key's outcome; isError colors it.
 	message string
@@ -135,7 +139,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: tp.isError}})...)
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
-		Content: truncate("PF3=Back PF4=Add PF6=Archive marked PF7=Up PF8=Down Enter=Keep marks", cols-1),
+		Content: truncate("PF3=Back PF4=Add PF5=Move PF6=Archive PF7=Up PF8=Down Enter=Keep marks", cols-1),
 	})
 	return screen, shownPage, totalPages, cursorRow, cursorCol
 }
@@ -193,13 +197,13 @@ func (tp *taskPageState) recordMarks(values map[string]string, all []tasks.Task)
 		case "X":
 			tp.marked[t.CardID] = true
 		default:
-			return fmt.Sprintf("Task %d: type X to mark it for archiving, not %q.", t.Number, v)
+			return fmt.Sprintf("Task %d: type X to mark it, not %q.", t.Number, v)
 		}
 	}
 	return ""
 }
 
-// markedTasks are the open tasks marked for archiving, in task order. Marks
+// markedTasks are the open tasks marked, in task order. Marks
 // on tasks no longer open are dropped.
 func (tp *taskPageState) markedTasks(all []tasks.Task) []tasks.Task {
 	var out []tasks.Task
@@ -225,12 +229,13 @@ const (
 	taskListStay    taskListAction = iota // the task list again
 	taskListConfirm                       // the confirmation for archiving
 	taskListAdd                           // the add-task screen
+	taskListMove                          // the move-task screen, for tp.moving
 	taskListLeave                         // the dashboard
 )
 
 // handleList acts on a key pressed on the task list, returning where to go
 // next. The marks typed are kept whatever the key, except PF3.
-func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, totalPages int, archiver TaskArchiver) taskListAction {
+func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, totalPages int, archiver TaskArchiver, mover TaskMover) taskListAction {
 	tp.message, tp.isError = "", false
 	if resp.AID == go3270.AIDPF3 {
 		return taskListLeave
@@ -247,6 +252,17 @@ func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, tota
 		tp.page = max(tp.page-1, 0)
 	case go3270.AIDPF8:
 		tp.page = min(tp.page+1, totalPages-1)
+	case go3270.AIDPF5:
+		marked := tp.markedTasks(all)
+		switch {
+		case len(marked) == 0:
+			tp.message, tp.isError = "Nothing is marked. "+taskMarkMessage, true
+		case mover == nil:
+			tp.message, tp.isError = "Moving is not available.", true
+		default:
+			tp.moving = marked
+			return taskListMove
+		}
 	case go3270.AIDPF6:
 		marked := tp.markedTasks(all)
 		switch {

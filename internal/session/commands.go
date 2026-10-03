@@ -17,6 +17,9 @@ type command struct {
 	aliases []string
 	key     string // the PF key that does the same, if any
 	what    string
+
+	// hidden leaves the command off the command list; it still works.
+	hidden bool
 }
 
 // commands are the commands, in the order the command list shows them.
@@ -33,9 +36,11 @@ var commands = []command{
 	{name: "down", aliases: []string{"next"}, key: "PF8", what: "Next page of tasks"},
 	{name: "refresh", key: "Enter", what: "Redraw the dashboard now"},
 	{name: "chat", key: "PF11", what: "Chat with the other sessions"},
-	{name: "google", aliases: []string{"gcal"}, what: "Connect your Google calendar; choose calendars"},
-	{name: "trello", what: "Link Trello; choose the lists of your tasks"},
-	{name: "password", aliases: []string{"passwd"}, what: "Change your password"},
+	{name: "settings", what: "Your settings: Google calendar, Trello, password"},
+	// On the settings screen, and still typed directly.
+	{name: "google", aliases: []string{"gcal"}, what: "Connect your Google calendar; choose calendars", hidden: true},
+	{name: "trello", what: "Link Trello; choose the lists of your tasks", hidden: true},
+	{name: "password", aliases: []string{"passwd"}, what: "Change your password", hidden: true},
 	{name: "admin", what: "Admin menu: shut down the server"},
 	{name: "help", aliases: []string{"?"}, what: "This list of commands"},
 	{name: "exit", aliases: []string{"quit", "logoff"}, key: "PF3", what: "Disconnect"},
@@ -96,6 +101,9 @@ func buildHelp(rows, cols int, now time.Time, message string) (screen go3270.Scr
 
 	row := 3
 	for _, c := range commands {
+		if c.hidden {
+			continue
+		}
 		if row > rows-4 { // up to the command line
 			break
 		}

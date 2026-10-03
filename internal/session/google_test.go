@@ -53,6 +53,8 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 				{ID: "c_team@group.calendar.google.com", Summary: "Team"},
 				{ID: "c_long@group.calendar.google.com", Summary: long},
 			}})
+		case strings.HasPrefix(r.URL.Path, "/api/calendars/") && strings.HasSuffix(r.URL.Path, "/events"):
+			w.Write([]byte(`{"items": []}`)) //nolint:errcheck
 		case r.URL.Path == "/api/calendars/en.usa#holiday@group.v.calendar.google.com":
 			w.Write([]byte(`{"id": "en.usa#holiday@group.v.calendar.google.com", "summary": "Holidays"}`)) //nolint:errcheck
 		default:

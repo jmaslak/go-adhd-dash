@@ -214,7 +214,7 @@ func dayFields(rows, cols int, v calendarView) []go3270.Field {
 	case !v.AgendaEnabled:
 		lines = []line{
 			{{Content: "No Google calendar connected.", Color: go3270.Blue}},
-			{{Content: "Type GOOGLE on the dashboard to connect one.", Color: go3270.Blue}},
+			{{Content: "Connect one in SETTINGS, typed on the dashboard.", Color: go3270.Blue}},
 		}
 	default:
 		for _, e := range v.Events {

@@ -207,6 +207,21 @@ func (c *trelloClient) createCard(ctx context.Context, listID, name string) (str
 	return card.ID, nil
 }
 
+// moveCard moves a card to the bottom of list listID, on board boardID,
+// which may be another board than its own.
+func (c *trelloClient) moveCard(ctx context.Context, cardID, boardID, listID string) error {
+	var card trelloItem
+	query := url.Values{"idBoard": {boardID}, "idList": {listID}, "pos": {"bottom"}, "fields": {"idList"}}
+	path := "1/cards/" + url.PathEscape(cardID)
+	if err := c.do(ctx, http.MethodPut, path, query, &card); err != nil {
+		return err
+	}
+	if card.IDList != listID {
+		return fmt.Errorf("trello: %s: the card was not moved", path)
+	}
+	return nil
+}
+
 // closeCard marks a card's due date complete and archives the card, as is
 // done to a card whose task is finished.
 func (c *trelloClient) closeCard(ctx context.Context, cardID string) error {

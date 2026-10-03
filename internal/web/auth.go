@@ -540,8 +540,9 @@ var connectPage = mustPage(`
 {{if .Message}}<p class="{{if .IsError}}error{{else}}ok{{end}}">{{.Message}}</p>{{end}}
 {{if .Connected}}
 <p>Your Google calendar is connected. To choose which of its calendars show on
-your dashboard, type <code>GOOGLE</code> on the terminal's command line (or, if
-the terminal is showing the steps for connecting, press Enter there).</p>
+your dashboard, type <code>SETTINGS</code> on the terminal's command line and
+choose option 2 (or, if the terminal is showing the steps for connecting,
+press Enter there).</p>
 <p><a class="button" href="{{.Terminal}}">Go to the terminal</a></p>
 <p><a href="{{.Here}}/start">Connect again</a></p>
 {{else}}
@@ -549,8 +550,8 @@ the terminal is showing the steps for connecting, press Enter there).</p>
 them for you to choose from and to show the events of those you choose. It
 never changes a calendar. See the <a href="{{.Privacy}}">privacy policy</a>.</p>
 <p><a class="button" href="{{.Here}}/start">Connect your Google calendar</a></p>
-<p>Then, on the terminal, type <code>GOOGLE</code> (or press Enter on the screen
-it shows) to choose which calendars to show.</p>
+<p>Then, on the terminal, type <code>SETTINGS</code> and choose option 2 (or
+press Enter on the screen it shows) to choose which calendars to show.</p>
 {{end}}
 <form method="post" action="{{.Here}}/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><p><button type="submit" class="link">Sign out</button></p></form>
 `)
@@ -561,9 +562,9 @@ var trelloConnectPage = mustPage(`
 {{if .Message}}<p class="{{if .IsError}}error{{else}}ok{{end}}">{{.Message}}</p>{{end}}
 {{if .Connected}}
 <p>Your Trello account{{if .Account}}, <strong>{{.Account}}</strong>,{{end}} is linked.
-To choose which of its lists show on your dashboard, type <code>TRELLO</code> on
-the terminal's command line (or, if the terminal is showing the steps for
-linking, press Enter there).</p>
+To choose which of its lists show on your dashboard, type <code>SETTINGS</code>
+on the terminal's command line and choose option 3 (or, if the terminal is
+showing the steps for linking, press Enter there).</p>
 <p><a class="button" href="{{.Terminal}}">Go to the terminal</a></p>
 <p><a href="{{.Here}}/start">Link again</a></p>
 {{else}}
@@ -572,8 +573,8 @@ lists for you to choose from, to show the cards on the lists you choose as your
 tasks, and to add cards and archive them when you add or finish a task on the
 terminal. See the <a href="{{.Privacy}}">privacy policy</a>.</p>
 <p><a class="button" href="{{.Here}}/start">Link your Trello account</a></p>
-<p>Then, on the terminal, type <code>TRELLO</code> (or press Enter on the screen
-it shows) to choose which lists to show.</p>
+<p>Then, on the terminal, type <code>SETTINGS</code> and choose option 3 (or
+press Enter on the screen it shows) to choose which lists to show.</p>
 {{end}}
 <form method="post" action="{{.Here}}/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><p><button type="submit" class="link">Sign out</button></p></form>
 `)

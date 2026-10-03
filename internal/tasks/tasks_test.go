@@ -13,9 +13,10 @@ import (
 	"time"
 )
 
-// fakeTrello is two boards: Work, with lists Today (l1) and Later (l2), and
-// Home, with Inbox (l3). It adds and archives cards, and can be made to fail
-// or to hold fetches until released.
+// fakeTrello is three boards: Work, with lists Today (l1) and Later (l2),
+// Home, with Inbox (l3), and Projects, with Someday (l4), whose cards are
+// not read as tasks. It adds, moves and archives cards, and can be made to
+// fail or to hold fetches until released.
 type fakeTrello struct {
 	mu     sync.Mutex
 	cards  []trelloItem
@@ -73,6 +74,7 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply([]Board{
 			{ID: "b1", Name: "Work", Lists: []List{{ID: "l1", Name: "Today"}, {ID: "l2", Name: "Later"}}},
 			{ID: "b2", Name: "Home", Lists: []List{{ID: "l3", Name: "Inbox"}}},
+			{ID: "b3", Name: "Projects", Lists: []List{{ID: "l4", Name: "Someday"}}},
 		})
 	case r.Method == http.MethodGet && p == "/1/members/me":
 		reply(map[string]string{"id": "m1", "username": "joelle"})
@@ -107,6 +109,22 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.cards = append(f.cards, card)
 		f.mu.Unlock()
 		reply(card)
+	case r.Method == http.MethodPut && strings.HasPrefix(p, "/1/cards/") && q.Get("idList") != "" && q.Get("pos") == "bottom":
+		id, list := strings.TrimPrefix(p, "/1/cards/"), q.Get("idList")
+		if board := map[string]string{"l1": "b1", "l2": "b1", "l3": "b2", "l4": "b3"}[list]; board == "" || board != q.Get("idBoard") {
+			http.Error(w, "invalid value for idList", http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for i, c := range f.cards {
+			if c.ID == id {
+				f.cards[i].IDList, f.cards[i].Pos = list, 5000
+				reply(trelloItem{ID: id, IDList: list})
+				return
+			}
+		}
+		http.Error(w, "The requested resource was not found.", http.StatusNotFound)
 	case r.Method == http.MethodPut && strings.HasPrefix(p, "/1/cards/") && q.Get("closed") == "true" && q.Get("dueComplete") == "true":
 		id := strings.TrimPrefix(p, "/1/cards/")
 		f.mu.Lock()
@@ -289,6 +307,70 @@ func TestCacheArchiveAndAdd(t *testing.T) {
 	}
 }
 
+func TestCacheMove(t *testing.T) {
+	f := newFakeTrello()
+	clock := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	c := newTestCache(t, f, &clock)
+	c.Snapshot()
+	c.fetches.Wait()
+	ctx := context.Background()
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:first[work] 4:second[work]" {
+		t.Fatalf("before: %s", got)
+	}
+
+	// Every list on every board is offered, the ones not read as tasks too.
+	boards, err := c.Boards(ctx)
+	if err != nil || len(boards) != 3 || boards[2].Lists[0].ID != "l4" {
+		t.Fatalf("boards %+v, %v", boards, err)
+	}
+
+	// To a list read as tasks, on another board: it goes after that list's
+	// tasks, with its tag.
+	s := c.Snapshot()
+	if err := c.Move(ctx, s.Tasks[2], testLists[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later] 4:second[work]" {
+		t.Errorf("moved to Inbox: %s", got)
+	}
+	// To one that is not: it leaves.
+	someday := Destination{BoardID: "b3", Board: "Projects", ListID: "l4", List: "Someday"}
+	if err := c.Move(ctx, c.Snapshot().Tasks[3], someday); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later]" {
+		t.Errorf("moved to Someday: %s", got)
+	}
+	// Trello agrees.
+	c.fetches.Wait()
+	clock = clock.Add(time.Hour)
+	c.Snapshot()
+	c.fetches.Wait()
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later]" {
+		t.Errorf("after fetching: %s", got)
+	}
+	f.mu.Lock()
+	onSomeday := 0
+	for _, card := range f.cards {
+		if card.IDList == "l4" {
+			onSomeday++
+		}
+	}
+	f.mu.Unlock()
+	if onSomeday != 1 {
+		t.Errorf("%d cards on Someday, want 1", onSomeday)
+	}
+
+	// A failure changes nothing.
+	f.setFail(true)
+	if err := c.Move(ctx, c.Snapshot().Tasks[0], someday); err == nil {
+		t.Error("move with Trello failing succeeded")
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later]" {
+		t.Errorf("tasks changed by a failure: %s", got)
+	}
+}
+
 func TestCacheDiscardsOvertakenFetch(t *testing.T) {
 	f := newFakeTrello()
 	clock := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
@@ -364,7 +446,7 @@ func TestTrelloHelpers(t *testing.T) {
 	ctx := context.Background()
 
 	boards, err := Boards(ctx, cfg)
-	if err != nil || len(boards) != 2 || boards[0].Name != "Work" || len(boards[0].Lists) != 2 || boards[1].Lists[0].ID != "l3" {
+	if err != nil || len(boards) != 3 || boards[0].Name != "Work" || len(boards[0].Lists) != 2 || boards[1].Lists[0].ID != "l3" {
 		t.Errorf("boards %+v, %v", boards, err)
 	}
 	if name, err := Member(ctx, cfg); err != nil || name != "joelle" {

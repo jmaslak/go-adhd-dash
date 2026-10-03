@@ -141,8 +141,8 @@ sudo systemctl start adhd-dash
 | `-login-timeout` | `60s` | how long the login screen waits for a login |
 | `-audit-log` | `~/adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
 
-The calendars are each user's own, chosen with the
-`google` command and kept in `-users-file`; a user with none sees no
+The calendars are each user's own, chosen on the
+`settings` screen and kept in `-users-file`; a user with none sees no
 calendar information at all.
 
 ## Keys
@@ -168,11 +168,18 @@ The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
-`checklist`, `chat`, `google` (connect your Google calendar), `trello`
-(link your Trello account), `password` (change your password), `busy`,
-`green`, `off`, `up`, `down`, `refresh`, `admin`, `help` and `exit`,
-in either case, with a few aliases (`task`, `calendar`, `cl`, `gcal`, `passwd`,
-`next`, `prev`, `quit`, `logoff`, `?`). The dashboard's timed redraw writes over the screen
+`checklist`, `chat`, `settings`, `busy`, `green`, `off`, `up`, `down`,
+`refresh`, `admin`, `help` and `exit`, in either case, with a few aliases
+(`task`, `calendar`, `cl`, `next`, `prev`, `quit`, `logoff`, `?`).
+
+`settings` is the user's own settings, one option per row with how each
+stands, chosen by number as the admin menu's are: `1` changes their
+password, `2` connects their Google calendar and chooses its calendars
+(showing, e.g., "connected, 2 calendars shown"), and `3` links Trello and
+chooses their task lists. Each of those comes back to the settings screen, saying
+what was done. The commands `google` (or `gcal`), `trello` and `password`
+(or `passwd`) still open them straight from the dashboard, and come back
+there, but `help` does not list them. The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
 
 The chat (`chat` or `PF11`) is shared by every session of this server, each
@@ -232,8 +239,8 @@ The admin menu (`admin`) lists its options by number; type one on the
 
 ### Users
 
-Any user changes their own password with `password` (or `passwd`) on the
-dashboard: their current password, then the new one twice, all typed
+Any user changes their own password on the `settings` screen (option `1`,
+or `password` on the dashboard): their current password, then the new one twice, all typed
 hidden, and `Enter`. It is refused if the current one is wrong, the two
 new ones differ, or it is the same as the old one; `admin` cannot go back
 to the default password `admin`.
@@ -368,13 +375,15 @@ On the calendar, a month is shown with the selected day's events beside it. Move
 The calendar reads each month from Google as it is shown and reuses it for
 `-agenda-refresh`, separately from the today-and-tomorrow agenda. A user
 with no calendar connected sees the month and the clocks, with a note to
-use `google`.
+connect one in `settings`.
 
-The task screen lists every open task, whatever its tags. Type `X` in the `S` column beside the tasks to archive,
-then press `PF6`; a confirmation lists them, and `PF4` archives them. Marks
-are kept while paging.
+The task screen lists every open task, whatever its tags. Type `X` in the
+`S` column beside tasks, then press `PF5` to move them or `PF6` to archive
+them; a confirmation lists them, and `PF4` does it. Marks are kept while
+paging.
 
 - `PF4`: add a task
+- `PF5`: move the marked tasks to another Trello list, after confirmation
 - `PF6`: archive the marked tasks, after confirmation
 - `PF7` / `PF8`: previous / next page
 - `Enter`: keep the marks typed, archiving nothing
@@ -387,6 +396,17 @@ already), then press `Enter`. A card is added at the bottom of that list, and
 the task screen comes back saying which task number it got; marks typed
 before `PF4` are kept. If the card cannot be added, the screen says why.
 `PF3` goes back without adding.
+
+`PF5` moves the marked tasks: it lists every open list on every Trello
+board you can see, not only those your tasks come from (those show their
+tag), a page at a time (`PF7` / `PF8`). Type any character beside one and
+press `Enter`; a confirmation lists the tasks and the list, and `PF4` moves
+their cards to the bottom of it, which may be on another board, then goes
+back to the task screen saying how many moved. A task moved to one of your
+lists stays on the task screen, with that list's tag; moved anywhere else,
+it leaves. `PF3` on the confirmation picks another list; on the lists, it
+goes back with nothing moved. Moving stops at the first task that fails;
+it stays marked, to try again.
 
 The task screen never redraws on a timer, since that would wipe marks typed
 but not yet sent.
@@ -638,8 +658,8 @@ asks first, as they will each have to connect again.
 ```
 
 **Each user then connects on the web site** (see [Web site](#web-site)),
-which must be served and have its address set. Typing `google` (or `gcal`)
-on the dashboard shows the steps:
+which must be served and have its address set. Option `2` on the `settings`
+screen shows the steps:
 
 1. In a browser, go to the site's `google` page, e.g.
    `https://adhd.example.com/google`.
@@ -676,8 +696,8 @@ Each user's calendars are read every `-agenda-refresh` while any of their
 sessions is showing them, and that agenda is shared by their sessions; one
 not used for three intervals is dropped. If a fetch fails, the last agenda
 stays up, marked stale. If Google refuses the authorization (it was
-withdrawn, or the client changed), the agenda says to type `google` to
-reconnect.
+withdrawn, or the client changed), the agenda says to reconnect in
+`settings`.
 
 Cancelled events and events you declined are left out, as the busy indicator
 does.
@@ -772,7 +792,7 @@ secret is not needed. Replacing or removing a key that users are linked
 through asks first, as each will have to link again.
 
 **Each user then links on the web site** (see [Web site](#web-site)).
-Typing `trello` on the dashboard shows the steps:
+Option `3` on the `settings` screen shows the steps:
 
 1. In a browser, go to the site's `trello` page, e.g.
    `https://adhd.example.com/trello`.

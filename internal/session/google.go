@@ -90,7 +90,7 @@ func (cfg Config) agendaFor(u *users.User) *agenda.Cache {
 func agendaErrorText(err error) string {
 	var rejected *gauth.RejectedError
 	if errors.As(err, &rejected) {
-		return "type GOOGLE to reconnect (Google refused your authorization)"
+		return "reconnect in SETTINGS (Google refused your authorization)"
 	}
 	return err.Error()
 }
@@ -724,7 +724,7 @@ func buildGoogleClientConfirm(rows, cols int, now time.Time, n int, remove bool)
 	}
 	screen = append(screen, placeLine(2, cols, line{{Content: question, Color: go3270.Yellow, Intense: true}})...)
 	screen = append(screen, placeLine(4, cols, line{{
-		Content: countText(n, "user", 0, 1) + " connected through it will need to connect again (GOOGLE command).",
+		Content: countText(n, "user", 0, 1) + " connected through it will need to connect again (in SETTINGS).",
 	}})...)
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: "Press PF4 to go ahead, or PF3 to go back.", Color: go3270.White, Intense: true}})...)
 	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate("PF3=Back "+key, cols-1)})

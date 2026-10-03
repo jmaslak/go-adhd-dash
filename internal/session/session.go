@@ -266,6 +266,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var tp taskPageState
 	var cl checklistState
 	var at addTaskState
+	var mv moveTaskState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -290,6 +291,40 @@ func Handle(rawConn net.Conn, cfg Config) {
 		log.Printf("session %d (%s): %s", sessionID, rawConn.RemoteAddr(), fmt.Sprintf(format, args...))
 	}
 
+	// settingsBack is the screen the Google calendar, Trello and password
+	// screens go back to: the settings screen, if opened from it, else the
+	// dashboard.
+	settingsBack := modeDashboard
+
+	// openSetting opens the screen of the user's own setting command
+	// (google, trello or password), or says why it cannot.
+	openSetting := func(command string) (why string) {
+		id := 0
+		if user != nil {
+			id = user.ID
+		}
+		switch command {
+		case "google":
+			g, why := startGoogle(cfg.Users, id, cfg.HTTPListen != "")
+			if why != "" {
+				return why
+			}
+			mode, gs = modeGoogle, g
+		case "password":
+			if user == nil || cfg.Users == nil {
+				return "There is no user database to keep a password in."
+			}
+			mode, pw = modePassword, passwordState{}
+		case "trello":
+			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
+			if why != "" {
+				return why
+			}
+			mode, tr = modeTrello, t
+		}
+		return ""
+	}
+
 	// runCommand does what a command typed on the dashboard or the command
 	// list asks, or what the PF key doing the same asks, reporting whether
 	// it is to disconnect. Unless the command goes to another screen, it
@@ -304,7 +339,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		switch c.name {
 		case "tasks":
 			if cfg.tasksFor(user) == nil {
-				message = "No Trello lists are linked; type TRELLO to link them."
+				message = "No Trello lists are linked; link them in SETTINGS."
 				break
 			}
 			mode, tp = modeTasks, taskPageState{}
@@ -335,34 +370,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 			mode = modeAdmin
 		case "chat":
 			mode, ch = modeChat, chatState{}
-		case "google":
-			id := 0
-			if user != nil {
-				id = user.ID
-			}
-			g, why := startGoogle(cfg.Users, id, cfg.HTTPListen != "")
-			if why != "" {
-				message = why
-				break
-			}
-			mode, gs = modeGoogle, g
-		case "password":
+		case "settings":
 			if user == nil || cfg.Users == nil {
-				message = "There is no user database to keep a password in."
+				message = "There is no user database to keep your settings in."
 				break
 			}
-			mode, pw = modePassword, passwordState{}
-		case "trello":
-			id := 0
-			if user != nil {
-				id = user.ID
-			}
-			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
-			if why != "" {
-				message = why
-				break
-			}
-			mode, tr = modeTrello, t
+			mode = modeSettings
+		case "google", "password", "trello":
+			settingsBack = modeDashboard
+			message = openSetting(c.name)
 		case "exit":
 			loggedOut = true
 			return true
@@ -450,6 +466,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeAddTask:
 			screen, cursorRow, cursorCol = buildAddTask(rows, cols, now, taskAdder(cfg.tasksFor(user)), &at)
 			redrawOnTimer = false
+		case modeMoveTask:
+			screen, cursorRow, cursorCol = buildMoveTask(rows, cols, now, &mv)
+			redrawOnTimer = false
 		case modeAdmin:
 			screen, cursorRow, cursorCol = buildAdmin(rows, cols, now, message, messageOK, cfg.Shutdown.Sessions())
 			redrawOnTimer = false
@@ -477,6 +496,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modePassword:
 			screen, cursorRow, cursorCol = buildPassword(rows, cols, now, user.Name, &pw)
+			redrawOnTimer = false
+		case modeSettings:
+			screen, cursorRow, cursorCol = buildSettings(rows, cols, now, user.Name, settingsStatus(cfg.Users, user.ID), message, !messageOK)
 			redrawOnTimer = false
 		case modeTrelloKey:
 			list, client, err := cfg.Users.TrelloClient()
@@ -585,13 +607,19 @@ func Handle(rawConn net.Conn, cfg Config) {
 				}
 			}
 		case modeTasks:
-			switch tp.handleList(resp, allTasks, totalPages, taskArchiver(cfg.tasksFor(user))) {
+			switch tp.handleList(resp, allTasks, totalPages, taskArchiver(cfg.tasksFor(user)), taskMover(cfg.tasksFor(user))) {
 			case taskListLeave:
 				mode = modeDashboard
 			case taskListConfirm:
 				mode = modeConfirm
 			case taskListAdd:
 				mode, at = modeAddTask, addTaskState{}
+			case taskListMove:
+				mode, mv = modeMoveTask, startMove(taskMover(cfg.tasksFor(user)), tp.moving)
+			}
+		case modeMoveTask:
+			if back, said, isError := mv.handle(resp, taskMover(cfg.tasksFor(user)), &tp, logf); back {
+				mode, tp.message, tp.isError = modeTasks, said, isError
 			}
 		case modeConfirm:
 			if tp.handleConfirm(resp, taskArchiver(cfg.tasksFor(user)), logf) {
@@ -689,7 +717,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modeGoogle:
 			if leave, said := gs.handle(resp, cfg.Users, logf); leave {
-				mode, message = modeDashboard, said
+				mode, message, messageOK = settingsBack, said, true
 			}
 		case modeGoogleClient:
 			if gc.handle(resp, cfg.Users, logf) {
@@ -697,11 +725,21 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modePassword:
 			if leave, said := pw.handle(resp, cfg.Users, user, logf); leave {
-				mode, message = modeDashboard, said
+				mode, message, messageOK = settingsBack, said, true
 			}
 		case modeTrello:
 			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
-				mode, message = modeDashboard, said
+				mode, message, messageOK = settingsBack, said, true
+			}
+		case modeSettings:
+			switch command, leave, bad := settingsChoice(resp); {
+			case leave:
+				mode = modeDashboard
+			case command != "":
+				settingsBack = modeSettings
+				message = openSetting(command)
+			default:
+				message = bad
 			}
 		case modeTrelloKey:
 			if tk.handle(resp, cfg.Users, logf) {
@@ -783,6 +821,8 @@ const (
 	modeTrello
 	modeTrelloKey
 	modePassword
+	modeMoveTask
+	modeSettings
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
@@ -797,6 +837,14 @@ func chatName(u *users.User, lu string) string {
 // taskArchiver is c as a TaskArchiver, nil (not a nil *tasks.Cache in an
 // interface) when c is nil.
 func taskArchiver(c *tasks.Cache) TaskArchiver {
+	if c == nil {
+		return nil
+	}
+	return c
+}
+
+// taskMover is c as a TaskMover, nil when c is nil.
+func taskMover(c *tasks.Cache) TaskMover {
 	if c == nil {
 		return nil
 	}

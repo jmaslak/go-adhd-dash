@@ -226,12 +226,17 @@ type Google struct {
 	Aliases []string
 
 	Tokens google.TokenSource
+
+	// APIBase is the Calendar API's address, as google.APIBase was when
+	// the source was made, so that tests pointing it elsewhere for a while
+	// do not send a later fetch to Google.
+	APIBase string
 }
 
 // NewGoogle returns a source for calendars, authorized by tokens. aliases
 // is nil, or one name for each calendar.
 func NewGoogle(tokens google.TokenSource, calendars, aliases []string) *Google {
-	return &Google{Calendars: calendars, Aliases: aliases, Tokens: tokens}
+	return &Google{Calendars: calendars, Aliases: aliases, Tokens: tokens, APIBase: google.APIBase}
 }
 
 // Events reads every calendar. One calendar failing fails the whole fetch,
@@ -240,7 +245,7 @@ func NewGoogle(tokens google.TokenSource, calendars, aliases []string) *Google {
 func (g *Google) Events(ctx context.Context, from, to time.Time) ([]Event, error) {
 	var all []Event
 	for i, cal := range g.Calendars {
-		events, err := google.Events(ctx, g.Tokens, cal, from, to, from.Location())
+		events, err := google.Events(ctx, g.APIBase, g.Tokens, cal, from, to, from.Location())
 		if err != nil {
 			return nil, err
 		}

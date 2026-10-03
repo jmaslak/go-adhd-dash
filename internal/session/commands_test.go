@@ -46,9 +46,21 @@ func TestHelpScreen(t *testing.T) {
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
 	for _, c := range commands {
-		if !strings.Contains(text, " "+c.name) || !strings.Contains(text, c.what) {
+		switch shown := strings.Contains(text, c.what); {
+		case c.hidden && shown:
+			t.Errorf("command list shows the hidden %q:\n%s", c.name, text)
+		case !c.hidden && (!shown || !strings.Contains(text, " "+c.name)):
 			t.Errorf("command list lacks %q:\n%s", c.name, text)
 		}
+	}
+	// Hidden from the list, on the settings screen, but still commands.
+	for _, name := range []string{"google", "gcal", "trello", "password", "passwd"} {
+		if c, ok := lookupCommand(strings.ToUpper(name)); !ok || !c.hidden {
+			t.Errorf("%s: found %v, %+v; want a hidden command", name, ok, c)
+		}
+	}
+	if strings.Contains(text, "passwd") || strings.Contains(text, "gcal") {
+		t.Errorf("command list shows a hidden command's alias:\n%s", text)
 	}
 	for _, want := range []string{"tasks (task)", "exit (logoff, quit)", "PF10", "Unknown command"} {
 		if !strings.Contains(text, want) {

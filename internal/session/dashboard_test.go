@@ -402,7 +402,7 @@ func TestDashboardDegraded(t *testing.T) {
 	// A refused authorization says how to fix it.
 	v.Agenda.Err = fmt.Errorf("refreshing: %w", errors.Join(&gauth.RejectedError{Source: "x", Code: "invalid_grant"}))
 	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "type GOOGLE to reconnect") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "reconnect in SETTINGS") {
 		t.Errorf("refused authorization not explained:\n%s", text)
 	}
 }

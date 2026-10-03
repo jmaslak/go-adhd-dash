@@ -203,10 +203,14 @@ type eventTime struct {
 }
 
 // Events returns the events on the calendar with id overlapping from..to,
-// recurring ones as each occurrence, in order of their start. Cancelled
-// events, and those the user declined, are left out. A date (an all-day
-// event's) is read as midnight in loc.
-func Events(ctx context.Context, tokens TokenSource, id string, from, to time.Time, loc *time.Location) ([]Event, error) {
+// recurring ones as each occurrence, in order of their start, from the
+// Calendar API at base ("" for APIBase). Cancelled events, and those the
+// user declined, are left out. A date (an all-day event's) is read as
+// midnight in loc.
+func Events(ctx context.Context, base string, tokens TokenSource, id string, from, to time.Time, loc *time.Location) ([]Event, error) {
+	if base == "" {
+		base = APIBase
+	}
 	var out []Event
 	page := ""
 	for {
@@ -225,7 +229,7 @@ func Events(ctx context.Context, tokens TokenSource, id string, from, to time.Ti
 			Items         []wireEvent `json:"items"`
 			NextPageToken string      `json:"nextPageToken"`
 		}
-		if err := get(ctx, tokens, APIBase+"/calendars/"+url.PathEscape(id)+"/events?"+q.Encode(), &resp); err != nil {
+		if err := get(ctx, tokens, base+"/calendars/"+url.PathEscape(id)+"/events?"+q.Encode(), &resp); err != nil {
 			return nil, fmt.Errorf("calendar %s: %w", id, err)
 		}
 		for _, w := range resp.Items {

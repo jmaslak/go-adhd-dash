@@ -211,6 +211,58 @@ func (c *Cache) Archive(ctx context.Context, t Task) error {
 	return nil
 }
 
+// Boards are the open boards the Trello token can see, each with its open
+// lists: where a task can be moved to.
+func (c *Cache) Boards(ctx context.Context) ([]Board, error) {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return Boards(ctx, cfg)
+}
+
+// Move moves t's card to the bottom of d's list, which need not be one its
+// tasks are read from. In the cache, t goes after the other tasks of d's
+// list if it is one of those, with its tag, and otherwise leaves.
+func (c *Cache) Move(ctx context.Context, t Task, d Destination) error {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return err
+	}
+	client, err := newTrelloClient(cfg)
+	if err != nil {
+		return err
+	}
+	if err := client.moveCard(ctx, t.CardID, d.BoardID, d.ListID); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.snap.Tasks = slices.DeleteFunc(c.snap.Tasks, func(x Task) bool { return x.CardID == t.CardID })
+	order := slices.IndexFunc(cfg.Lists, func(l Destination) bool { return l.ListID == d.ListID })
+	if order >= 0 {
+		shown := cfg.Lists[order]
+		t.Dest, t.Tags = shown, shown.tags()
+		c.snap.Tasks = slices.Insert(c.snap.Tasks, c.after(cfg.Lists, order), t)
+	}
+	c.changed()
+	return nil
+}
+
+// after is where a task added to the bottom of lists[order] goes among the
+// cached tasks: after the last of that list's, or of a list before it.
+// c.mu must be held.
+func (c *Cache) after(lists []Destination, order int) int {
+	at := 0
+	for i, t := range c.snap.Tasks {
+		if slices.Index(lists, t.Dest) <= order {
+			at = i + 1
+		}
+	}
+	return at
+}
+
 // Add adds a task titled title as a card at the bottom of d's list,
 // returning its number. The task joins the cache at once, after the others
 // on its list.
@@ -230,14 +282,7 @@ func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, erro
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// After the last task of d's list, or of a list before it.
-	order := slices.Index(cfg.Lists, d)
-	at := 0
-	for i, t := range c.snap.Tasks {
-		if slices.Index(cfg.Lists, t.Dest) <= order {
-			at = i + 1
-		}
-	}
+	at := c.after(cfg.Lists, slices.Index(cfg.Lists, d))
 	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: d.tags(), CardID: cardID, Dest: d})
 	c.changed()
 	return at + 1, nil

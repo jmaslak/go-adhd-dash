@@ -310,8 +310,8 @@ page</a>, with the user name and password they use on the terminal.</p>
 <p>Linking a Trello account is optional. A user who links one gives
 {{.AppName}} access to their Trello boards, so that it can list their boards'
 lists for the user to choose from, show the cards on the lists chosen as
-their tasks, and add a card, or archive one, when the user adds or finishes a
-task on the terminal. It changes nothing else, and keeps no copy of any card.
+their tasks, and add a card, move one to another of their lists, or archive
+one, when the user adds, moves or finishes a task on the terminal. It changes nothing else, and keeps no copy of any card.
 The user can unlink at any time, which deletes the token and asks Trello to
 withdraw it. Users link their account on <a href="{{.Trello}}">this site's
 Trello page</a>.</p>
@@ -371,8 +371,8 @@ for advertising, not used to determine credit-worthiness, not used to train
 artificial intelligence models, and not transferred to anyone else, except as
 needed to provide the features described here, to comply with the law, or as
 part of a merger or acquisition with your consent.</p>
-<p>You can disconnect your calendar at any time with the <code>google</code>
-command on the dashboard: your authorization and choices are deleted, and
+<p>You can disconnect your calendar at any time on the <code>settings</code>
+screen on the dashboard: your authorization and choices are deleted, and
 Google is asked to withdraw the authorization. You can also withdraw it
 yourself on your Google Account's
 <a href="https://myaccount.google.com/permissions">third-party access page</a>.</p>
@@ -382,13 +382,14 @@ yourself on your Google Account's
 and write your boards, which does not expire until you unlink or withdraw it.
 It uses the token only to list your boards and their lists, so that you can
 choose which to show; to read the cards on the lists you chose, to show them
-to you as your tasks; and, when you add or finish a task on the terminal, to
-add that card or to mark it done and archive it. Cards are held in memory
+to you as your tasks; and, when you add, move or finish a task on the
+terminal, to add that card, to move it to the list you pick (on any of your
+boards), or to mark it done and archive it. Cards are held in memory
 while you are using the service, refreshed every quarter of an hour, never
 written to disk, never shown to other users, and never used for anything
 else.</p>
-<p>You can unlink your Trello account at any time with the
-<code>trello</code> command on the dashboard: your token and choices are
+<p>You can unlink your Trello account at any time on the
+<code>settings</code> screen on the dashboard: your token and choices are
 deleted, and Trello is asked to withdraw the token. You can also withdraw it
 yourself in your Trello account's settings, under applications.</p>
 
@@ -398,7 +399,7 @@ by everyone signed in. {{.Organization}}'s administrators of this service can
 see the accounts, the records of use and the sessions connected, and those who
 run the server can read the files it keeps. Nothing is shared with anyone else,
 except Google and Trello, to read the calendars and lists you connect (and,
-on Trello, to add and archive the cards you ask to), and where the law
+on Trello, to add, move and archive the cards you ask to), and where the law
 requires it.</p>
 
 <h2>How it is kept</h2>
@@ -477,7 +478,7 @@ time.</p>
 
 <h2>Trello</h2>
 <p>Linking a Trello account is optional. If you do, {{.AppName}} reads the
-Trello lists you choose, and adds and archives cards on them when you ask it
+Trello lists you choose, and adds, moves and archives cards when you ask it
 to, as the privacy policy describes; your use of Trello remains subject to
 Trello's own terms. You can unlink at any time.</p>
 
