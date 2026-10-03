@@ -310,8 +310,9 @@ page</a>, with the user name and password they use on the terminal.</p>
 <p>Linking a Trello account is optional. A user who links one gives
 {{.AppName}} access to their Trello boards, so that it can list their boards'
 lists for the user to choose from, show the cards on the lists chosen as
-their tasks, and add a card, move one to another of their lists, or archive
-one, when the user adds, moves or finishes a task on the terminal. It changes nothing else, and keeps no copy of any card.
+their tasks (and on any other list the user asks to view), and add, rename,
+reorder, move or archive a card when the user asks to on the terminal. It changes nothing else, and keeps
+no copy of any card.
 The user can unlink at any time, which deletes the token and asks Trello to
 withdraw it. Users link their account on <a href="{{.Trello}}">this site's
 Trello page</a>.</p>
@@ -382,9 +383,11 @@ yourself on your Google Account's
 and write your boards, which does not expire until you unlink or withdraw it.
 It uses the token only to list your boards and their lists, so that you can
 choose which to show; to read the cards on the lists you chose, to show them
-to you as your tasks; and, when you add, move or finish a task on the
-terminal, to add that card, to move it to the list you pick (on any of your
-boards), or to mark it done and archive it. Cards are held in memory
+to you as your tasks, and on any other list you ask to view, to show them to
+you; and, when you add, change, move or finish a task on the terminal, to
+add that card, to rename it or change its place on its list, to
+move it to the list you pick (on any of your boards), or to mark it done and
+archive it. Cards are held in memory
 while you are using the service, refreshed every quarter of an hour, never
 written to disk, never shown to other users, and never used for anything
 else.</p>
@@ -399,7 +402,7 @@ by everyone signed in. {{.Organization}}'s administrators of this service can
 see the accounts, the records of use and the sessions connected, and those who
 run the server can read the files it keeps. Nothing is shared with anyone else,
 except Google and Trello, to read the calendars and lists you connect (and,
-on Trello, to add, move and archive the cards you ask to), and where the law
+on Trello, to add, change, move and archive the cards you ask to), and where the law
 requires it.</p>
 
 <h2>How it is kept</h2>
@@ -478,8 +481,8 @@ time.</p>
 
 <h2>Trello</h2>
 <p>Linking a Trello account is optional. If you do, {{.AppName}} reads the
-Trello lists you choose, and adds, moves and archives cards when you ask it
-to, as the privacy policy describes; your use of Trello remains subject to
+Trello lists you choose, and adds, renames, reorders, moves and archives
+cards when you ask it to, as the privacy policy describes; your use of Trello remains subject to
 Trello's own terms. You can unlink at any time.</p>
 
 <h2>Your content</h2>

@@ -186,7 +186,7 @@ func fetchTasks(ctx context.Context, c *trelloClient, lists []Destination) ([]Ta
 			return 0
 		})
 		for _, card := range cards {
-			out = append(out, Task{Title: card.Name, Tags: d.tags(), CardID: card.ID, Dest: d})
+			out = append(out, Task{Title: card.Name, Tags: d.tags(), CardID: card.ID, Dest: d, Pos: card.Pos})
 		}
 	}
 	renumber(out)
@@ -220,6 +220,30 @@ func (c *trelloClient) moveCard(ctx context.Context, cardID, boardID, listID str
 		return fmt.Errorf("trello: %s: the card was not moved", path)
 	}
 	return nil
+}
+
+// renameCard sets a card's title.
+func (c *trelloClient) renameCard(ctx context.Context, cardID, name string) error {
+	var card trelloItem
+	path := "1/cards/" + url.PathEscape(cardID)
+	if err := c.do(ctx, http.MethodPut, path, url.Values{"name": {name}, "fields": {"name"}}, &card); err != nil {
+		return err
+	}
+	if card.Name != name {
+		return fmt.Errorf("trello: %s: the card was not renamed", path)
+	}
+	return nil
+}
+
+// positionCard moves a card within its list to pos ("top", "bottom" or a
+// number), returning the position it took.
+func (c *trelloClient) positionCard(ctx context.Context, cardID, pos string) (float64, error) {
+	var card trelloItem
+	path := "1/cards/" + url.PathEscape(cardID)
+	if err := c.do(ctx, http.MethodPut, path, url.Values{"pos": {pos}, "fields": {"pos"}}, &card); err != nil {
+		return 0, err
+	}
+	return card.Pos, nil
 }
 
 // closeCard marks a card's due date complete and archives the card, as is

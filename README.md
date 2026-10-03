@@ -380,15 +380,34 @@ connect one in `settings`.
 The task screen lists every open task, whatever its tags. Type `X` in the
 `S` column beside tasks, then press `PF5` to move them or `PF6` to archive
 them; a confirmation lists them, and `PF4` does it. Marks are kept while
-paging.
+paging. Typing `X` moves the cursor on to the task's title.
 
 - `PF4`: add a task
 - `PF5`: move the marked tasks to another Trello list, after confirmation
 - `PF6`: archive the marked tasks, after confirmation
 - `PF7` / `PF8`: previous / next page
-- `Enter`: keep the marks typed, archiving nothing
-- `PF4` (on the confirmation): archive
-- `PF3`: back (from the confirmation, to the list with the marks kept)
+- `PF9`: show the cards of any of your Trello lists, including those not on
+  the task list, on a task screen of their own
+- `PF10` / `PF11`: move the task marked (or, with none marked, the one the
+  cursor is on) up / down one place in its Trello list
+- type over a title, and press any key: rename the task, after confirmation
+- `Enter`: keep the marks typed
+- `PF4` (on a confirmation): archive, or rename
+- `PF3`: back (from a confirmation, to the list with the marks, and titles
+  typed, kept)
+
+To rename tasks, type over their titles; whatever key is pressed then, a
+confirmation lists each task with its new title. `PF4` renames them,
+stopping at the first that fails, which stays typed; `PF3` goes back to
+change what was typed; `PF12` discards it. A title cannot be blanked (to
+finish a task, archive it). A title too long to fit is shown cut short;
+typing over it renames the task to what is typed.
+
+`PF10` and `PF11` move one task within its own Trello list, past the task
+before or after it there: on the task screen, which lists several lists'
+tasks in turn, tasks of other lists in between are passed over. The cursor
+follows the task. It cannot go above the first of its list or below the
+last; to move it to another list, use `PF5`.
 
 `PF4` adds a task: type its title, and the number of the Trello board and
 list to put it on, from those the user chose (with only one, it is picked
@@ -407,6 +426,17 @@ lists stays on the task screen, with that list's tag; moved anywhere else,
 it leaves. `PF3` on the confirmation picks another list; on the lists, it
 goes back with nothing moved. Moving stops at the first task that fails;
 it stays marked, to try again.
+
+`PF9` shows other lists: it lists every open list on every Trello board you
+can see, as `PF5` does (those your tasks come from show their tag), a page
+at a time. Type any character beside one and press `Enter` to show its open
+cards on a task screen of their own (TRELLO LIST), numbered from 1; the
+heading says whether they are on your task list. It works as the task
+screen does: mark, move, archive, rename, reorder and add (`PF4` adds to
+the bottom of that list), with the same keys. Its cards are read again
+after every change, and once a minute. `PF3` goes back to the lists, and
+`PF3` there to the task screen as it was left, with any marks kept; `PF9`
+also goes back to the lists.
 
 The task screen never redraws on a timer, since that would wipe marks typed
 but not yet sent.

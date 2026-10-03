@@ -82,7 +82,7 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(map[string]any{})
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/1/lists/") && strings.HasSuffix(p, "/cards"):
 		list := strings.TrimSuffix(strings.TrimPrefix(p, "/1/lists/"), "/cards")
-		if list != "l1" && list != "l2" && list != "l3" {
+		if list != "l1" && list != "l2" && list != "l3" && list != "l4" {
 			http.Error(w, "The requested resource was not found.", http.StatusNotFound)
 			return
 		}
@@ -123,6 +123,38 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				reply(trelloItem{ID: id, IDList: list})
 				return
 			}
+		}
+		http.Error(w, "The requested resource was not found.", http.StatusNotFound)
+	case r.Method == http.MethodPut && strings.HasPrefix(p, "/1/cards/") && q.Get("idList") == "" && (q.Get("name") != "" || q.Get("pos") != ""):
+		id := strings.TrimPrefix(p, "/1/cards/")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for i, c := range f.cards {
+			if c.ID != id {
+				continue
+			}
+			if name := q.Get("name"); name != "" {
+				f.cards[i].Name = name
+			}
+			switch pos := q.Get("pos"); pos {
+			case "":
+			case "top", "bottom":
+				edge := 0.0
+				for _, o := range f.cards {
+					if o.IDList == c.IDList && (pos == "top" && o.Pos < edge || pos == "bottom" && o.Pos > edge || edge == 0) {
+						edge = o.Pos
+					}
+				}
+				if pos == "top" {
+					f.cards[i].Pos = edge / 2
+				} else {
+					f.cards[i].Pos = edge + 1000
+				}
+			default:
+				fmt.Sscan(pos, &f.cards[i].Pos) //nolint:errcheck
+			}
+			reply(f.cards[i])
+			return
 		}
 		http.Error(w, "The requested resource was not found.", http.StatusNotFound)
 	case r.Method == http.MethodPut && strings.HasPrefix(p, "/1/cards/") && q.Get("closed") == "true" && q.Get("dueComplete") == "true":
@@ -361,13 +393,91 @@ func TestCacheMove(t *testing.T) {
 		t.Errorf("%d cards on Someday, want 1", onSomeday)
 	}
 
+	// Its cards can be read, though they are not tasks.
+	cards, err := c.Cards(ctx, someday)
+	if err != nil || len(cards) != 1 || cards[0].Title != "second" || cards[0].Number != 1 || len(cards[0].Tags) != 0 {
+		t.Errorf("Someday's cards %+v, %v", cards, err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later]" {
+		t.Errorf("reading Someday changed the tasks: %s", got)
+	}
+
 	// A failure changes nothing.
 	f.setFail(true)
+	if _, err := c.Cards(ctx, someday); err == nil {
+		t.Error("reading cards with Trello failing succeeded")
+	}
 	if err := c.Move(ctx, c.Snapshot().Tasks[0], someday); err == nil {
 		t.Error("move with Trello failing succeeded")
 	}
 	if got := titles(c.Snapshot()); got != "1:home[home] 2:first[home] 3:later[later]" {
 		t.Errorf("tasks changed by a failure: %s", got)
+	}
+}
+
+func TestCacheRenameAndReposition(t *testing.T) {
+	f := newFakeTrello()
+	clock := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	c := newTestCache(t, f, &clock)
+	c.Snapshot()
+	c.fetches.Wait()
+	ctx := context.Background()
+	s := c.Snapshot()
+	if got := titles(s); got != "1:home[home] 2:later[later] 3:first[work] 4:second[work]" {
+		t.Fatalf("before: %s", got)
+	}
+	if s.Tasks[2].Pos != 100 || s.Tasks[3].Pos != 200 {
+		t.Errorf("positions %v, %v; want Trello's, 100 and 200", s.Tasks[2].Pos, s.Tasks[3].Pos)
+	}
+
+	if err := c.Rename(ctx, s.Tasks[2], "the first"); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:the first[work] 4:second[work]" {
+		t.Errorf("renamed: %s", got)
+	}
+
+	// second to the top of Today: before the first, in the cache at once.
+	if err := c.Reposition(ctx, c.Snapshot().Tasks[3], "top"); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:second[work] 4:the first[work]" {
+		t.Errorf("repositioned: %s", got)
+	}
+	// And to a number.
+	if err := c.Reposition(ctx, c.Snapshot().Tasks[2], "150"); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:the first[work] 4:second[work]" {
+		t.Errorf("repositioned to 150: %s", got)
+	}
+	// Trello agrees.
+	c.fetches.Wait()
+	clock = clock.Add(time.Hour)
+	c.Snapshot()
+	c.fetches.Wait()
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:the first[work] 4:second[work]" {
+		t.Errorf("after fetching: %s", got)
+	}
+
+	// Added to a list not read as tasks, the cache is left alone.
+	someday := Destination{BoardID: "b3", Board: "Projects", ListID: "l4", List: "Someday"}
+	if n, err := c.Add(ctx, "idea", someday); err != nil || n != 0 {
+		t.Errorf("added to Someday: %d, %v; want 0", n, err)
+	}
+	if got := titles(c.Snapshot()); got != "1:home[home] 2:later[later] 3:the first[work] 4:second[work]" {
+		t.Errorf("adding to Someday changed the tasks: %s", got)
+	}
+	if cards, _ := c.Cards(ctx, someday); len(cards) != 1 || cards[0].Title != "idea" {
+		t.Errorf("Someday's cards %+v", cards)
+	}
+
+	f.setFail(true)
+	if err := c.Rename(ctx, c.Snapshot().Tasks[0], "x"); err == nil {
+		t.Error("rename with Trello failing succeeded")
+	}
+	if err := c.Reposition(ctx, c.Snapshot().Tasks[0], "top"); err == nil {
+		t.Error("reposition with Trello failing succeeded")
 	}
 }
 

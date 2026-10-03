@@ -264,9 +264,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 	var cal calendarState
 	var tp taskPageState
+	// tasksTP is the task screen of the user's tasks, kept while one of
+	// their Trello lists is shown in its place (PF9).
+	var tasksTP taskPageState
 	var cl checklistState
 	var at addTaskState
 	var mv moveTaskState
+	var bs browseState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -446,12 +450,15 @@ func Handle(rawConn net.Conn, cfg Config) {
 			cal.load(cache, cfg.AgendaRefresh, now)
 			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, cache != nil))
 		case modeTasks:
-			snap := cfg.tasksFor(user).Snapshot()
+			snap := tasks.Snapshot{Err: errors.New("no Trello lists are linked")}
+			if src := tp.source(taskBackend(cfg.tasksFor(user))); src != nil {
+				snap = src.Snapshot()
+			}
 			allTasks = snap.Tasks
 			screen, tp.page, totalPages, cursorRow, cursorCol = buildTaskList(rows, cols, now, snap, &tp)
 			redrawOnTimer = false
 		case modeConfirm:
-			screen, cursorRow, cursorCol = buildArchiveConfirm(rows, cols, now, tp.confirming), rows-1, 0
+			screen, cursorRow, cursorCol = buildTaskConfirm(rows, cols, now, &tp), rows-1, 0
 			redrawOnTimer = false
 		case modeCalc:
 			screen, cursorRow, cursorCol = buildCalc(rows, cols, now, &calc)
@@ -464,10 +471,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildHelp(rows, cols, now, message)
 			redrawOnTimer = false
 		case modeAddTask:
-			screen, cursorRow, cursorCol = buildAddTask(rows, cols, now, taskAdder(cfg.tasksFor(user)), &at)
+			screen, cursorRow, cursorCol = buildAddTask(rows, cols, now, tp.adder(taskBackend(cfg.tasksFor(user))), &at)
 			redrawOnTimer = false
 		case modeMoveTask:
 			screen, cursorRow, cursorCol = buildMoveTask(rows, cols, now, &mv)
+			redrawOnTimer = false
+		case modeBrowse:
+			screen, cursorRow, cursorCol = buildBrowse(rows, cols, now, &bs)
 			redrawOnTimer = false
 		case modeAdmin:
 			screen, cursorRow, cursorCol = buildAdmin(rows, cols, now, message, messageOK, cfg.Shutdown.Sessions())
@@ -607,22 +617,38 @@ func Handle(rawConn net.Conn, cfg Config) {
 				}
 			}
 		case modeTasks:
-			switch tp.handleList(resp, allTasks, totalPages, taskArchiver(cfg.tasksFor(user)), taskMover(cfg.tasksFor(user))) {
+			backend := taskBackend(cfg.tasksFor(user))
+			switch tp.handleList(resp, allTasks, totalPages, tp.source(backend), logf) {
 			case taskListLeave:
 				mode = modeDashboard
+				if tp.view != nil {
+					mode = modeBrowse // the lists, the one shown still selected
+				}
 			case taskListConfirm:
 				mode = modeConfirm
 			case taskListAdd:
 				mode, at = modeAddTask, addTaskState{}
 			case taskListMove:
-				mode, mv = modeMoveTask, startMove(taskMover(cfg.tasksFor(user)), tp.moving)
+				mode, mv = modeMoveTask, startMove(tp.source(backend), tp.moving)
+			case taskListBrowse:
+				if tp.view == nil {
+					tasksTP, bs = tp, startBrowse(backend)
+				}
+				mode = modeBrowse
+			}
+		case modeBrowse:
+			switch back, d, ok := bs.handle(resp); {
+			case back:
+				mode, tp = modeTasks, tasksTP
+			case ok:
+				mode, tp = modeTasks, taskPageState{view: newListView(taskBackend(cfg.tasksFor(user)), d)}
 			}
 		case modeMoveTask:
-			if back, said, isError := mv.handle(resp, taskMover(cfg.tasksFor(user)), &tp, logf); back {
+			if back, said, isError := mv.handle(resp, tp.source(taskBackend(cfg.tasksFor(user))), &tp, logf); back {
 				mode, tp.message, tp.isError = modeTasks, said, isError
 			}
 		case modeConfirm:
-			if tp.handleConfirm(resp, taskArchiver(cfg.tasksFor(user)), logf) {
+			if tp.handleConfirm(resp, tp.source(taskBackend(cfg.tasksFor(user))), logf) {
 				mode = modeTasks
 			}
 		case modeCalc:
@@ -640,7 +666,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeDashboard
 			}
 		case modeAddTask:
-			if leave, added := at.handle(resp, taskAdder(cfg.tasksFor(user))); leave {
+			if leave, added := at.handle(resp, tp.adder(taskBackend(cfg.tasksFor(user)))); leave {
 				mode = modeTasks
 				if added != "" {
 					tp.message, tp.isError = added, false
@@ -823,6 +849,7 @@ const (
 	modePassword
 	modeMoveTask
 	modeSettings
+	modeBrowse
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
@@ -834,25 +861,9 @@ func chatName(u *users.User, lu string) string {
 	return u.Name
 }
 
-// taskArchiver is c as a TaskArchiver, nil (not a nil *tasks.Cache in an
+// taskBackend is c as a TaskBackend, nil (not a nil *tasks.Cache in an
 // interface) when c is nil.
-func taskArchiver(c *tasks.Cache) TaskArchiver {
-	if c == nil {
-		return nil
-	}
-	return c
-}
-
-// taskMover is c as a TaskMover, nil when c is nil.
-func taskMover(c *tasks.Cache) TaskMover {
-	if c == nil {
-		return nil
-	}
-	return c
-}
-
-// taskAdder is c as a TaskAdder, nil when c is nil.
-func taskAdder(c *tasks.Cache) TaskAdder {
+func taskBackend(c *tasks.Cache) TaskBackend {
 	if c == nil {
 		return nil
 	}

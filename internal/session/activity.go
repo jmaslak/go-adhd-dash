@@ -523,6 +523,8 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Move tasks"
 	case modeSettings:
 		return "Settings"
+	case modeBrowse:
+		return "Trello lists"
 	case modeActivity:
 		return "Activity viewer"
 	case modeTerminateConfirm:

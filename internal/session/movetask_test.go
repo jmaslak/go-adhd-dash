@@ -46,19 +46,19 @@ func (f *fakeMover) Move(_ context.Context, t tasks.Task, d tasks.Destination) e
 func TestTaskListMove(t *testing.T) {
 	all := someTasks(5)
 	tp := &taskPageState{}
-	mover := &fakeMover{}
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5}, all, 1, nil, mover); a != taskListStay || !strings.Contains(tp.message, "Nothing is marked") {
+	src := &fakeTasks{}
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5}, all, 1, src, noLog); a != taskListStay || !strings.Contains(tp.message, "Nothing is marked") {
 		t.Errorf("PF5 with nothing marked: %v, %q", a, tp.message)
 	}
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:102": "X"}}, all, 1, nil, nil); a != taskListStay || !strings.Contains(tp.message, "not available") {
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:102": "X"}}, all, 1, nil, noLog); a != taskListStay || !strings.Contains(tp.message, "not available") {
 		t.Errorf("PF5 with no mover: %v, %q", a, tp.message)
 	}
-	a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:104": "x"}}, all, 1, nil, mover)
+	a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:104": "x"}}, all, 1, src, noLog)
 	if a != taskListMove || len(tp.moving) != 2 || tp.moving[0].Number != 2 || tp.moving[1].Number != 4 {
 		t.Errorf("PF5 with marks: %v, moving %+v", a, tp.moving)
 	}
 	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF5=Move") || !strings.Contains(text, "PF5 to move them") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF5=Move") || !strings.Contains(text, "PF5 moves them") {
 		t.Errorf("task list does not offer moving:\n%s", text)
 	}
 }

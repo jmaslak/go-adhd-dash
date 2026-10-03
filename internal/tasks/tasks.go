@@ -5,6 +5,7 @@
 package tasks
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -52,6 +53,9 @@ type Task struct {
 
 	CardID string
 	Dest   Destination
+
+	// Pos is the card's position on its list, as Trello orders them.
+	Pos float64
 }
 
 // renumber numbers ts in order, from 1.
@@ -221,6 +225,20 @@ func (c *Cache) Boards(ctx context.Context) ([]Board, error) {
 	return Boards(ctx, cfg)
 }
 
+// Cards reads the open cards on d's list, which need not be one tasks are
+// read from, as tasks numbered from 1, given d's tag. Nothing is cached.
+func (c *Cache) Cards(ctx context.Context, d Destination) ([]Task, error) {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	client, err := newTrelloClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return fetchTasks(ctx, client, []Destination{d})
+}
+
 // Move moves t's card to the bottom of d's list, which need not be one its
 // tasks are read from. In the cache, t goes after the other tasks of d's
 // list if it is one of those, with its tag, and otherwise leaves.
@@ -264,8 +282,9 @@ func (c *Cache) after(lists []Destination, order int) int {
 }
 
 // Add adds a task titled title as a card at the bottom of d's list,
-// returning its number. The task joins the cache at once, after the others
-// on its list.
+// returning its number. If d is one of the lists tasks are read from, the
+// task joins the cache at once, after the others on its list; if not, the
+// number is 0.
 func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, error) {
 	cfg, err := c.loadConfig()
 	if err != nil {
@@ -282,10 +301,77 @@ func (c *Cache) Add(ctx context.Context, title string, d Destination) (int, erro
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	at := c.after(cfg.Lists, slices.Index(cfg.Lists, d))
-	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: d.tags(), CardID: cardID, Dest: d})
+	order := slices.IndexFunc(cfg.Lists, func(l Destination) bool { return l.ListID == d.ListID })
+	if order < 0 {
+		c.changed()
+		return 0, nil
+	}
+	at := c.after(cfg.Lists, order)
+	c.snap.Tasks = slices.Insert(c.snap.Tasks, at, Task{Title: title, Tags: cfg.Lists[order].tags(), CardID: cardID, Dest: cfg.Lists[order]})
 	c.changed()
 	return at + 1, nil
+}
+
+// Rename renames t's card title. In the cache, t takes the title at once.
+func (c *Cache) Rename(ctx context.Context, t Task, title string) error {
+	client, err := c.client()
+	if err != nil {
+		return err
+	}
+	if err := client.renameCard(ctx, t.CardID, title); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.snap.Tasks {
+		if c.snap.Tasks[i].CardID == t.CardID {
+			c.snap.Tasks[i].Title = title
+		}
+	}
+	c.changed()
+	return nil
+}
+
+// Reposition moves t's card within its list to pos: "top", "bottom", or a
+// position as Trello numbers them. In the cache, t takes its new place
+// among its list's tasks at once.
+func (c *Cache) Reposition(ctx context.Context, t Task, pos string) error {
+	client, err := c.client()
+	if err != nil {
+		return err
+	}
+	at, err := client.positionCard(ctx, t.CardID, pos)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cfg, _ := c.loadConfig()
+	for i := range c.snap.Tasks {
+		if c.snap.Tasks[i].CardID == t.CardID {
+			c.snap.Tasks[i].Pos = at
+		}
+	}
+	order := func(t Task) int {
+		return slices.IndexFunc(cfg.Lists, func(l Destination) bool { return l.ListID == t.Dest.ListID })
+	}
+	slices.SortStableFunc(c.snap.Tasks, func(a, b Task) int {
+		if oa, ob := order(a), order(b); oa != ob {
+			return oa - ob
+		}
+		return cmp.Compare(a.Pos, b.Pos)
+	})
+	c.changed()
+	return nil
+}
+
+// client is a Trello client for the configuration as it is now.
+func (c *Cache) client() (*trelloClient, error) {
+	cfg, err := c.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return newTrelloClient(cfg)
 }
 
 // Pool keeps a Cache for each of a set of task sources, by key. A key should

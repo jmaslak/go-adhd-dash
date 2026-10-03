@@ -545,12 +545,8 @@ func checklistTaskLine(l checklist.Checklist) line {
 
 // taskLine is one task: its number and tags, then its title.
 func taskLine(t tasks.Task) line {
-	prefix := fmt.Sprintf("%4d", t.Number)
-	if len(t.Tags) > 0 {
-		prefix += " [" + strings.Join(t.Tags, "] [") + "]"
-	}
 	return line{
-		{Content: prefix, Color: go3270.Turquoise},
+		{Content: taskPrefix(t), Color: go3270.Turquoise},
 		{Content: t.Title, Color: go3270.Green, Intense: true},
 	}
 }
