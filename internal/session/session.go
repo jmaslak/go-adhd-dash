@@ -256,6 +256,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var at addTaskState
 	var mv moveTaskState
 	var bs browseState
+	var tm timerState
+	var pf preferencesState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -303,6 +305,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 				return "There is no user database to keep a password in."
 			}
 			mode, pw = modePassword, passwordState{}
+		case "preferences":
+			if user == nil || cfg.Users == nil {
+				return "There is no user database to keep preferences in."
+			}
+			mode, pf = modePreferences, preferencesState{}
 		case "trello":
 			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
 			if why != "" {
@@ -358,6 +365,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 			mode = modeAdmin
 		case "chat":
 			mode, ch = modeChat, chatState{}
+		case "timer":
+			mode, tm = modeTimer, timerState{}
 		case "settings":
 			if user == nil || cfg.Users == nil {
 				message = "There is no user database to keep your settings in."
@@ -494,6 +503,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeSignup:
 			screen, cursorRow, cursorCol = buildSignup(rows, cols, now, user.Name, &su)
 			redrawOnTimer = false
+		case modeTimer:
+			// Counting down and done redraw each second; asking, what is
+			// typed must not be wiped.
+			screen, cursorRow, cursorCol = buildTimer(rows, cols, now, &tm, prefsOf(cfg.Users, ownerOf(user)))
+			redrawOnTimer = tm.step != timerAsk
+		case modePreferences:
+			screen, cursorRow, cursorCol = buildPreferences(rows, cols, now, user.Name, prefsOf(cfg.Users, user.ID), &pf)
+			redrawOnTimer = false
 		case modeSettings:
 			screen, cursorRow, cursorCol = buildSettings(rows, cols, now, user.Name, settingsStatus(cfg.Users, user.ID), message, !messageOK)
 			redrawOnTimer = false
@@ -527,7 +544,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		opts := go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, CursorRow: cursorRow, CursorCol: cursorCol,
 		}
-		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity) {
+		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity || mode == modeTimer) {
 			screen, opts.NoClear = fillScreen(screen, rows, cols), true
 		}
 
@@ -537,6 +554,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 		switch {
 		case mode == modeLogin:
 			deadline = login.expires
+		case mode == modeTimer && redrawOnTimer:
+			deadline = tm.deadline(time.Now())
 		case redrawOnTimer:
 			deadline = nextRedraw(time.Now(), cfg.Refresh)
 		}
@@ -756,6 +775,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
 				mode, message, messageOK = settingsBack, said, true
 			}
+		case modePreferences:
+			if back, said := pf.handle(resp, cfg.Users, user, logf); back {
+				mode, message, messageOK = settingsBack, said, true
+			}
+		case modeTimer:
+			if tm.handle(resp, time.Now(), logf) {
+				mode = modeDashboard
+			}
 		case modeSignup:
 			created := func(name string) {
 				cfg.Audit.Record(audit.UserCreated, auditFields(name, audit.F("by", user.Name))...)
@@ -860,6 +887,8 @@ const (
 	modeSettings
 	modeBrowse
 	modeSignup
+	modeTimer
+	modePreferences
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

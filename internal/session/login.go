@@ -10,6 +10,7 @@ import (
 
 	"github.com/racingmars/go3270"
 
+	"github.com/jmaslak/go-adhd-dash/internal/bigtext"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -37,56 +38,56 @@ const (
 	loginWidth     = 30
 )
 
-// bannerGlyph is one character of the login banner, drawn in # (which
-// every code page has) seven rows high and five wide, each row in a color.
-type bannerGlyph struct {
-	rows   [7]string
-	colors [7]go3270.Color
+// bannerPart is a piece of the login banner: text, in big characters,
+// each row in a color.
+type bannerPart struct {
+	text   string
+	colors [bigtext.Height]go3270.Color
 }
 
-// solid is every row of a glyph in c.
-func solid(c go3270.Color) [7]go3270.Color {
-	return [7]go3270.Color{c, c, c, c, c, c, c}
+// solid is every row of a big character in c.
+func solid(c go3270.Color) [bigtext.Height]go3270.Color {
+	return [bigtext.Height]go3270.Color{c, c, c, c, c, c, c}
 }
 
-// rainbow colors a lowercase glyph's five rows in bands, as near a rainbow
-// as the 3270's colors come: red, yellow, green, turquoise, blue. (Its top
-// two rows are blank.)
-var rainbow = [7]go3270.Color{
+// rainbow colors a lowercase character's five rows in bands, as near a
+// rainbow as the 3270's colors come: red, yellow, green, turquoise, blue.
+// (Its top two rows are blank.)
+var rainbow = [bigtext.Height]go3270.Color{
 	go3270.Red, go3270.Red, go3270.Red, go3270.Yellow, go3270.Green, go3270.Turquoise, go3270.Blue,
 }
 
-// Glyphs for the banner. Lowercase letters stand on the baseline, two rows
-// shorter than the rest.
-var (
-	glyphE     = [7]string{"     ", "     ", " ### ", "#   #", "#####", "#    ", " ####"}
-	glyphX     = [7]string{"     ", "     ", "#   #", " # # ", "  #  ", " # # ", "#   #"}
-	glyphC     = [7]string{"     ", "     ", " ####", "#    ", "#    ", "#    ", " ####"}
-	glyphSlash = [7]string{"    #", "    #", "   # ", "  #  ", " #   ", "#    ", "#    "}
-	glyph3     = [7]string{"#### ", "    #", "    #", " ### ", "    #", "    #", "#### "}
-	glyph2     = [7]string{" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####"}
-	glyph7     = [7]string{"#####", "    #", "   # ", "  #  ", " #   ", " #   ", " #   "}
-	glyph0     = [7]string{" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "}
-)
-
 // loginBanner is "exec/3270": the name in rainbow bands, the slash in
 // white, the number in yellow.
-var loginBanner = []bannerGlyph{
-	{glyphE, rainbow}, {glyphX, rainbow}, {glyphE, rainbow}, {glyphC, rainbow},
-	{glyphSlash, solid(go3270.White)},
-	{glyph3, solid(go3270.Yellow)}, {glyph2, solid(go3270.Yellow)}, {glyph7, solid(go3270.Yellow)}, {glyph0, solid(go3270.Yellow)},
+var loginBanner = []bannerPart{
+	{"exec", rainbow},
+	{"/", solid(go3270.White)},
+	{"3270", solid(go3270.Yellow)},
 }
 
-// bannerGlyphWidth is how many columns a glyph takes: its attribute byte,
-// five columns of the glyph, and a space after it.
-const bannerGlyphWidth = 7
+// bannerGlyphWidth is how many columns a character takes: its attribute
+// byte, its columns, and a space after it.
+const bannerGlyphWidth = 1 + bigtext.Width + 1
 
-// bannerLines are the banner's rows, each glyph a field of its own color.
+// bannerChars is how many characters the banner has.
+func bannerChars() int {
+	n := 0
+	for _, p := range loginBanner {
+		n += len([]rune(p.text))
+	}
+	return n
+}
+
+// bannerLines are the banner's rows, each character a field of its own
+// color.
 func bannerLines() []line {
-	out := make([]line, 7)
+	out := make([]line, bigtext.Height)
 	for r := range out {
-		for _, g := range loginBanner {
-			out[r] = append(out[r], go3270.Field{Content: g.rows[r] + " ", Color: g.colors[r], Intense: true})
+		for _, p := range loginBanner {
+			for _, c := range p.text {
+				g, _ := bigtext.Lookup(c)
+				out[r] = append(out[r], go3270.Field{Content: g[r] + " ", Color: p.colors[r], Intense: true})
+			}
 		}
 	}
 	return out
@@ -143,7 +144,7 @@ type loginState struct {
 // or after a wrong try with one typed, the password.
 func buildLogin(rows, cols int, now time.Time, lu string, l *loginState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "LOGIN", now)
-	bannerCol := max((cols-len(loginBanner)*bannerGlyphWidth)/2, 0)
+	bannerCol := max((cols-bannerChars()*bannerGlyphWidth)/2, 0)
 	for i, l := range bannerLines() {
 		screen = append(screen, placeLineAt(loginBannerRow+i, bannerCol, cols, l)...)
 	}

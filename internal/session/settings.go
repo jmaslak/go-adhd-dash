@@ -26,6 +26,7 @@ var settingsOptions = []struct{ number, what, command string }{
 	{"1", "Password: change it", "password"},
 	{"2", "Google calendar: connect, choose calendars", "google"},
 	{"3", "Trello: link, choose your task lists", "trello"},
+	{"4", "Preferences: how the screens behave", "preferences"},
 }
 
 // settingsStatus is how each of the user with id's settings stands, by
@@ -61,6 +62,9 @@ func settingsStatus(store *users.Store, id int) map[string]string {
 		out["trello"] = "to link again"
 	default:
 		out["trello"] = "linked, " + countText(len(u.Trello.Lists), "list", 0, 1)
+	}
+	if u.Preferences.NoFlash {
+		out["preferences"] = "no flashing"
 	}
 	return out
 }

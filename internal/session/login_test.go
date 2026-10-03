@@ -10,6 +10,7 @@ import (
 
 	"github.com/racingmars/go3270"
 
+	"github.com/jmaslak/go-adhd-dash/internal/bigtext"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -45,10 +46,13 @@ func TestLoginScreen(t *testing.T) {
 	if !strings.HasPrefix(rows[titleRow], " LOGIN ") || strings.Contains(rows[titleRow], "DASHBOARD") {
 		t.Errorf("title row %q", rows[titleRow])
 	}
-	for i := range 7 {
+	for i := range bigtext.Height {
+		// Each character a field: its attribute byte, and the space after
+		// the one before, between each two.
 		var want []string
-		for _, g := range loginBanner {
-			want = append(want, g.rows[i])
+		for _, c := range "exec/3270" {
+			g, _ := bigtext.Lookup(c)
+			want = append(want, g[i])
 		}
 		if got := strings.TrimSpace(rows[loginBannerRow+i]); got != strings.TrimSpace(strings.Join(want, "  ")) {
 			t.Errorf("banner row %d is %q", i, got)

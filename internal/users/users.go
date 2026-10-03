@@ -54,6 +54,17 @@ type User struct {
 
 	// Trello is the user's linked Trello account; nil for none.
 	Trello *TrelloLink `json:"trello,omitempty"`
+
+	// Preferences are how the user likes the screens to behave.
+	Preferences Preferences `json:"preferences,omitzero"`
+}
+
+// Preferences are a user's choices of how the screens behave, each off
+// unless set.
+type Preferences struct {
+	// NoFlash avoids flashing: the timer shows DONE steadily, rather than
+	// flashing the screen.
+	NoFlash bool `json:"no_flash,omitempty"`
 }
 
 // TrelloClient is the Trello API key users link their Trello accounts

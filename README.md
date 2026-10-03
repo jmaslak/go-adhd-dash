@@ -168,16 +168,24 @@ The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
-`checklist`, `chat`, `settings`, `busy`, `green`, `off`, `up`, `down`,
+`checklist`, `timer`, `chat`, `settings`, `busy`, `green`, `off`, `up`, `down`,
 `refresh`, `admin`, `help` and `exit`, in either case, with a few aliases
 (`task`, `calendar`, `cl`, `next`, `prev`, `quit`, `logoff`, `?`).
 
 `settings` is the user's own settings, one option per row with how each
 stands, chosen by number as the admin menu's are: `1` changes their
 password, `2` connects their Google calendar and chooses its calendars
-(showing, e.g., "connected, 2 calendars shown"), and `3` links Trello and
-chooses their task lists. Each of those comes back to the settings screen, saying
-what was done. The commands `google` (or `gcal`), `trello` and `password`
+(showing, e.g., "connected, 2 calendars shown"), `3` links Trello and
+chooses their task lists, and `4` sets their preferences. Each of those
+comes back to the settings screen, saying what was done.
+
+The preferences screen has one, for now: `Avoid flashing`, `Y` or `N`
+(blank is `N`). With `Y`, nothing flashes: the timer shows `DONE`
+steadily, in red, rather than flashing the screen. `Enter` saves it
+(the settings screen then shows "no flashing" beside option `4`); `PF3`
+goes back without saving. It is kept with the user in `-users-file`, as
+`"preferences": {"no_flash": true}`, and takes effect at once, in every
+session of theirs. The commands `google` (or `gcal`), `trello` and `password`
 (or `passwd`) still open them straight from the dashboard, and come back
 there, but `help` does not list them. The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
@@ -447,6 +455,24 @@ Archiving a task marks its Trello card's due date complete and archives the
 card. If Trello fails, the task is left open. Tasks are marked by card, so
 a task's number changing since it was shown does not matter. Archiving
 stops at the first task that fails; it stays marked, to try again.
+
+The timer (`timer`) asks how long, as `hh:mm` (hours and minutes: `1:30`
+is an hour and a half, `0:05` five minutes) or as hours, minutes and
+seconds, each optional but in that order (`2h3m20s`, `45m`, `90s`), in
+any case, up to 99:59:59; or, on its second line (`Or until`), until when,
+as an alarm: a 24-hour time, `hh:mm` or `hh:mm:ss` (or `hhmm`), the next
+time it comes, today or, if already past, tomorrow, by the server's clock
+(the one in the title row). Type one or the other, not both, and `Enter`
+starts it. Counting down to a time of day, it shows `Until` that time
+(and `tomorrow` if so) below the digits. It then counts down in
+large digits filling the screen, redrawn each second (`mm:ss`, or
+`h:mm:ss` for an hour or more), green, then yellow in the last minute and
+red in the last ten seconds, with when it ends below; `PF3` stops it.
+When it is done, the screen flashes `DONE`, filled with red every other
+second (or, for a user who avoids flashing, shows it steadily), until
+`Enter` (or `PF3`) goes back to the dashboard. The timer lasts only
+while its screen is shown, and the terminal does not beep (go3270 cannot
+sound the alarm).
 
 The calculator is RPN. Type numbers and the operators `+ - * / ^`,
 separated by spaces, and press `Enter`: numbers are pushed and operators
