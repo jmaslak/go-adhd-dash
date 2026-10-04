@@ -364,7 +364,7 @@ to show, and to read the events of those you chose, to show them to you on
 your dashboard and calendar screen. They are never used for anything else.</p>
 <p><strong>Google user data is not shared with, transferred to, or disclosed
 to any third party.</strong></p>
-<p>Your calendar's events, which are sensitive, are protected so:</p>
+<p>Your calendar's events, which are sensitive, are protected as follows:</p>
 <ul>
 <li><strong>Only in memory, and only for a while.</strong> They are held in
 the server's memory while you are using the service, refreshed every few
