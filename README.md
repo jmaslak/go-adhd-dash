@@ -406,6 +406,7 @@ The task screen lists every open task, whatever its tags. Type `X` in the
 them; a confirmation lists them, and `PF4` does it. Marks are kept while
 paging. Typing `X` moves the cursor on to the task's title.
 
+- `PF2`: the task's details: its notes, checklists and more (below)
 - `PF4`: add a task
 - `PF5`: move the marked tasks to another Trello list, after confirmation
 - `PF6`: archive the marked tasks, after confirmation
@@ -419,6 +420,16 @@ paging. Typing `X` moves the cursor on to the task's title.
 - `PF4` (on a confirmation): archive, or rename
 - `PF3`: back (from a confirmation, to the list with the marks, and titles
   typed, kept)
+
+`PF2` shows the details of the task marked, or with none marked, the one the
+cursor is on, read from its Trello card, only to look at: its full title,
+its list, its due date (marked overdue, or complete), its labels, its notes
+(Trello's description), each of its checklists with how many items are
+done and each item checked `[X]` or not `[ ]`, and its newest twenty
+comments, long text wrapped, a page at a time (`PF7` / `PF8`). `PF3` goes
+back with the marks kept. It works on a list shown with `PF9` too. (The
+task screen's help row leaves out `PF5` and `PF6`, for room: the row above
+it says what they do.)
 
 To rename tasks, type over their titles; whatever key is pressed then, a
 confirmation lists each task with its new title. `PF4` renames them,

@@ -397,7 +397,8 @@ and write your boards, which does not expire until you unlink or withdraw it.
 It uses the token only to list your boards and their lists, so that you can
 choose which to show; to read the cards on the lists you chose, to show them
 to you as your tasks, and on any other list you ask to view, to show them to
-you; and, when you add, change, move or finish a task on the terminal, to
+you; to read a card's notes, checklists and comments when you ask to see
+them, to show them to you; and, when you add, change, move or finish a task on the terminal, to
 add that card, to rename it or change its place on its list, to
 move it to the list you pick (on any of your boards), or to mark it done and
 archive it. Cards are held in memory

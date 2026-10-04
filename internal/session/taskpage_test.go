@@ -37,9 +37,20 @@ type fakeTasks struct {
 	renamed  []string // number>title
 	repos    []string // number:pos
 	added    []string // list ID:title
+
+	details   tasks.Details // every card's
+	detailsOf []string      // the cards whose details were read
 }
 
 func (f *fakeTasks) Snapshot() tasks.Snapshot { return f.snap }
+
+func (f *fakeTasks) Details(_ context.Context, cardID string) (tasks.Details, error) {
+	if f.boardsErr != nil {
+		return tasks.Details{}, f.boardsErr
+	}
+	f.detailsOf = append(f.detailsOf, cardID)
+	return f.details, nil
+}
 
 func (f *fakeTasks) Archive(_ context.Context, t tasks.Task) error {
 	if t.Number == f.failOn {

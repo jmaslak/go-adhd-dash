@@ -58,7 +58,7 @@ func TestTaskListMove(t *testing.T) {
 		t.Errorf("PF5 with marks: %v, moving %+v", a, tp.moving)
 	}
 	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF5=Move") || !strings.Contains(text, "PF5 moves them") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF5 moves them") || strings.Contains(text, "PF5=Move") {
 		t.Errorf("task list does not offer moving:\n%s", text)
 	}
 }

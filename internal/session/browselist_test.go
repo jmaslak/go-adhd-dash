@@ -139,7 +139,7 @@ func TestTaskScreenOfAList(t *testing.T) {
 	s, _, total, _, _ := buildTaskList(24, 80, now, tp.view.Snapshot(), tp)
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
-	for _, want := range []string{"TRELLO LIST", "Projects / Someday 25 open, page 1/2 (not on your task list)", "      1 idea 1", "PF5=Move", "PF6=Archive"} {
+	for _, want := range []string{"TRELLO LIST", "Projects / Someday 25 open, page 1/2 (not on your task list)", "      1 idea 1", "PF5 moves them, PF6 archives", "PF7=Up PF8=Dn"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("list's task screen lacks %q:\n%s", want, text)
 		}

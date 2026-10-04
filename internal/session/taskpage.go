@@ -86,6 +86,9 @@ type taskPageState struct {
 	// screen.
 	moving []tasks.Task
 
+	// detailsOf is the task whose details PF2 asked for.
+	detailsOf tasks.Task
+
 	// follow is the card the cursor goes to, once moved up or down.
 	follow string
 
@@ -260,7 +263,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: tp.isError}})...)
 	screen = append(screen, go3270.Field{
 		Row: rows - 1, Col: 0, Color: go3270.Blue,
-		Content: truncate("PF3=Back PF4=Add PF5=Move PF6=Archive PF7=Up PF8=Dn PF9=Lists PF10/11=Reorder", cols-1),
+		Content: truncate("PF2=Details PF3=Back PF4=Add PF7=Up PF8=Dn PF9=Lists PF10/11=Reorder", cols-1),
 	})
 	return screen, shownPage, totalPages, cursorRow, cursorCol
 }
@@ -412,6 +415,7 @@ const (
 	taskListAdd                           // the add-task screen
 	taskListMove                          // the move-task screen, for tp.moving
 	taskListBrowse                        // the Trello lists, to pick one to show
+	taskListDetails                       // the details of tp.detailsOf
 	taskListLeave                         // back: the dashboard, or from a list, the lists
 )
 
@@ -469,6 +473,18 @@ func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, tota
 		tp.page = max(tp.page-1, 0)
 	case go3270.AIDPF8:
 		tp.page = min(tp.page+1, totalPages-1)
+	case go3270.AIDPF2:
+		if src == nil {
+			tp.message, tp.isError = "Task details are not available.", true
+			break
+		}
+		t, bad := tp.target(resp, all, "to see its details", "PF2")
+		if bad != "" {
+			tp.message, tp.isError = bad, true
+			break
+		}
+		tp.detailsOf = t
+		return taskListDetails
 	case go3270.AIDPF9:
 		if src == nil {
 			tp.message, tp.isError = "Viewing other lists is not available.", true
@@ -489,20 +505,10 @@ func (tp *taskPageState) reorder(resp go3270.Response, all []tasks.Task, src Tas
 		fail("Changing tasks is not available.")
 		return
 	}
-	var t tasks.Task
-	switch marked := tp.markedTasks(all); {
-	case len(marked) == 1:
-		t = marked[0]
-	case len(marked) > 1:
-		fail("Mark only one task to move up or down, or none and put the cursor on it.")
+	t, bad := tp.target(resp, all, "to move up or down", "PF10 or PF11")
+	if bad != "" {
+		fail(bad)
 		return
-	default:
-		i := slices.IndexFunc(all, func(x tasks.Task) bool { return x.CardID == tp.rowCards[resp.Row] })
-		if i < 0 {
-			fail("Mark a task with X, or put the cursor on one, then press PF10 or PF11.")
-			return
-		}
-		t = all[i]
 	}
 
 	// Its list's tasks, in order.
@@ -541,6 +547,23 @@ func (tp *taskPageState) reorder(resp go3270.Response, all []tasks.Task, src Tas
 	logf("moved task %d %q %s", t.Number, t.Title, where)
 	tp.follow = t.CardID
 	tp.message = fmt.Sprintf("Moved %q %s.", t.Title, where)
+}
+
+// target is the task a key acts on: the one marked, or with none marked,
+// the one the cursor is on; or why there is none, for doing what with
+// which key.
+func (tp *taskPageState) target(resp go3270.Response, all []tasks.Task, doing, key string) (t tasks.Task, bad string) {
+	switch marked := tp.markedTasks(all); {
+	case len(marked) == 1:
+		return marked[0], ""
+	case len(marked) > 1:
+		return t, "Mark only one task " + doing + ", or none and put the cursor on it."
+	}
+	i := slices.IndexFunc(all, func(x tasks.Task) bool { return x.CardID == tp.rowCards[resp.Row] })
+	if i < 0 {
+		return t, "Mark a task with X, or put the cursor on one, then press " + key + "."
+	}
+	return all[i], ""
 }
 
 // midpoint is the Trello position halfway between a and b.

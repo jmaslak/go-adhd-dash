@@ -109,6 +109,17 @@ func (f *fakeTrello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.cards = append(f.cards, card)
 		f.mu.Unlock()
 		reply(card)
+	case r.Method == http.MethodGet && p == "/1/cards/c1" && q.Get("checklists") == "all" && q.Get("actions") == "commentCard":
+		_, _ = w.Write([]byte(`{"id": "c1", "name": "second", "desc": "Bring the forms.\nAnd a pen.",
+			"due": "2026-10-05T17:00:00.000Z", "dueComplete": false,
+			"labels": [{"name": "urgent", "color": "red"}, {"name": "", "color": "blue"}],
+			"checklists": [
+				{"name": "Later", "pos": 200, "checkItems": [{"name": "file", "state": "incomplete", "pos": 1}]},
+				{"name": "First", "pos": 100, "checkItems": [
+					{"name": "sign", "state": "incomplete", "pos": 20}, {"name": "print", "state": "complete", "pos": 10}]}],
+			"actions": [
+				{"type": "commentCard", "date": "2026-10-04T15:00:00.000Z", "data": {"text": "Done soon?"}, "memberCreator": {"fullName": "Joelle M", "username": "joelle"}},
+				{"type": "commentCard", "date": "2026-10-03T09:00:00.000Z", "data": {"text": "Started"}, "memberCreator": {"fullName": "", "username": "bob"}}]}`))
 	case r.Method == http.MethodPut && strings.HasPrefix(p, "/1/cards/") && q.Get("idList") != "" && q.Get("pos") == "bottom":
 		id, list := strings.TrimPrefix(p, "/1/cards/"), q.Get("idList")
 		if board := map[string]string{"l1": "b1", "l2": "b1", "l3": "b2", "l4": "b3"}[list]; board == "" || board != q.Get("idBoard") {
@@ -478,6 +489,36 @@ func TestCacheRenameAndReposition(t *testing.T) {
 	}
 	if err := c.Reposition(ctx, c.Snapshot().Tasks[0], "top"); err == nil {
 		t.Error("reposition with Trello failing succeeded")
+	}
+}
+
+func TestCacheDetails(t *testing.T) {
+	f := newFakeTrello()
+	clock := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	c := newTestCache(t, f, &clock)
+	d, err := c.Details(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Title != "second" || d.Notes != "Bring the forms.\nAnd a pen." || !d.Due.Equal(time.Date(2026, 10, 5, 17, 0, 0, 0, time.UTC)) || d.DueComplete {
+		t.Errorf("details %+v", d)
+	}
+	if fmt.Sprint(d.Labels) != "[urgent blue]" {
+		t.Errorf("labels %v; want named, or by color", d.Labels)
+	}
+	// Checklists and their items in Trello's order.
+	if len(d.Checklists) != 2 || d.Checklists[0].Name != "First" || fmt.Sprint(d.Checklists[0].Items) != "[{print true} {sign false}]" || d.Checklists[1].Name != "Later" {
+		t.Errorf("checklists %+v", d.Checklists)
+	}
+	if len(d.Comments) != 2 || d.Comments[0].Author != "Joelle M" || d.Comments[0].Text != "Done soon?" || d.Comments[1].Author != "bob" {
+		t.Errorf("comments %+v", d.Comments)
+	}
+	if _, err := c.Details(context.Background(), "nope"); err == nil {
+		t.Error("details of a card not there")
+	}
+	f.setFail(true)
+	if _, err := c.Details(context.Background(), "c1"); err == nil {
+		t.Error("details with Trello failing")
 	}
 }
 

@@ -259,6 +259,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var tm timerState
 	var pf preferencesState
 	var tt termTestState
+	var td taskDetailsState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -475,6 +476,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeBrowse:
 			screen, cursorRow, cursorCol = buildBrowse(rows, cols, now, &bs)
 			redrawOnTimer = false
+		case modeTaskDetails:
+			screen, cursorRow, cursorCol = buildTaskDetails(rows, cols, now, &td), rows-1, 0
+			redrawOnTimer = false
 		case modeAdmin:
 			screen, cursorRow, cursorCol = buildAdmin(rows, cols, now, message, messageOK, cfg.Shutdown.Sessions())
 			redrawOnTimer = false
@@ -643,11 +647,17 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode, at = modeAddTask, addTaskState{}
 			case taskListMove:
 				mode, mv = modeMoveTask, startMove(tp.source(backend), tp.moving)
+			case taskListDetails:
+				mode, td = modeTaskDetails, startDetails(taskBackend(cfg.tasksFor(user)), tp.detailsOf)
 			case taskListBrowse:
 				if tp.view == nil {
 					tasksTP, bs = tp, startBrowse(backend)
 				}
 				mode = modeBrowse
+			}
+		case modeTaskDetails:
+			if td.handle(resp) {
+				mode = modeTasks
 			}
 		case modeBrowse:
 			switch back, d, ok := bs.handle(resp); {
@@ -901,6 +911,7 @@ const (
 	modeTimer
 	modePreferences
 	modeTermTest
+	modeTaskDetails
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

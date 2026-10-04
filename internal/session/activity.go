@@ -512,6 +512,8 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Preferences"
 	case modeTermTest:
 		return "Terminal test"
+	case modeTaskDetails:
+		return "Task details"
 	case modeActivity:
 		return "Activity viewer"
 	case modeTerminateConfirm:

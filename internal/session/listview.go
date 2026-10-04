@@ -16,6 +16,8 @@ type TaskBackend interface {
 
 	// Cards are the open cards on a list, as tasks numbered from 1.
 	Cards(ctx context.Context, d tasks.Destination) ([]tasks.Task, error)
+
+	TaskDetailer
 }
 
 // listViewTTL is how long a list's cards are shown before they are read

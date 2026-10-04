@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -259,4 +260,112 @@ func (c *trelloClient) closeCard(ctx context.Context, cardID string) error {
 		return fmt.Errorf("trello: %s: the card was not archived", path)
 	}
 	return nil
+}
+
+// Details are what a card holds beyond its title, to look at: its notes
+// (Trello's description), due date, labels, checklists and comments.
+type Details struct {
+	Title string
+	Notes string
+
+	// Due is when the card is due, zero for no due date; DueComplete is
+	// set once it is marked complete.
+	Due         time.Time
+	DueComplete bool
+
+	Labels     []string // by name, or a label without one by its color
+	Checklists []Checklist
+	Comments   []Comment // newest first
+}
+
+// Checklist is one of a card's checklists, its items in order.
+type Checklist struct {
+	Name  string
+	Items []CheckItem
+}
+
+// CheckItem is one item of a checklist.
+type CheckItem struct {
+	Name string
+	Done bool
+}
+
+// Comment is a comment on a card.
+type Comment struct {
+	Author string
+	Date   time.Time
+	Text   string
+}
+
+// maxComments is how many of a card's comments, the newest, are read.
+const maxComments = 20
+
+// cardDetails is a card as 1/cards/{id} gives it, with its checklists and
+// comments.
+type cardDetails struct {
+	Name        string    `json:"name"`
+	Desc        string    `json:"desc"`
+	Due         time.Time `json:"due"`
+	DueComplete bool      `json:"dueComplete"`
+	Labels      []struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	} `json:"labels"`
+	Checklists []wireChecklist `json:"checklists"`
+	Actions    []struct {
+		Date time.Time `json:"date"`
+		Data struct {
+			Text string `json:"text"`
+		} `json:"data"`
+		MemberCreator struct {
+			FullName string `json:"fullName"`
+			Username string `json:"username"`
+		} `json:"memberCreator"`
+	} `json:"actions"`
+}
+
+// wireChecklist and wireCheckItem are a checklist and its items as the API
+// gives them, each with its position, to put them in order.
+type wireChecklist struct {
+	Name       string          `json:"name"`
+	Pos        float64         `json:"pos"`
+	CheckItems []wireCheckItem `json:"checkItems"`
+}
+
+type wireCheckItem struct {
+	Name  string  `json:"name"`
+	State string  `json:"state"`
+	Pos   float64 `json:"pos"`
+}
+
+// cardDetails reads a card's details.
+func (c *trelloClient) cardDetails(ctx context.Context, cardID string) (Details, error) {
+	var card cardDetails
+	query := url.Values{
+		"fields":           {"name,desc,due,dueComplete,labels"},
+		"checklists":       {"all"},
+		"checklist_fields": {"name,pos"},
+		"actions":          {"commentCard"},
+		"actions_limit":    {fmt.Sprint(maxComments)},
+	}
+	if err := c.do(ctx, http.MethodGet, "1/cards/"+url.PathEscape(cardID), query, &card); err != nil {
+		return Details{}, err
+	}
+	d := Details{Title: card.Name, Notes: card.Desc, Due: card.Due, DueComplete: card.DueComplete}
+	for _, l := range card.Labels {
+		d.Labels = append(d.Labels, cmp.Or(l.Name, l.Color))
+	}
+	slices.SortStableFunc(card.Checklists, func(a, b wireChecklist) int { return cmp.Compare(a.Pos, b.Pos) })
+	for _, cl := range card.Checklists {
+		slices.SortStableFunc(cl.CheckItems, func(a, b wireCheckItem) int { return cmp.Compare(a.Pos, b.Pos) })
+		list := Checklist{Name: cl.Name}
+		for _, it := range cl.CheckItems {
+			list.Items = append(list.Items, CheckItem{Name: it.Name, Done: it.State == "complete"})
+		}
+		d.Checklists = append(d.Checklists, list)
+	}
+	for _, a := range card.Actions {
+		d.Comments = append(d.Comments, Comment{Author: cmp.Or(a.MemberCreator.FullName, a.MemberCreator.Username), Date: a.Date, Text: a.Data.Text})
+	}
+	return d, nil
 }

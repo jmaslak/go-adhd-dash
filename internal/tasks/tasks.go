@@ -239,6 +239,15 @@ func (c *Cache) Cards(ctx context.Context, d Destination) ([]Task, error) {
 	return fetchTasks(ctx, client, []Destination{d})
 }
 
+// Details reads a card's details, to look at. Nothing is cached.
+func (c *Cache) Details(ctx context.Context, cardID string) (Details, error) {
+	client, err := c.client()
+	if err != nil {
+		return Details{}, err
+	}
+	return client.cardDetails(ctx, cardID)
+}
+
 // Move moves t's card to the bottom of d's list, which need not be one its
 // tasks are read from. In the cache, t goes after the other tasks of d's
 // list if it is one of those, with its tag, and otherwise leaves.
