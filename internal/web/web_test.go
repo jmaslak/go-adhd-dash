@@ -60,6 +60,9 @@ func TestPages(t *testing.T) {
 			"<title>Privacy policy – " + AppName + "</title>", `href="https://adhd.example.com/privacy">`,
 			"Limited Use requirements", "calendar.readonly", "Last updated " + Updated, `mailto:it@example.com`,
 			"api-services-user-data-policy",
+			"not shared with, transferred to, or disclosed", "Only in memory, and only for a while.",
+			"Never written to disk.", "Encrypted between Google and", "Encrypted between you and",
+			"Not seen by anyone else.", "not visible to administrators",
 		},
 		"/terms/": {
 			"<title>Terms of service – " + AppName + "</title>", `href="https://adhd.example.com/terms">`,

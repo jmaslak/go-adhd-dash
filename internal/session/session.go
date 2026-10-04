@@ -258,6 +258,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var bs browseState
 	var tm timerState
 	var pf preferencesState
+	var tt termTestState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -310,6 +311,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 				return "There is no user database to keep preferences in."
 			}
 			mode, pf = modePreferences, preferencesState{}
+		case "termtest":
+			mode, tt = modeTermTest, termTestState{}
 		case "trello":
 			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
 			if why != "" {
@@ -508,6 +511,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			// typed must not be wiped.
 			screen, cursorRow, cursorCol = buildTimer(rows, cols, now, &tm, prefsOf(cfg.Users, ownerOf(user)))
 			redrawOnTimer = tm.step != timerAsk
+		case modeTermTest:
+			info := termInfo{Type: devinfo.TerminalType(), Rows: rows, Cols: cols, Codepage: devinfo.Codepage(), LU: neg.LUName}
+			screen, cursorRow, cursorCol = buildTermTest(rows, cols, now, info, &tt)
+			redrawOnTimer = false
 		case modePreferences:
 			screen, cursorRow, cursorCol = buildPreferences(rows, cols, now, user.Name, prefsOf(cfg.Users, user.ID), &pf)
 			redrawOnTimer = false
@@ -775,6 +782,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if leave, said := tr.handle(resp, cfg.Users, logf); leave {
 				mode, message, messageOK = settingsBack, said, true
 			}
+		case modeTermTest:
+			if tt.handle(resp) {
+				mode = settingsBack
+			}
 		case modePreferences:
 			if back, said := pf.handle(resp, cfg.Users, user, logf); back {
 				mode, message, messageOK = settingsBack, said, true
@@ -889,6 +900,7 @@ const (
 	modeSignup
 	modeTimer
 	modePreferences
+	modeTermTest
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

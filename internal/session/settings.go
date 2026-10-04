@@ -27,6 +27,7 @@ var settingsOptions = []struct{ number, what, command string }{
 	{"2", "Google calendar: connect, choose calendars", "google"},
 	{"3", "Trello: link, choose your task lists", "trello"},
 	{"4", "Preferences: how the screens behave", "preferences"},
+	{"5", "Terminal test: colors, highlighting, characters, keys", "termtest"},
 }
 
 // settingsStatus is how each of the user with id's settings stands, by

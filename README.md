@@ -176,8 +176,22 @@ commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
 stands, chosen by number as the admin menu's are: `1` changes their
 password, `2` connects their Google calendar and chooses its calendars
 (showing, e.g., "connected, 2 calendars shown"), `3` links Trello and
-chooses their task lists, and `4` sets their preferences. Each of those
-comes back to the settings screen, saying what was done.
+chooses their task lists, `4` sets their preferences, and `5` tests the
+terminal. Each of those comes back to the settings screen, saying what was
+done.
+
+The terminal test shows what the terminal reported of itself on
+connecting (its type, size, code page and LU name); every color (and the
+terminal's default) in each kind of highlighting, `Normal`, `Intense`,
+`Reverse`, `Underscore` and `Blink`, to see which it shows; and every
+EBCDIC character, X'40' to X'FE', as its code page has them, sixteen to a
+group after their first hex digit (`4x` to `Fx`), under their second. X'FF'
+cannot be sent (it is the telnet IAC), and a code point the code page has
+nothing printable for (as 037's soft hyphen, X'CA') is blank. Type in the
+`Type here` field and press any key: the screen shows what the server
+received (quoted, so that spaces and odd characters show), the key, and
+where the cursor was. `PA1`-`PA3` and `Clear` send neither what was typed
+nor the cursor, and the screen says so. `PF3` goes back.
 
 The preferences screen has one, for now: `Avoid flashing`, `Y` or `N`
 (blank is `N`). With `Y`, nothing flashes: the timer shows `DONE`

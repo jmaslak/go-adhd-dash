@@ -30,7 +30,7 @@ const AppName = "exec-3270"
 const TerminalPath = "3270/"
 
 // Updated is when the privacy policy and terms last changed.
-const Updated = "October 2, 2026"
+const Updated = "October 4, 2026"
 
 // Server serves the site. The settings, the Google client and the users are
 // read from Users at each request, so that a change an admin makes shows at
@@ -361,17 +361,30 @@ from you.</p>
 read-only access to your calendars (the <code>calendar.readonly</code> scope).
 It uses that access only to list your calendars, so that you can choose which
 to show, and to read the events of those you chose, to show them to you on
-your dashboard and calendar screen. Events are held in memory while you are
-using the service, and refreshed every few minutes; they are never written to
-disk, never shown to other users, and never used for anything else.</p>
+your dashboard and calendar screen. They are never used for anything else.</p>
+<p><strong>Google user data is not shared with, transferred to, or disclosed
+to any third party.</strong></p>
+<p>Your calendar's events, which are sensitive, are protected so:</p>
+<ul>
+<li><strong>Only in memory, and only for a while.</strong> They are held in
+the server's memory while you are using the service, refreshed every few
+minutes, and dropped soon after you stop.</li>
+<li><strong>Never written to disk.</strong></li>
+<li><strong>Encrypted between Google and {{.AppName}}.</strong> They are
+read from Google only over encrypted (HTTPS) connections.</li>
+<li><strong>Encrypted between you and {{.AppName}}.</strong> What is shown
+to you is encrypted on its way to you.</li>
+<li><strong>Not seen by anyone else.</strong> Other users cannot access your
+calendar or its events, and they are not visible to administrators.</li>
+</ul>
+<p>What is kept on disk is only your connection: Google's authorization,
+and which calendars you chose, with their names (see above).</p>
 <p>{{.AppName}}'s use and transfer to any other app of information received
 from Google APIs will adhere to the
 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
 including the Limited Use requirements. Google user data is not sold, not used
-for advertising, not used to determine credit-worthiness, not used to train
-artificial intelligence models, and not transferred to anyone else, except as
-needed to provide the features described here, to comply with the law, or as
-part of a merger or acquisition with your consent.</p>
+for advertising, not used to determine credit-worthiness, and not used to
+train artificial intelligence models.</p>
 <p>You can disconnect your calendar at any time on the <code>settings</code>
 screen on the dashboard: your authorization and choices are deleted, and
 Google is asked to withdraw the authorization. You can also withdraw it
@@ -399,11 +412,11 @@ yourself in your Trello account's settings, under applications.</p>
 <h2>Who can see it</h2>
 <p>Your checklists, calendar and tasks are shown only to you. Chat messages are seen
 by everyone signed in. {{.Organization}}'s administrators of this service can
-see the accounts, the records of use and the sessions connected, and those who
-run the server can read the files it keeps. Nothing is shared with anyone else,
-except Google and Trello, to read the calendars and lists you connect (and,
-on Trello, to add, change, move and archive the cards you ask to), and where the law
-requires it.</p>
+see the accounts, the records of use and the sessions connected (but not your calendar), and those who run the
+server can read the files it keeps. Google user data is not shared with,
+transferred to, or disclosed to any third party. Nothing else is shared with
+anyone, except Trello, to read the lists you connect and to add, change,
+move and archive the cards you ask to, and where the law requires it.</p>
 
 <h2>How it is kept</h2>
 <p>Accounts, Google authorizations, Trello tokens and checklists are kept in
