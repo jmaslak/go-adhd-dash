@@ -86,7 +86,7 @@ func TestTimerCountdown(t *testing.T) {
 	s, crow, _ = buildTimer(24, 80, start, tm, users.Preferences{})
 	rows := screenText(t, s, 24, 80)
 	text = strings.Join(rows, "\n")
-	if !strings.Contains(text, "Ends at 09:01:05") || !strings.Contains(text, "of 01:05") || !strings.Contains(text, "PF3=Stop the timer") || crow != 23 {
+	if !strings.Contains(text, "Ends at 09:01:05") || !strings.Contains(text, "Ends at 09:01:05 for 01:05") || !strings.Contains(text, "PF3=Stop the timer") || crow != 23 {
 		t.Errorf("running screen:\n%s", text)
 	}
 	if want := bigLine(t, "01:05", 0); !strings.Contains(text, want) {

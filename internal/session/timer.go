@@ -219,7 +219,7 @@ func buildTimer(rows, cols int, now time.Time, t *timerState, prefs users.Prefer
 		screen = append(screen, bigTextFields(1, rows-4, cols, clockText(left, t.total), color, false)...)
 		info := line{
 			{Content: "Ends at " + t.end.Format("15:04:05"), Color: go3270.Blue},
-			{Content: "of " + clockText(t.total, t.total), Color: go3270.Blue},
+			{Content: "for " + clockText(t.total, t.total), Color: go3270.Blue},
 		}
 		if t.until {
 			info = line{{Content: "Until " + t.end.Format("15:04:05"), Color: go3270.Blue}}
