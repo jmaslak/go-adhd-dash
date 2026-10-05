@@ -37,25 +37,25 @@ func TestTaskDetailsKeys(t *testing.T) {
 	}
 
 	// The task the cursor is on, or the one marked.
-	if a := key(go3270.AIDPF2, taskFirstRow+1, nil); a != taskListDetails || tp.detailsOf.Number != 2 {
-		t.Errorf("PF2 on task 2: %v, %+v", a, tp.detailsOf)
+	if a := key(go3270.AIDPF1, taskFirstRow+1, nil); a != taskListDetails || tp.detailsOf.Number != 2 {
+		t.Errorf("PF1 on task 2: %v, %+v", a, tp.detailsOf)
 	}
-	if a := key(go3270.AIDPF2, taskFirstRow, map[string]string{"mark:103": "X"}); a != taskListDetails || tp.detailsOf.Number != 3 {
-		t.Errorf("PF2 with task 3 marked: %v, %+v", a, tp.detailsOf)
+	if a := key(go3270.AIDPF1, taskFirstRow, map[string]string{"mark:103": "X"}); a != taskListDetails || tp.detailsOf.Number != 3 {
+		t.Errorf("PF1 with task 3 marked: %v, %+v", a, tp.detailsOf)
 	}
-	if a := key(go3270.AIDPF2, taskFirstRow, map[string]string{"mark:101": "X"}); a != taskListStay || !strings.Contains(tp.message, "Mark only one task to see its details") {
-		t.Errorf("PF2 with two marked: %v, %q", a, tp.message)
+	if a := key(go3270.AIDPF1, taskFirstRow, map[string]string{"mark:101": "X"}); a != taskListStay || !strings.Contains(tp.message, "Mark only one task to see its details") {
+		t.Errorf("PF1 with two marked: %v, %q", a, tp.message)
 	}
 	tp.marked = nil
-	if a := key(go3270.AIDPF2, 22, nil); a != taskListStay || !strings.Contains(tp.message, "then press PF2") {
-		t.Errorf("PF2 on no task: %v, %q", a, tp.message)
+	if a := key(go3270.AIDPF1, 22, nil); a != taskListStay || !strings.Contains(tp.message, "then press PF1") {
+		t.Errorf("PF1 on no task: %v, %q", a, tp.message)
 	}
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF2, Row: taskFirstRow}, all, 1, nil, noLog); a != taskListStay || !strings.Contains(tp.message, "not available") {
-		t.Errorf("PF2 with no tasks: %v, %q", a, tp.message)
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF1, Row: taskFirstRow}, all, 1, nil, noLog); a != taskListStay || !strings.Contains(tp.message, "not available") {
+		t.Errorf("PF1 with no tasks: %v, %q", a, tp.message)
 	}
 	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF2=Details") {
-		t.Errorf("help lacks PF2:\n%s", text)
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF1=Details") {
+		t.Errorf("help lacks PF1:\n%s", text)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestTaskDetailsScreen(t *testing.T) {
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
 	for _, want := range []string{
-		"TASK DETAILS", "Task 4: Renew the passport", "On Home / Errands [home]",
+		"TASK DETAILS", "Renew the passport", "On Home / Errands [home]",
 		"Due " + now.Add(-time.Hour).Local().Format("Mon Jan 2 15:04") + " (overdue)", "Labels: urgent, blue",
 		"Notes", "  Bring the old one, two photos and the form.", "  The office is on 5th street,",
 		"Checklist: Before (1 of 2 done)", "  [X] photos", "  [ ] fill in the form",
@@ -121,7 +121,7 @@ func TestTaskDetailsScreen(t *testing.T) {
 	src.boardsErr = errors.New("401 Unauthorized")
 	d = startDetails(src, task)
 	text = strings.Join(screenText(t, buildTaskDetails(24, 80, now, &d), 24, 80), "\n")
-	if !strings.Contains(text, "Task 4: passport") || !strings.Contains(text, "Could not read the details: 401 Unauthorized") {
+	if !strings.Contains(text, " passport\n") || !strings.Contains(text, "Could not read the details: 401 Unauthorized") {
 		t.Errorf("failed:\n%s", text)
 	}
 }

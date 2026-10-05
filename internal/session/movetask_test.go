@@ -136,7 +136,7 @@ func TestMoveTask(t *testing.T) {
 	m = startMove(mover, []tasks.Task{all[0], all[2], all[4]})
 	key(go3270.AIDEnter, map[string]string{"dest:l2": "S"})
 	back, said, isError = key(go3270.AIDPF4, nil)
-	if !back || !isError || !strings.Contains(said, "Moved 1 of 3. Task 3") || fmt.Sprint(mover.moved) != "[1>b1/l2]" || !tp.marked["103"] || !tp.marked["105"] || tp.marked["101"] {
+	if !back || !isError || !strings.Contains(said, `Moved 1 of 3. "task 3" was not moved`) || fmt.Sprint(mover.moved) != "[1>b1/l2]" || !tp.marked["103"] || !tp.marked["105"] || tp.marked["101"] {
 		t.Errorf("failing: back %v, %q, moved %v, marks %v", back, said, mover.moved, tp.marked)
 	}
 

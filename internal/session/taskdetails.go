@@ -18,7 +18,7 @@ type TaskDetailer interface {
 	Details(ctx context.Context, cardID string) (tasks.Details, error)
 }
 
-// The task details screen (PF2 on a task screen): a task's card, to look
+// The task details screen (PF1 on a task screen): a task's card, to look
 // at only: its title, list, due date, labels, notes, checklists and
 // comments, a page at a time, from the heading down to above the message
 // row.
@@ -67,7 +67,7 @@ func (d *taskDetailsState) detailLines(width int, now time.Time) []line {
 	heading := func(s string) { add(go3270.Field{Content: s, Color: go3270.Turquoise, Intense: true}) }
 
 	t, det := d.task, d.details
-	text(fmt.Sprintf("Task %d: %s", t.Number, cmp.Or(det.Title, t.Title)), 0, go3270.White, true)
+	text(cmp.Or(det.Title, t.Title), 0, go3270.White, true)
 	on := line{{Content: "On " + t.Dest.String(), Color: go3270.Blue}}
 	if t.Dest.Tag != "" {
 		on = append(on, go3270.Field{Content: "[" + t.Dest.Tag + "]", Color: go3270.Turquoise})

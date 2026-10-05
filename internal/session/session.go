@@ -23,6 +23,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/audit"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/recurring"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -71,6 +72,9 @@ type Config struct {
 	// Timers keeps each user's timer, shown in all their sessions; nil for
 	// each session to have its own.
 	Timers *timers.Store
+
+	// Recurring keeps each user's recurring tasks; nil for none.
+	Recurring *recurring.Store
 
 	// Shutdown stops the server from the admin menu; nil when it cannot be
 	// stopped from there.
@@ -265,6 +269,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var pf preferencesState
 	var tt termTestState
 	var td taskDetailsState
+	var rt recurringState
 	var act activityState
 	var ch chatState
 	var us usersState
@@ -343,7 +348,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		mode = modeDashboard
 		switch c.name {
 		case "tasks":
-			if cfg.tasksFor(user) == nil {
+			if cfg.ownTasks(user) == nil {
 				message = "No Trello lists are linked; link them in SETTINGS."
 				break
 			}
@@ -465,7 +470,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, cache != nil))
 		case modeTasks:
 			snap := tasks.Snapshot{Err: errors.New("no Trello lists are linked")}
-			if src := tp.source(taskBackend(cfg.tasksFor(user))); src != nil {
+			if src := tp.source(cfg.ownTasks(user)); src != nil {
 				snap = src.Snapshot()
 			}
 			allTasks = snap.Tasks
@@ -495,6 +500,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modeTaskDetails:
 			screen, cursorRow, cursorCol = buildTaskDetails(rows, cols, now, &td), rows-1, 0
+			redrawOnTimer = false
+		case modeRecurring:
+			screen, cursorRow, cursorCol = buildRecurring(rows, cols, now, &rt)
 			redrawOnTimer = false
 		case modeAdmin:
 			screen, cursorRow, cursorCol = buildAdmin(rows, cols, now, message, messageOK, cfg.Shutdown.Sessions())
@@ -662,7 +670,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modeTasks:
 			backend := taskBackend(cfg.tasksFor(user))
-			switch tp.handleList(resp, allTasks, totalPages, tp.source(backend), logf) {
+			own := tp.source(cfg.ownTasks(user))
+			switch tp.handleList(resp, allTasks, totalPages, own, logf) {
 			case taskListLeave:
 				mode = modeDashboard
 				if tp.view != nil {
@@ -671,12 +680,30 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case taskListConfirm:
 				mode = modeConfirm
 			case taskListAdd:
+				if tp.adder(backend) == nil {
+					tp.message, tp.isError = "Link Trello in SETTINGS to add tasks to it; PF2 adds a recurring task.", true
+					break
+				}
 				mode, at = modeAddTask, addTaskState{}
 			case taskListMove:
-				mode, mv = modeMoveTask, startMove(tp.source(backend), tp.moving)
+				mode, mv = modeMoveTask, startMove(own, tp.moving)
 			case taskListDetails:
-				mode, td = modeTaskDetails, startDetails(taskBackend(cfg.tasksFor(user)), tp.detailsOf)
+				if id, _, ok := recurringOf(tp.detailsOf); ok {
+					mode, rt = modeRecurring, startRecurring(cfg.Recurring, user.ID, id)
+					break
+				}
+				mode, td = modeTaskDetails, startDetails(backend, tp.detailsOf)
+			case taskListRecurring:
+				if cfg.Recurring == nil || user == nil {
+					tp.message, tp.isError = "Recurring tasks are not available.", true
+					break
+				}
+				mode, rt = modeRecurring, startRecurring(cfg.Recurring, user.ID, 0)
 			case taskListBrowse:
+				if backend == nil {
+					tp.message, tp.isError = "No Trello lists are linked; link them in SETTINGS.", true
+					break
+				}
 				if tp.view == nil {
 					tasksTP, bs = tp, startBrowse(backend)
 				}
@@ -686,6 +713,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if td.handle(resp) {
 				mode = modeTasks
 			}
+		case modeRecurring:
+			if back, said, isError := rt.handle(resp, cfg.Recurring, user.ID, time.Now(), logf); back {
+				mode, tp.message, tp.isError = modeTasks, said, isError
+			}
 		case modeBrowse:
 			switch back, d, ok := bs.handle(resp); {
 			case back:
@@ -694,11 +725,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode, tp = modeTasks, taskPageState{view: newListView(taskBackend(cfg.tasksFor(user)), d)}
 			}
 		case modeMoveTask:
-			if back, said, isError := mv.handle(resp, tp.source(taskBackend(cfg.tasksFor(user))), &tp, logf); back {
+			if back, said, isError := mv.handle(resp, tp.source(cfg.ownTasks(user)), &tp, logf); back {
 				mode, tp.message, tp.isError = modeTasks, said, isError
 			}
 		case modeConfirm:
-			if tp.handleConfirm(resp, tp.source(taskBackend(cfg.tasksFor(user))), logf) {
+			if tp.handleConfirm(resp, tp.source(cfg.ownTasks(user)), logf) {
 				mode = modeTasks
 			}
 		case modeCalc:
@@ -734,7 +765,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case action == adminUsers && cfg.Users == nil:
 				message = "There is no user database."
 			case action == adminUsers:
-				mode, us = modeUsers, usersState{checklists: cfg.Checklists, timers: cfg.Timers, trelloBaseURL: cfg.TrelloBaseURL}
+				mode, us = modeUsers, usersState{checklists: cfg.Checklists, timers: cfg.Timers, recurring: cfg.Recurring, trelloBaseURL: cfg.TrelloBaseURL}
 			case action == adminGoogleClient && cfg.Users == nil:
 				message = "There is no user database to keep a Google client in."
 			case action == adminGoogleClient:
@@ -939,6 +970,7 @@ const (
 	modePreferences
 	modeTermTest
 	modeTaskDetails
+	modeRecurring
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
@@ -1141,6 +1173,11 @@ type view struct {
 	Checklists    []checklist.Checklist
 	ChecklistsErr error
 
+	// Recurring are the user's recurring tasks, of which those due are
+	// shown; RecurringErr is why they could not be read.
+	Recurring    []recurring.Task
+	RecurringErr error
+
 	// Timer is the user's timer, if HasTimer; TimerErr is why it could not
 	// be read. NoFlash is the user's preference for avoiding flashing,
 	// which its line, once its time is up, otherwise does; it is the
@@ -1172,6 +1209,9 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tas
 	}
 	if cfg.Timers != nil && owner != 0 {
 		v.Timer, v.HasTimer, v.TimerErr = cfg.Timers.Get(owner)
+	}
+	if cfg.Recurring != nil && owner != 0 {
+		v.Recurring, v.RecurringErr = cfg.Recurring.List(owner)
 	}
 
 	if taskCache != nil {

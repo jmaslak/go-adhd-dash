@@ -464,7 +464,7 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 	case modeTasks:
 		return "Task list"
 	case modeConfirm:
-		return "Archive tasks"
+		return "Complete tasks"
 	case modeCalc:
 		if calc.dbm {
 			return "dBm calculator"
@@ -498,6 +498,8 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Shut down"
 	case modeAddTask:
 		return "Add task"
+	case modeRecurring:
+		return "Recurring task"
 	case modeMoveTask:
 		return "Move tasks"
 	case modeSettings:

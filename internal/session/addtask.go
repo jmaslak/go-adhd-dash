@@ -177,10 +177,9 @@ func (a *addTaskState) handle(resp go3270.Response, adder TaskAdder) (leave bool
 	d := a.dests[n-1]
 	ctx, cancel := context.WithTimeout(context.Background(), addTaskTimeout)
 	defer cancel()
-	number, err := adder.Add(ctx, title, d)
-	if err != nil {
+	if _, err := adder.Add(ctx, title, d); err != nil {
 		a.message, a.isError = "Could not add: "+err.Error(), true
 		return false, ""
 	}
-	return true, fmt.Sprintf("Added task %d to %s.", number, d)
+	return true, fmt.Sprintf("Added %s to %s.", taskName(tasks.Task{Title: title}), d)
 }

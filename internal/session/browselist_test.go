@@ -35,8 +35,8 @@ func TestTaskListBrowse(t *testing.T) {
 		t.Errorf("PF9 with no tasks: %v, %q", a, tp.message)
 	}
 	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF9=Lists") || !strings.Contains(text, "PF10/11=Reorder") {
-		t.Errorf("task list does not offer other lists and reordering:\n%s", text)
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "PF9=Lists") || !strings.Contains(text, "PF10/11=Reorder") || !strings.Contains(text, "PF2=Recur") {
+		t.Errorf("task list does not offer other lists, reordering and recurring tasks:\n%s", text)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestTaskScreenOfAList(t *testing.T) {
 	s, _, total, _, _ := buildTaskList(24, 80, now, tp.view.Snapshot(), tp)
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
-	for _, want := range []string{"TRELLO LIST", "Projects / Someday 25 open, page 1/2 (not on your task list)", "      1 idea 1", "PF5 moves them, PF6 archives", "PF7=Up PF8=Dn"} {
+	for _, want := range []string{"TRELLO LIST", "Projects / Someday 25 open, page 1/2 (not on your task list)", "   idea 1", "PF5 moves them, PF6 completes", "PF7=Up PF8=Dn"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("list's task screen lacks %q:\n%s", want, text)
 		}
@@ -155,7 +155,7 @@ func TestTaskScreenOfAList(t *testing.T) {
 		t.Fatalf("PF6: %v, %q", a, tp.message)
 	}
 	tp.handleConfirm(go3270.Response{AID: go3270.AIDPF4}, tp.source(backend), noLog)
-	if fmt.Sprint(backend.archived) != "[1 3]" || tp.message != "Archived 2 tasks." {
+	if fmt.Sprint(backend.archived) != "[1 3]" || tp.message != "Completed 2 tasks." {
 		t.Errorf("archived %v: %q", backend.archived, tp.message)
 	}
 	buildTaskList(24, 80, now, tp.view.Snapshot(), tp)

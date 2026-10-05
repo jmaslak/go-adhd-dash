@@ -14,6 +14,7 @@ import (
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/google"
+	"github.com/jmaslak/go-adhd-dash/internal/recurring"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
@@ -95,6 +96,10 @@ type usersState struct {
 	// timers keeps the timers, a deleted user's deleted with them; nil for
 	// none.
 	timers *timers.Store
+
+	// recurring keeps the recurring tasks, a deleted user's deleted with
+	// them; nil for none.
+	recurring *recurring.Store
 
 	// trelloBaseURL is the Trello API's address, for withdrawing a deleted
 	// user's token; "" for Trello's own.
@@ -592,6 +597,18 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 		if _, err := u.timers.RemoveOwned(func(owner int) bool { return slices.Contains(r.removedIDs, owner) }); err != nil {
 			logf("could not remove the removed users' timers: %v", err)
 			said = append(said, "Could not remove their timers: "+err.Error()+".")
+		}
+	}
+	// And their recurring tasks.
+	if u.recurring != nil && len(r.removedIDs) > 0 {
+		n, err := u.recurring.RemoveOwned(func(owner int) bool { return slices.Contains(r.removedIDs, owner) })
+		switch {
+		case err != nil:
+			logf("could not remove the removed users' recurring tasks: %v", err)
+			said = append(said, "Could not remove their recurring tasks: "+err.Error()+".")
+		case n > 0:
+			logf("removed %s of the removed users", countText(n, "recurring task", 0, 1))
+			said = append(said, "Removed "+countText(n, "recurring task", 0, 1)+".")
 		}
 	}
 	// A user's Google calendar goes with them: the link was in their entry,

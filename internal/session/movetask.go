@@ -146,10 +146,10 @@ func (m *moveTaskState) move(mover TaskMover, tp *taskPageState, logf func(strin
 		err := mover.Move(ctx, t, d)
 		cancel()
 		if err != nil {
-			logf("moving task %d %q to %s: %v", t.Number, t.Title, d, err)
-			return fmt.Sprintf("Moved %d of %d. Task %d, %q, was not moved: %v", done, len(m.moving), t.Number, t.Title, err), true
+			logf("moving task %q to %s: %v", t.Title, d, err)
+			return fmt.Sprintf("Moved %d of %d. %s was not moved: %v", done, len(m.moving), taskName(t), err), true
 		}
-		logf("moved task %d %q to %s", t.Number, t.Title, d)
+		logf("moved task %q to %s", t.Title, d)
 		delete(tp.marked, t.CardID)
 		done++
 	}

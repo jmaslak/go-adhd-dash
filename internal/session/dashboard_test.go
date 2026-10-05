@@ -89,7 +89,7 @@ func TestDashboardFitsAndPages(t *testing.T) {
 				}
 				for _, l := range screenText(t, s, rows, cols) {
 					var n int
-					if _, err := fmt.Sscanf(strings.TrimSpace(l), "%d [work]", &n); err == nil {
+					if _, err := fmt.Sscanf(strings.TrimSpace(l), "[work] task %d", &n); err == nil {
 						if seen[n] {
 							t.Errorf("task %d on two pages", n)
 						}
@@ -115,7 +115,7 @@ func TestDashboardContent(t *testing.T) {
 	for _, want := range []string{
 		"** NOT IN MEETING **", "Meeting now: Running",
 		"Today 09:30-10:30 NOW      Running", "in 15m   Soon", "Tmrw ",
-		"TASKS 3 open", "   1 [work] task 1",
+		"TASKS 3 open", " [work] task 1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
@@ -250,7 +250,7 @@ func TestAgendaShowsNextDay(t *testing.T) {
 	if strings.Contains(text, "later") {
 		t.Errorf("meeting after 24 hours shown:\n%s", text)
 	}
-	if !strings.Contains(text, "   1 [work] task 1") {
+	if !strings.Contains(text, " [work] task 1") {
 		t.Errorf("task list squeezed out though there is room:\n%s", text)
 	}
 }
@@ -428,7 +428,7 @@ func TestDashboardChecklists(t *testing.T) {
 	text := strings.Join(rows, "\n")
 	for _, want := range []string{
 		"TASKS 5 open",
-		">\n    - [checklist] list 1 (1/1)\n    - [checklist] list 3 (0/1)",
+		">\n [checklist] list 1 (1/1)\n [checklist] list 3 (0/1)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
@@ -523,7 +523,7 @@ func TestDashboardTaskFetchStatus(t *testing.T) {
 	v = sampleView(2)
 	v.TasksFetched, v.TasksErr = now.Add(-20*time.Minute), errors.New("trello: timeout")
 	s, _, _, _ = buildDashboard(24, 80, v, 0, "")
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "TASKS 2 open stale, from 09:40: trello: timeout") || !strings.Contains(text, "   2 [work] task 2") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "TASKS 2 open stale, from 09:40: trello: timeout") || !strings.Contains(text, " [work] task 2") {
 		t.Errorf("stale tasks should still be listed, noted as stale:\n%s", text)
 	}
 }

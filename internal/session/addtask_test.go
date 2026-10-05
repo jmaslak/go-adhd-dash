@@ -115,7 +115,7 @@ func TestAddTaskHandle(t *testing.T) {
 
 	adder.err = nil
 	leave, added := a.handle(enter(" write report ", " 2"), adder)
-	if !leave || added != "Added task 42 to Work / To Do." || fmt.Sprint(adder.added) != "[write report -> Work / To Do]" {
+	if !leave || added != `Added "write report" to Work / To Do.` || fmt.Sprint(adder.added) != "[write report -> Work / To Do]" {
 		t.Errorf("add: leave %v, added %q, adder got %v", leave, added, adder.added)
 	}
 

@@ -17,7 +17,8 @@ screen shows:
   meetings do not all fit alongside the tasks, the first page gives them the room and the
   tasks move to later pages;
 - the **tasks**: the cards on the Trello lists the user has linked (see
-  [Tasks](#tasks)), then their starred checklists.
+  [Tasks](#tasks)), then their recurring tasks that are due (see
+  [Recurring tasks](#recurring-tasks)), then their starred checklists.
 
 The screen redraws itself every second (`-refresh`), keeping its clock
 current, so it can be left up on a spare terminal; each redraw writes over
@@ -132,7 +133,7 @@ sudo systemctl start adhd-dash
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
-| `-db` | `~/adhd-dash.db` | SQLite database the checklists and each user's timer are kept in; at its default, one at the old default, `~/adhd-dash-checklists.db`, is renamed to it at startup (see [The database](#the-database)) |
+| `-db` | `~/adhd-dash.db` | SQLite database the checklists, recurring tasks and each user's timer are kept in; at its default, one at the old default, `~/adhd-dash-checklists.db`, is renamed to it at startup (see [The database](#the-database)) |
 | `-checklist-json` | `~/adhd-dash-checklists.json` | JSON file checklists were kept in before there was a database, imported into `-db` at startup, then renamed with `.imported` added |
 | `-users-file` | `~/adhd-dash-users.json` | JSON file the users are kept in |
 | `-backup` | `false` | back up `-users-file` and `-db` into `-backup-dir`, then exit (see [Backups](#backups)) |
@@ -155,16 +156,25 @@ calendar information at all.
 - `PF4`: calculator
 - `PF7` / `PF8`: previous / next page of tasks
 - `PF9`: calendar
-- `PF10`: every open task, for archiving
+- `PF10`: every open task and recurring task, for completing or editing
 - `PF11`: chat (shown on the help row only when it fits; `help` lists it)
 - `Enter`: run the command typed, or with none, open the checklist the
   cursor is on in the task list, or redraw now
 - `PF3`: disconnect
 
-The dashboard's task list ends with the starred checklists, each as a task
-numbered `-` and tagged `[checklist]` with how many of its items are done, and
-counts them in the number of tasks open. Move the cursor onto one and press `Enter` to open
-it. The task screen (`PF10`) lists only the tasks.
+After the Trello tasks, the dashboard's task list has the recurring tasks
+that are due, each tagged `[recurring]`, with when it came
+due (`(due 09:00)`, or `(due Fri 08:00)` for an earlier day). One due for
+over an hour, past due, has its title and when in red. Those due later
+today are listed too, with when they come due (`(next 15:30)`), but not
+counted as open: in blue, then in green from an hour before they come due
+(listed then even if that is just after midnight). It ends with
+the starred checklists, each as a task
+tagged `[checklist]` with how many of its items are done.
+Both are counted in the number of tasks open. Move the cursor onto a
+checklist and press `Enter` to open
+it. The task screen (`PF10`) lists the tasks and every recurring task, but
+no checklists.
 
 The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
@@ -224,7 +234,7 @@ The admin menu (`admin`) lists its options by number; type one on the
 
 - `1`: shut down the server, after a confirmation (`PF4`) saying how many
   other sessions it disconnects. Every session is shown a goodbye screen and
-  disconnected, a session in the middle of saving a checklist or archiving
+  disconnected, a session in the middle of saving a checklist or completing
   tasks finishes first, and the server exits (status 0). Sessions that have
   not disconnected within 5 seconds have their connections closed, but the
   server still waits for them to finish anything they are writing. Any
@@ -405,14 +415,16 @@ with no calendar connected sees the month and the clocks, with a note to
 connect one in `settings`.
 
 The task screen lists every open task, whatever its tags. Type `X` in the
-`S` column beside tasks, then press `PF5` to move them or `PF6` to archive
+`S` column beside tasks, then press `PF5` to move them or `PF6` to complete
 them; a confirmation lists them, and `PF4` does it. Marks are kept while
 paging. Typing `X` moves the cursor on to the task's title.
 
-- `PF2`: the task's details: its notes, checklists and more (below)
+- `PF1`: the task's details: its notes, checklists and more (below); on a
+  recurring task, its screen, to edit it
+- `PF2`: add a recurring task (see [Recurring tasks](#recurring-tasks))
 - `PF4`: add a task
 - `PF5`: move the marked tasks to another Trello list, after confirmation
-- `PF6`: archive the marked tasks, after confirmation
+- `PF6`: complete the marked tasks, after confirmation
 - `PF7` / `PF8`: previous / next page
 - `PF9`: show the cards of any of your Trello lists, including those not on
   the task list, on a task screen of their own
@@ -420,11 +432,11 @@ paging. Typing `X` moves the cursor on to the task's title.
   cursor is on) up / down one place in its Trello list
 - type over a title, and press any key: rename the task, after confirmation
 - `Enter`: keep the marks typed
-- `PF4` (on a confirmation): archive, or rename
+- `PF4` (on a confirmation): complete, or rename
 - `PF3`: back (from a confirmation, to the list with the marks, and titles
   typed, kept)
 
-`PF2` shows the details of the task marked, or with none marked, the one the
+`PF1` shows the details of the task marked, or with none marked, the one the
 cursor is on, read from its Trello card, only to look at: its full title,
 its list, its due date (marked overdue, or complete), its labels, its notes
 (Trello's description), each of its checklists with how many items are
@@ -438,7 +450,7 @@ To rename tasks, type over their titles; whatever key is pressed then, a
 confirmation lists each task with its new title. `PF4` renames them,
 stopping at the first that fails, which stays typed; `PF3` goes back to
 change what was typed; `PF12` discards it. A title cannot be blanked (to
-finish a task, archive it). A title too long to fit is shown cut short;
+finish a task, complete it). A title too long to fit is shown cut short;
 typing over it renames the task to what is typed.
 
 `PF10` and `PF11` move one task within its own Trello list, past the task
@@ -450,7 +462,7 @@ last; to move it to another list, use `PF5`.
 `PF4` adds a task: type its title, and the number of the Trello board and
 list to put it on, from those the user chose (with only one, it is picked
 already), then press `Enter`. A card is added at the bottom of that list, and
-the task screen comes back saying which task number it got; marks typed
+the task screen comes back saying it was added; marks typed
 before `PF4` are kept. If the card cannot be added, the screen says why.
 `PF3` goes back without adding.
 
@@ -468,9 +480,9 @@ it stays marked, to try again.
 `PF9` shows other lists: it lists every open list on every Trello board you
 can see, as `PF5` does (those your tasks come from show their tag), a page
 at a time. Type any character beside one and press `Enter` to show its open
-cards on a task screen of their own (TRELLO LIST), numbered from 1; the
+cards on a task screen of their own (TRELLO LIST); the
 heading says whether they are on your task list. It works as the task
-screen does: mark, move, archive, rename, reorder and add (`PF4` adds to
+screen does: mark, move, complete, rename, reorder and add (`PF4` adds to
 the bottom of that list), with the same keys. Its cards are read again
 after every change, and once a minute. `PF3` goes back to the lists, and
 `PF3` there to the task screen as it was left, with any marks kept; `PF9`
@@ -479,10 +491,58 @@ also goes back to the lists.
 The task screen never redraws on a timer, since that would wipe marks typed
 but not yet sent.
 
-Archiving a task marks its Trello card's due date complete and archives the
-card. If Trello fails, the task is left open. Tasks are marked by card, so
-a task's number changing since it was shown does not matter. Archiving
-stops at the first task that fails; it stays marked, to try again.
+Completing a task marks its Trello card's due date complete and archives the
+card in Trello. If Trello fails, the task is left open. Tasks are marked by
+card, so tasks added or completed elsewhere since the screen was shown do not
+matter. Completing stops at the first task that fails; it stays marked, to
+try again.
+
+### Recurring tasks
+
+A recurring task is kept in `-db`, not Trello, and comes due at a time of
+day, by the server's clock, on the days its schedule says. It shows on the
+dashboard's task list from then until it is completed on the task screen,
+which marks it done at that moment and gives it the next day it comes due. A user without
+Trello linked has the task screen for their recurring tasks alone.
+
+The task screen lists all of a user's recurring tasks after their Trello
+tasks, in the order they come due, each tagged
+`[recurring]` and with when it came due (`[due 09:00]`) or, if not yet due,
+when it next does (`[next Tue 09:00]`). Those not yet due are in blue, and
+not counted as open. They are marked, completed (`PF6`) and renamed (typing over the
+title) as Trello tasks are. They cannot be moved (`PF5`) or reordered
+(`PF10` / `PF11`). Completing one not yet due marks that coming one done.
+Each task is marked by the day it is due as shown, so completing it again from
+a screen drawn before it was done, in this session or another, does
+nothing and says so.
+
+`PF2` on the task screen adds one. `PF1` on one edits it. Either way, the
+recurring task screen asks:
+
+- `Title`;
+- `Time`: when it comes due, 24-hour, `hh:mm` (or `hhmm`);
+- `Starts`: the first day it may come due, `yyyy-mm-dd`; today, filled in
+  already, or later. A task starting today at a time already past is due at
+  once. An edited task may keep the start it had, though that is now past;
+- then either the days of the week, each marked `X`, and `Every` so many
+  weeks (1 to 52; `1` is every week), counted from the week of the first
+  marked day from the start. Weeks start on Monday;
+- or `Days apart` (1 to 999), and `After done`: `N` for a fixed schedule,
+  every so many days from the start however late it is done; `Y` for that
+  many days after it was last done, at the time of day it was done (to
+  the minute): done at 18:05, it comes due again at 18:05. Its `Time` is
+  only when it first comes due; once it is done, the edit screen shows the
+  time it was done.
+
+`Enter` saves it and goes back to the task screen, saying when it is next
+due. Changing its title alone keeps when it is due. Changing its schedule,
+time or start makes it due on the first day of the new schedule from today
+on. `PF6` deletes it, once confirmed with `PF4`; any other key keeps it. `PF3` goes back without
+saving.
+
+Done late on a fixed schedule, occurrences missed are skipped: a task due
+every Monday and Wednesday, done on Thursday, comes due next Monday. Done
+before it is due, it comes due on the occurrence after the one it was due on.
 
 The timer (`timer`) asks how long, as `hh:mm` (hours and minutes: `1:30`
 is an hour and a half, `0:05` five minutes) or as hours, minutes and
@@ -638,7 +698,8 @@ not yet saved.
 
 ### The database
 
-The checklists, and each user's timer, are kept in `-db`, a SQLite
+The checklists, each user's timer and their recurring tasks are kept in
+`-db`, a SQLite
 database (in WAL mode, so it comes with `-wal` and `-shm` files beside it
 while the server runs, readable only by its owner). Each change is one
 transaction, and the checklists are read on every redraw, so every session
@@ -662,7 +723,13 @@ Its tables:
 - `meta`: `last_id`, the highest ID given, so that none is given twice;
 - `timers`: `owner` (the user's ID), `until` (to a time of day), `total_ns`
   and `end_ns` (Unix nanoseconds), and `note` (what it is for; added, as
-  `Timer`, to a table made before), one row for each user with a timer.
+  `Timer`, to a table made before), one row for each user with a timer;
+- `recurring`: `id` (never reused), `owner` (the user's ID), `title`,
+  `schedule` (`weekly`, `every` or `after`), `days` (for `weekly`, a bit
+  for each day of the week, Sunday's 1), `weeks`, `every_days`,
+  `at_minute` (minutes after midnight), `start` and `due` (`yyyy-mm-dd`).
+  A user's recurring tasks are removed with them, and at startup any of a
+  user no longer there.
 
 Checklists kept as JSON, as they were before, in `-checklist-json` are
 imported once at startup, IDs and all, and the file is renamed with
@@ -911,8 +978,8 @@ Each user links their own Trello account, and chooses which of its lists'
 cards are their tasks, with a short tag for each list, shown in brackets
 before its tasks. The token and choices are kept in their entry in
 `-users-file`. A user with none linked, or no list chosen, has no tasks:
-the dashboard lists only their starred checklists, and the task screen
-(`tasks`, `PF10`) says to link Trello. (`~/.task.yaml` is no longer read.)
+the dashboard lists only their recurring tasks and starred checklists, and
+the task screen (`tasks`, `PF10`) lists only their recurring tasks. (`~/.task.yaml` is no longer read.)
 
 **Once, an admin sets the Trello API key** every user links through: admin
 menu option `7`. The screen lists the steps: signed in to Trello, go to
@@ -956,15 +1023,15 @@ withdraw the token. Deleting a user does the same.
 
 Lists are kept by Trello's IDs, so a board or list renamed keeps working
 (its old name is shown until it is chosen again). Tasks are listed in the
-order of the lists on the screen, then the cards' order on each list, and
-numbered in that order; the numbers change as tasks come and go. A new task
+order of the lists on the screen, then the cards' order on each list,
+each with its list's tag; they are not numbered. A new task
 (`PF4` on the task screen) is added at the bottom of one of the lists
 chosen.
 
 Each user's tasks are kept in memory for 15 minutes, shared by their
 sessions. When they are older than that, the next redraw starts fetching
 them again in the background (one request per list) and goes on showing
-the old ones until the new arrive. Adding or archiving a task changes them
+the old ones until the new arrive. Adding or completing a task changes them
 at once and starts a fetch in the background. If a fetch fails, the old
 tasks are kept, the task heading says they are stale and why, and the fetch
 is tried again after a minute.

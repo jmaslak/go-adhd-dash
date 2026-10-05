@@ -25,6 +25,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/db"
 	"github.com/jmaslak/go-adhd-dash/internal/luxafor"
+	"github.com/jmaslak/go-adhd-dash/internal/recurring"
 	"github.com/jmaslak/go-adhd-dash/internal/session"
 	"github.com/jmaslak/go-adhd-dash/internal/streamdeck"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
@@ -42,7 +43,7 @@ func main() {
 	controlPort := flag.Int("control-port", 0, "UDP port, on -host, for go-busy-indicator's busy command to set the busy light (0: none; unauthenticated)")
 	externalRGB := flag.String("externalrgb", "", "command run with red, green and blue arguments (0-255) at each change of the busy light's color")
 	agendaFile := flag.String("agenda-file", "", "show every user the agenda in this JSON file instead of their Google calendars")
-	dbPath := flag.String("db", db.DefaultPath(), "SQLite database the checklists and each user's timer are kept in")
+	dbPath := flag.String("db", db.DefaultPath(), "SQLite database the checklists, recurring tasks and each user's timer are kept in")
 	checklistJSON := flag.String("checklist-json", checklist.DefaultJSONPath(), "JSON file checklists were kept in before there was a database, imported into -db at startup, then renamed with .imported added")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
 	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
@@ -167,6 +168,16 @@ func main() {
 	if _, err := timerStore.RemoveOwned(func(owner int) bool { return !userIDs[owner] }); err != nil {
 		log.Fatalf("timers: %v", err)
 	}
+	// So is any recurring task of a user no longer there.
+	recurringStore, err := recurring.New(database)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if n, err := recurringStore.RemoveOwned(func(owner int) bool { return !userIDs[owner] }); err != nil {
+		log.Fatalf("recurring tasks: %v", err)
+	} else if n > 0 {
+		log.Printf("removed %d recurring tasks of users no longer there", n)
+	}
 	if admin, ok := users.Admin(userList); ok {
 		if n, err := checklistStore.AssignUnowned(admin.ID); err != nil {
 			log.Fatalf("checklists: %v", err)
@@ -180,6 +191,7 @@ func main() {
 		TaskPool:   tasks.NewPool(),
 		Checklists: checklistStore,
 		Timers:     timerStore,
+		Recurring:  recurringStore,
 		Backup: func() (string, error) {
 			return backup.Create(*backupDir, files, time.Now())
 		},

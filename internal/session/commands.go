@@ -24,7 +24,7 @@ type command struct {
 
 // commands are the commands, in the order the command list shows them.
 var commands = []command{
-	{name: "tasks", aliases: []string{"task"}, key: "PF10", what: "List every open task, to archive them"},
+	{name: "tasks", aliases: []string{"task"}, key: "PF10", what: "Every task, recurring too, to complete or edit"},
 	{name: "cal", aliases: []string{"calendar"}, key: "PF9", what: "Show the calendar"},
 	{name: "calc", key: "PF4", what: "RPN calculator"},
 	{name: "dbm", what: "RPN calculator, in dBm mode"},

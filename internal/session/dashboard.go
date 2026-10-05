@@ -606,12 +606,29 @@ type taskEntry struct {
 }
 
 // taskEntries is the dashboard's task list, and how many of its lines are
-// open tasks: the tasks, then the starred checklists, each as a task tagged
-// [checklist], or the reason they could not be read. The task screen lists
-// only the tasks.
+// open tasks: the tasks, then the recurring tasks due, or due soon or
+// later today (not counted as open), each tagged [recurring], then the starred
+// checklists, each as a task tagged
+// [checklist], or the reason either could not be read. The task screen
+// lists the tasks and every recurring task, but no checklists.
 func taskEntries(v view) (entries []taskEntry, open int) {
 	for _, t := range v.Tasks {
 		entries = append(entries, taskEntry{line: taskLine(t)})
+	}
+	if v.RecurringErr != nil {
+		entries = append(entries, taskEntry{line: line{
+			{Content: recurringDashTag, Color: go3270.Turquoise},
+			{Content: v.RecurringErr.Error(), Color: go3270.Red},
+		}})
+	}
+	for _, r := range v.Recurring {
+		switch {
+		case r.IsDue(v.Now):
+			entries = append(entries, taskEntry{line: recurringTaskLine(r, v.Now)})
+			open++
+		case laterToday(r, v.Now) || dueSoon(r, v.Now):
+			entries = append(entries, taskEntry{line: recurringTaskLine(r, v.Now)})
+		}
 	}
 	if v.ChecklistsErr != nil {
 		entries = append(entries, taskEntry{line: line{
@@ -628,10 +645,9 @@ func taskEntries(v view) (entries []taskEntry, open int) {
 	return entries, open + len(v.Tasks)
 }
 
-// checklistTag is where a task's number and tags go for a checklist in the
-// task list: "-" for the number, aligned as a task's is, and the tag
-// [checklist].
-const checklistTag = "   - [checklist]"
+// checklistTag is where a task's tags go for a checklist in the task
+// list.
+const checklistTag = "[checklist]"
 
 // checklistTaskLine is checklist l in the task list, colored as a task is:
 // its tag, then its name and how many of its items are done.
@@ -648,12 +664,13 @@ func checklistTaskLine(l checklist.Checklist) line {
 	}
 }
 
-// taskLine is one task: its number and tags, then its title.
+// taskLine is one task: its tags, if any, then its title.
 func taskLine(t tasks.Task) line {
-	return line{
-		{Content: taskPrefix(t), Color: go3270.Turquoise},
-		{Content: t.Title, Color: go3270.Green, Intense: true},
+	var l line
+	if prefix := taskPrefix(t); prefix != "" {
+		l = append(l, go3270.Field{Content: prefix, Color: go3270.Turquoise})
 	}
+	return append(l, go3270.Field{Content: t.Title, Color: go3270.Green, Intense: true})
 }
 
 // dayOf is midnight at the start of t's day.
