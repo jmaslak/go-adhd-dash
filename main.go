@@ -23,10 +23,12 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/backup"
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/db"
 	"github.com/jmaslak/go-adhd-dash/internal/luxafor"
 	"github.com/jmaslak/go-adhd-dash/internal/session"
 	"github.com/jmaslak/go-adhd-dash/internal/streamdeck"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
+	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 	"github.com/jmaslak/go-adhd-dash/internal/web"
 )
@@ -40,8 +42,8 @@ func main() {
 	controlPort := flag.Int("control-port", 0, "UDP port, on -host, for go-busy-indicator's busy command to set the busy light (0: none; unauthenticated)")
 	externalRGB := flag.String("externalrgb", "", "command run with red, green and blue arguments (0-255) at each change of the busy light's color")
 	agendaFile := flag.String("agenda-file", "", "show every user the agenda in this JSON file instead of their Google calendars")
-	checklistDB := flag.String("checklist-db", checklist.DefaultPath(), "SQLite database the checklists are kept in")
-	checklistJSON := flag.String("checklist-json", checklist.DefaultJSONPath(), "JSON file checklists were kept in before -checklist-db, imported into it at startup, then renamed with .imported added")
+	dbPath := flag.String("db", db.DefaultPath(), "SQLite database the checklists and each user's timer are kept in")
+	checklistJSON := flag.String("checklist-json", checklist.DefaultJSONPath(), "JSON file checklists were kept in before there was a database, imported into -db at startup, then renamed with .imported added")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
 	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
 	maxConnsPerIP := flag.Int("max-connections-per-ip", 16, "most connections open at once from one address, an IPv6 one by its /64 (0: no limit)")
@@ -50,8 +52,8 @@ func main() {
 	agendaRefresh := flag.Duration("agenda-refresh", 5*time.Minute, "how often a calendar is read")
 	httpPort := flag.Int("http-port", 3280, "TCP port the web pages (home, privacy policy, terms) are served on over HTTP, on -host (0: none)")
 	backupDir := flag.String("backup-dir", backup.DefaultDir(), "directory -backup writes to, and -restore looks in for a file named without a directory")
-	doBackup := flag.Bool("backup", false, "back up -users-file and -checklist-db into -backup-dir, then exit (safe while the server runs)")
-	restoreFrom := flag.String("restore", "", "restore -users-file and -checklist-db from this backup, backing up what it replaces first, then exit (the server must be stopped)")
+	doBackup := flag.Bool("backup", false, "back up -users-file and -db into -backup-dir, then exit (safe while the server runs)")
+	restoreFrom := flag.String("restore", "", "restore -users-file and -db from this backup, backing up what it replaces first, then exit (the server must be stopped)")
 	flag.Parse()
 
 	// The files kept at their defaults were dotfiles once; those are
@@ -71,7 +73,17 @@ func main() {
 		}
 	}
 
-	files := backup.Files{Users: *usersFile, Checklists: *checklistDB}
+	// The database at its default was named for the checklists, when it
+	// held only them; it is renamed.
+	if *dbPath == db.DefaultPath() {
+		if said, err := moveOldDB(*dbPath); err != nil {
+			log.Fatal(err)
+		} else if said != "" {
+			log.Print(said)
+		}
+	}
+
+	files := backup.Files{Users: *usersFile, DB: *dbPath}
 	switch {
 	case *doBackup && *restoreFrom != "":
 		log.Fatal("-backup and -restore cannot be used together")
@@ -93,7 +105,7 @@ func main() {
 	// nor another server started on the same files.
 	unlock, err := backup.Lock(files.LockPath())
 	if errors.Is(err, backup.ErrInUse) {
-		log.Fatalf("another adhd-dash is using %s", *checklistDB)
+		log.Fatalf("another adhd-dash is using %s", *dbPath)
 	} else if err != nil {
 		log.Fatal(err)
 	}
@@ -121,17 +133,22 @@ func main() {
 		log.Printf("created %s with the user %q, password %q: log in with them, and you are asked to change the password before anything else", userStore.Path(), users.FirstName, users.FirstPassword)
 	}
 
-	// Checklists made before each was a user's become the admin's, and any
-	// of a user no longer there, which no one could reach, are removed.
-	checklistStore, err := checklist.Open(*checklistDB)
+	database, err := db.Open(*dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer checklistStore.Close() //nolint:errcheck
+	defer database.Close() //nolint:errcheck
+
+	// Checklists made before each was a user's become the admin's, and any
+	// of a user no longer there, which no one could reach, are removed.
+	checklistStore, err := checklist.New(database)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if n, err := checklistStore.ImportJSON(*checklistJSON); err != nil {
 		log.Fatal(err)
 	} else if n > 0 {
-		log.Printf("imported %d checklists from %s into %s; it is renamed %s.imported", n, *checklistJSON, *checklistDB, *checklistJSON)
+		log.Printf("imported %d checklists from %s into %s; it is renamed %s.imported", n, *checklistJSON, *dbPath, *checklistJSON)
 	}
 	userIDs := map[int]bool{}
 	for _, u := range userList {
@@ -141,6 +158,14 @@ func main() {
 		log.Fatalf("checklists: %v", err)
 	} else if n > 0 {
 		log.Printf("removed %d checklists of users no longer there", n)
+	}
+	// Any timer of a user no longer there, or of no one, is removed.
+	timerStore, err := timers.New(database)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := timerStore.RemoveOwned(func(owner int) bool { return !userIDs[owner] }); err != nil {
+		log.Fatalf("timers: %v", err)
 	}
 	if admin, ok := users.Admin(userList); ok {
 		if n, err := checklistStore.AssignUnowned(admin.ID); err != nil {
@@ -154,6 +179,7 @@ func main() {
 		Refresh:  *refresh, AgendaRefresh: *agendaRefresh,
 		TaskPool:   tasks.NewPool(),
 		Checklists: checklistStore,
+		Timers:     timerStore,
 		Backup: func() (string, error) {
 			return backup.Create(*backupDir, files, time.Now())
 		},
@@ -301,8 +327,8 @@ func restore(path, dir string, files backup.Files) error {
 	if r.Users {
 		log.Printf("restored %s from %s, made %s", files.Users, path, r.Created.Local().Format(time.DateTime))
 	}
-	if r.Checklists {
-		log.Printf("restored %s from %s, made %s", files.Checklists, path, r.Created.Local().Format(time.DateTime))
+	if r.DB {
+		log.Printf("restored %s from %s, made %s", files.DB, path, r.Created.Local().Format(time.DateTime))
 	}
 	return nil
 }
@@ -332,6 +358,43 @@ func moveLegacy(path string) (string, error) {
 		return "", err
 	}
 	if err := os.Rename(old, path); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("moved %s to %s", old, path), nil
+}
+
+// moveOldDB gives path, the database's default, the database kept at its
+// old default, adhd-dash-checklists.db, if there is one and path has none
+// yet, reporting what it did. With both, path is used, and the old one
+// left alone. An older server still using the old one, holding its lock,
+// is not moved under: that is an error.
+func moveOldDB(path string) (string, error) {
+	old := db.OldDefaultPath()
+	if _, err := os.Lstat(old); errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	switch _, err := os.Lstat(path); {
+	case err == nil:
+		return fmt.Sprintf("both %s and %s exist; using %s, and leaving %s alone", path, old, path, old), nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
+	}
+	unlock, err := backup.Lock(backup.LockPath(old))
+	if errors.Is(err, backup.ErrInUse) {
+		return "", fmt.Errorf("an older adhd-dash is using %s; stop it, so that it can be renamed %s", old, path)
+	} else if err != nil {
+		return "", err
+	}
+	defer unlock()
+	moved, err := db.Move(old, path)
+	if err != nil || !moved {
+		return "", err
+	}
+	// Removed while held, so that no server takes it meanwhile; where
+	// there is no flock, there is none.
+	if err := os.Remove(backup.LockPath(old)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
 	return fmt.Sprintf("moved %s to %s", old, path), nil

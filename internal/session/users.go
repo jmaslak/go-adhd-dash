@@ -15,6 +15,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/google"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
+	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -90,6 +91,10 @@ type usersState struct {
 	// checklists keeps the checklists, a deleted user's deleted with them;
 	// nil for none.
 	checklists *checklist.Store
+
+	// timers keeps the timers, a deleted user's deleted with them; nil for
+	// none.
+	timers *timers.Store
 
 	// trelloBaseURL is the Trello API's address, for withdrawing a deleted
 	// user's token; "" for Trello's own.
@@ -580,6 +585,13 @@ func (u *usersState) commit(store *users.Store, e usersEdit, passwordFor int, ha
 		case n > 0:
 			logf("removed %s of the removed users", countText(n, "checklist", 0, 1))
 			said = append(said, "Removed "+countText(n, "checklist", 0, 1)+".")
+		}
+	}
+	// So does their timer, said only if it cannot be.
+	if u.timers != nil && len(r.removedIDs) > 0 {
+		if _, err := u.timers.RemoveOwned(func(owner int) bool { return slices.Contains(r.removedIDs, owner) }); err != nil {
+			logf("could not remove the removed users' timers: %v", err)
+			said = append(said, "Could not remove their timers: "+err.Error()+".")
 		}
 	}
 	// A user's Google calendar goes with them: the link was in their entry,

@@ -1,5 +1,5 @@
-// Package checklist keeps named checklists in a SQLite database, shared by
-// every session. Each checklist is one user's.
+// Package checklist keeps named checklists in the server's SQLite
+// database, shared by every session. Each checklist is one user's.
 //
 // Checklists and their items carry IDs, unique across the database and
 // never reused, so that a change made on a screen drawn before another
@@ -12,13 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"sync"
-
-	_ "modernc.org/sqlite" // the "sqlite" driver
 )
 
 // Item is one line of a checklist.
@@ -81,48 +78,21 @@ CREATE INDEX IF NOT EXISTS items_by_checklist ON items (checklist, position);
 INSERT OR IGNORE INTO meta (key, value) VALUES ('last_id', 0);
 `
 
-// Store reads and writes the checklist database. One Store is shared by
-// every session; writes are made one at a time, each in a transaction.
+// Store reads and writes the checklists, in the server's database (see
+// package db). One Store is shared by every session; writes are made one
+// at a time, each in a transaction.
 type Store struct {
-	path string
-	db   *sql.DB
-	mu   sync.Mutex // held by Update
+	db *sql.DB
+	mu sync.Mutex // held by Update
 }
 
-// Open opens the database at path, making it (readable only by its owner)
-// if it does not exist.
-func Open(path string) (*Store, error) {
-	// Made here, so that SQLite does not make it readable by anyone; its
-	// journal files take the same permissions.
-	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("opening checklists: %w", err)
-	}
-	f.Close() //nolint:errcheck // only made
-
-	q := url.Values{}
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Set("_txlock", "immediate") // a write waits for another to finish, not fails
-	db, err := sql.Open("sqlite", path+"?"+q.Encode())
-	if err != nil {
-		return nil, fmt.Errorf("opening checklists in %s: %w", path, err)
-	}
+// New keeps the checklists in db, which its opener closes, making their
+// tables if they are not there.
+func New(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
-		db.Close() //nolint:errcheck
-		return nil, fmt.Errorf("opening checklists in %s: %w", path, err)
+		return nil, fmt.Errorf("making the checklists' tables: %w", err)
 	}
-	return &Store{path: path, db: db}, nil
-}
-
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
-
-// DefaultPath is where checklists are kept unless told otherwise:
-// adhd-dash-checklists.db in the home directory.
-func DefaultPath() string {
-	return inHome("adhd-dash-checklists.db")
+	return &Store{db: db}, nil
 }
 
 // DefaultJSONPath is where checklists were kept, as JSON, before they were
@@ -137,9 +107,6 @@ func inHome(name string) string {
 	}
 	return name
 }
-
-// Path is the database the Store keeps.
-func (s *Store) Path() string { return s.path }
 
 // Load returns every checklist, in order.
 func (s *Store) Load() ([]Checklist, error) {
@@ -383,7 +350,7 @@ func (s *Store) ImportJSON(path string) (int, error) {
 		return nil
 	})
 	if errors.Is(err, ErrBadID) {
-		return 0, fmt.Errorf("importing checklists from %s: some may already be in %s: %w", path, s.path, err)
+		return 0, fmt.Errorf("importing checklists from %s: some may already be in the database: %w", path, err)
 	} else if err != nil {
 		return 0, fmt.Errorf("importing checklists from %s: %w", path, err)
 	}
@@ -391,27 +358,4 @@ func (s *Store) ImportJSON(path string) (int, error) {
 		return 0, fmt.Errorf("imported checklists from %s, but could not rename it: %w", path, err)
 	}
 	return len(f.Checklists), nil
-}
-
-// BackupTo writes a copy of the database, as it is at one moment, to path,
-// which must not exist. It is safe while others read and write it.
-func (s *Store) BackupTo(path string) error {
-	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
-		return fmt.Errorf("backing up checklists to %s: %w", path, err)
-	}
-	return nil
-}
-
-// Check reports whether the database is sound, and its checklists can be
-// read.
-func (s *Store) Check() error {
-	var result string
-	if err := s.db.QueryRow(`PRAGMA integrity_check`).Scan(&result); err != nil {
-		return fmt.Errorf("checking checklists in %s: %w", s.path, err)
-	}
-	if result != "ok" {
-		return fmt.Errorf("checklists in %s are damaged: %s", s.path, result)
-	}
-	_, err := s.Load()
-	return err
 }

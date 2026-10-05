@@ -1,12 +1,13 @@
 // Package backup saves the server's configuration and data, the users file
-// and the checklist database, in one archive, and puts them back from one.
+// and the database, in one archive, and puts them back from one.
 //
 // An archive is a gzipped tar file named for when it was made,
 // adhd-dash-YYYYMMDD-HHMMSS.tar.gz, holding manifest.json, saying what it
-// holds, then adhd-dash-users.json and adhd-dash-checklists.db, each if
-// there was one. The users file holds password hashes and Google and
-// Trello tokens, so archives, and their directory, are readable only by
-// their owner.
+// holds, then adhd-dash-users.json and adhd-dash.db, each if there was
+// one. One made while the database held only checklists has it as
+// adhd-dash-checklists.db, which is restored the same. The users file
+// holds password hashes and Google and Trello tokens, so archives, and
+// their directory, are readable only by their owner.
 package backup
 
 import (
@@ -22,24 +23,30 @@ import (
 	"time"
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/db"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
 // Files are where the server keeps what is backed up.
 type Files struct {
-	Users      string // the users file
-	Checklists string // the checklist database
+	Users string // the users file
+	DB    string // the database
 }
 
 // LockPath is the file a server holds locked while it uses f, so that f is
-// not restored under it: the checklist database's name with .lock added.
-func (f Files) LockPath() string { return f.Checklists + ".lock" }
+// not restored under it: the database's name with .lock added.
+func (f Files) LockPath() string { return LockPath(f.DB) }
+
+// LockPath is the file a server holds locked while it uses the database
+// at path: its name with .lock added.
+func LockPath(path string) string { return path + ".lock" }
 
 // The names inside an archive.
 const (
-	manifestName   = "manifest.json"
-	usersName      = "adhd-dash-users.json"
-	checklistsName = "adhd-dash-checklists.db"
+	manifestName = "manifest.json"
+	usersName    = "adhd-dash-users.json"
+	dbName       = "adhd-dash.db"
+	oldDBName    = "adhd-dash-checklists.db" // in an archive made before
 )
 
 // Archive names: the prefix, when it was made, and the suffix.
@@ -50,13 +57,13 @@ const (
 )
 
 // ErrNothing reports that there was nothing to back up.
-var ErrNothing = errors.New("nothing to back up: neither the users file nor the checklist database exists")
+var ErrNothing = errors.New("nothing to back up: neither the users file nor the database exists")
 
 // manifest says when an archive was made, from where, and what it holds.
 type manifest struct {
-	Created    time.Time `json:"created"`
-	Users      string    `json:"users,omitempty"`      // the users file it is from
-	Checklists string    `json:"checklists,omitempty"` // the database it is from
+	Created time.Time `json:"created"`
+	Users   string    `json:"users,omitempty"` // the users file it is from
+	DB      string    `json:"db,omitempty"`    // the database it is from
 }
 
 // DefaultDir is where backups are kept unless told otherwise: backup in
@@ -90,16 +97,16 @@ func Create(dir string, f Files, now time.Time) (string, error) {
 	case !errors.Is(err, fs.ErrNotExist):
 		return "", fmt.Errorf("backing up users: %w", err)
 	}
-	switch _, err := os.Stat(f.Checklists); {
+	switch _, err := os.Stat(f.DB); {
 	case err == nil:
-		snapshot := filepath.Join(staging, checklistsName)
-		if err := snapshotChecklists(f.Checklists, snapshot); err != nil {
+		snapshot := filepath.Join(staging, dbName)
+		if err := snapshotDB(f.DB, snapshot); err != nil {
 			return "", err
 		}
-		m.Checklists = f.Checklists
-		entries = append(entries, [2]string{checklistsName, snapshot})
+		m.DB = f.DB
+		entries = append(entries, [2]string{dbName, snapshot})
 	case !errors.Is(err, fs.ErrNotExist):
-		return "", fmt.Errorf("backing up checklists: %w", err)
+		return "", fmt.Errorf("backing up the database: %w", err)
 	}
 	if len(entries) == 0 {
 		return "", ErrNothing
@@ -127,15 +134,14 @@ func Create(dir string, f Files, now time.Time) (string, error) {
 	}
 }
 
-// snapshotChecklists copies the database at path, as it is at one moment,
-// to to.
-func snapshotChecklists(path, to string) error {
-	s, err := checklist.Open(path)
+// snapshotDB copies the database at path, as it is at one moment, to to.
+func snapshotDB(path, to string) error {
+	d, err := db.Open(path)
 	if err != nil {
 		return err
 	}
-	defer s.Close() //nolint:errcheck // only read
-	return s.BackupTo(to)
+	defer d.Close() //nolint:errcheck // only read
+	return db.BackupTo(d, to)
 }
 
 // writeArchive writes the archive at path: m, then each entry.
@@ -190,10 +196,10 @@ func addBytes(tw *tar.Writer, name string, data []byte, at time.Time) error {
 
 // Restored says what Restore did.
 type Restored struct {
-	Created    time.Time // when the archive was made
-	Users      bool      // whether the users file was restored
-	Checklists bool      // whether the checklist database was restored
-	Saved      string    // the backup made of what was replaced; "" if there was nothing
+	Created time.Time // when the archive was made
+	Users   bool      // whether the users file was restored
+	DB      bool      // whether the database was restored
+	Saved   string    // the backup made of what was replaced; "" if there was nothing
 }
 
 // ErrInUse reports that a server is using the files to be restored.
@@ -224,9 +230,9 @@ func Restore(path string, f Files, dir string, now time.Time) (Restored, error) 
 			return r, fmt.Errorf("the users file in %s: %w", path, err)
 		}
 	}
-	if tmp, ok := staged[checklistsName]; ok {
-		if err := checkChecklists(tmp); err != nil {
-			return r, fmt.Errorf("the checklist database in %s: %w", path, err)
+	if tmp, ok := staged[dbName]; ok {
+		if err := checkDB(tmp); err != nil {
+			return r, fmt.Errorf("the database in %s: %w", path, err)
 		}
 	}
 
@@ -238,16 +244,16 @@ func Restore(path string, f Files, dir string, now time.Time) (Restored, error) 
 	case !errors.Is(err, ErrNothing):
 		return r, fmt.Errorf("backing up what would be replaced: %w", err)
 	}
-	if tmp, ok := staged[checklistsName]; ok {
-		for _, journal := range []string{f.Checklists + "-wal", f.Checklists + "-shm"} {
+	if tmp, ok := staged[dbName]; ok {
+		for _, journal := range []string{f.DB + "-wal", f.DB + "-shm"} {
 			if err := os.Remove(journal); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return r, fmt.Errorf("restoring checklists: %w", err)
+				return r, fmt.Errorf("restoring the database: %w", err)
 			}
 		}
-		if err := os.Rename(tmp, f.Checklists); err != nil {
-			return r, fmt.Errorf("restoring checklists: %w", err)
+		if err := os.Rename(tmp, f.DB); err != nil {
+			return r, fmt.Errorf("restoring the database: %w", err)
 		}
-		r.Checklists = true
+		r.DB = true
 	}
 	if tmp, ok := staged[usersName]; ok {
 		if err := os.Rename(tmp, f.Users); err != nil {
@@ -259,8 +265,9 @@ func Restore(path string, f Files, dir string, now time.Time) (Restored, error) 
 }
 
 // extract writes each file in the archive at path to a new file beside
-// where f keeps it, returning them by their names in the archive, and the
-// archive's manifest. Anything else in the archive is refused.
+// where f keeps it, returning them by their names in the archive (the
+// database by its name now, whichever it has), and the archive's manifest.
+// Anything else in the archive is refused.
 func extract(path string, f Files) (staged map[string]string, m manifest, err error) {
 	staged = map[string]string{}
 	in, err := os.Open(path)
@@ -282,7 +289,11 @@ func extract(path string, f Files) (staged map[string]string, m manifest, err er
 		if err != nil {
 			return staged, m, fmt.Errorf("reading the backup %s: %w", path, err)
 		}
-		dest := map[string]string{usersName: f.Users, checklistsName: f.Checklists}[hdr.Name]
+		name := hdr.Name
+		if name == oldDBName {
+			name = dbName
+		}
+		dest := map[string]string{usersName: f.Users, dbName: f.DB}[name]
 		switch {
 		case hdr.Typeflag != tar.TypeReg:
 			return staged, m, fmt.Errorf("the backup %s holds %s, which is not a file", path, hdr.Name)
@@ -291,14 +302,14 @@ func extract(path string, f Files) (staged map[string]string, m manifest, err er
 				return staged, m, fmt.Errorf("reading the backup %s's manifest: %w", path, err)
 			}
 			haveManifest = true
-		case dest == "" || staged[hdr.Name] != "":
+		case dest == "" || staged[name] != "":
 			return staged, m, fmt.Errorf("the backup %s holds %s, which is not expected", path, hdr.Name)
 		default:
 			tmp, err := os.CreateTemp(filepath.Dir(dest), ".restore-*")
 			if err != nil {
 				return staged, m, fmt.Errorf("restoring %s: %w", hdr.Name, err)
 			}
-			staged[hdr.Name] = tmp.Name()
+			staged[name] = tmp.Name()
 			_, err = io.Copy(tmp, tr)
 			err = errors.Join(err, tmp.Chmod(0o600), tmp.Sync(), tmp.Close())
 			if err != nil {
@@ -321,12 +332,21 @@ func checkUsers(path string) error {
 	return users.Validate(list)
 }
 
-// checkChecklists reports whether the database at path is sound, leaving
-// it closed, with no journal beside it.
-func checkChecklists(path string) error {
-	s, err := checklist.Open(path)
+// checkDB reports whether the database at path is sound, and its
+// checklists can be read, leaving it closed, with no journal beside it.
+func checkDB(path string) (err error) {
+	d, err := db.Open(path)
 	if err != nil {
 		return err
 	}
-	return errors.Join(s.Check(), s.Close())
+	defer func() { err = errors.Join(err, d.Close()) }()
+	if err := db.Check(d); err != nil {
+		return err
+	}
+	s, err := checklist.New(d)
+	if err != nil {
+		return err
+	}
+	_, err = s.Load()
+	return err
 }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/db"
 )
 
 // checklistRig drives the checklist screens as a session does: draw, then
@@ -26,14 +28,24 @@ func newChecklistRig(t *testing.T) *checklistRig {
 	return newChecklistRigOn(t, openChecklists(t))
 }
 
-// openChecklists is a new checklist database, closed when the test ends.
-func openChecklists(t *testing.T) *checklist.Store {
+// openDB is a new database, closed when the test ends.
+func openDB(t *testing.T) *sql.DB {
 	t.Helper()
-	store, err := checklist.Open(filepath.Join(t.TempDir(), "cl.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "adhd-dash.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { store.Close() }) //nolint:errcheck
+	t.Cleanup(func() { d.Close() }) //nolint:errcheck
+	return d
+}
+
+// openChecklists is the checklists in a new database.
+func openChecklists(t *testing.T) *checklist.Store {
+	t.Helper()
+	store, err := checklist.New(openDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return store
 }
 
@@ -877,5 +889,17 @@ func TestChecklistOwners(t *testing.T) {
 	cfg := Config{Checklists: a.store}
 	if got := names(gather(cfg, now, nil, nil, 2, nil).Checklists); fmt.Sprint(got) != "[B1]" {
 		t.Errorf("user 2's dashboard checklists: %v", got)
+	}
+
+	// With no user, there are none, even one with no owner.
+	err := a.store.Update(func(lists *[]checklist.Checklist, nextID func() int) error {
+		*lists = append(*lists, checklist.Checklist{ID: nextID(), Name: "Unowned", Active: true})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gather(cfg, now, nil, nil, 0, nil).Checklists; len(got) != 0 {
+		t.Errorf("no user's dashboard checklists: %v", names(got))
 	}
 }

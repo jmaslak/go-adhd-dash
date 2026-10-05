@@ -24,6 +24,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/busy"
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
+	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -66,6 +67,10 @@ type Config struct {
 
 	// Checklists keeps the checklists.
 	Checklists *checklist.Store
+
+	// Timers keeps each user's timer, shown in all their sessions; nil for
+	// each session to have its own.
+	Timers *timers.Store
 
 	// Shutdown stops the server from the admin menu; nil when it cannot be
 	// stopped from there.
@@ -272,6 +277,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var lights lightWatch // the busy state the dashboard shows, to redraw when it changes
 	defer lights.stop()
 	var drawnBusy busy.Status      // that state, as the dashboard last drew it
+	var dashTimer time.Time        // when the dashboard is next redrawn for the timer; zero for no need
 	shownMode := -1                // the screen last sent to the terminal
 	var allTasks []tasks.Task      // the task screen's tasks, as last shown
 	var sessions []SessionActivity // the activity viewer's sessions, as last shown
@@ -348,7 +354,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "calc", "dbm":
 			mode, calc.dbm = modeCalc, c.name == "dbm"
 		case "checklist":
-			mode, cl = modeChecklist, checklistState{owner: ownerOf(user)}
+			if user == nil {
+				message = "Checklists are for a logged-in user."
+				break
+			}
+			mode, cl = modeChecklist, checklistState{owner: user.ID}
 		case "busy", "green", "off":
 			if _, keys := cfg.lightFor(user); keys == nil {
 				message = "There is no busy light."
@@ -370,6 +380,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "chat":
 			mode, ch = modeChat, chatState{}
 		case "timer":
+			if user == nil {
+				message = "The timer is for a logged-in user."
+				break
+			}
 			mode, tm = modeTimer, timerState{}
 		case "settings":
 			if user == nil || cfg.Users == nil {
@@ -395,6 +409,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 		// typed on the calculator, or changes typed on a checklist, before
 		// they were sent, so those only ever redraw when a key is pressed.
 		redrawOnTimer := true
+		// afresh is set for a screen that cannot be drawn over the one
+		// there, even on a timed redraw.
+		afresh := false
 		viewing := 0
 		if mode == modeChecklist {
 			viewing = cl.open
@@ -511,10 +528,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildSignup(rows, cols, now, user.Name, &su)
 			redrawOnTimer = false
 		case modeTimer:
-			// Counting down and done redraw each second; asking, what is
-			// typed must not be wiped.
-			screen, cursorRow, cursorCol = buildTimer(rows, cols, now, &tm, prefsOf(cfg.Users, ownerOf(user)))
-			redrawOnTimer = tm.step != timerAsk
+			// Counting down and done redraw each second. So does asking,
+			// keeping what is typed, to follow a timer started in another
+			// session, when there is one kept for them all; a step changed
+			// there is drawn afresh.
+			afresh = tm.sync(cfg.Timers, user.ID, now, logf)
+			screen, cursorRow, cursorCol = buildTimer(rows, cols, now, &tm, prefsOf(cfg.Users, user.ID))
+			redrawOnTimer = tm.step != timerAsk || cfg.Timers != nil
 		case modeTermTest:
 			info := termInfo{Type: devinfo.TerminalType(), Rows: rows, Cols: cols, Codepage: devinfo.Codepage(), LU: neg.LUName}
 			screen, cursorRow, cursorCol = buildTermTest(rows, cols, now, info, &tt)
@@ -541,6 +561,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			light, keys := cfg.lightFor(user)
 			v := gather(cfg, now, cfg.agendaFor(user), cfg.tasksFor(user), ownerOf(user), light)
 			v.BusyKeys, v.Message = keys != nil, message
+			if v.HasTimer {
+				v.NoFlash = prefsOf(cfg.Users, ownerOf(user)).NoFlash
+			}
+			dashTimer = timerRedraw(v)
 			drawnBusy = v.Busy
 			screen, page, totalPages, checklistAt = buildDashboard(rows, cols, v, page, neg.LUName)
 			cursorRow, cursorCol = dashboardCommandRow(rows), commandInputCol+1
@@ -555,7 +579,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		opts := go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, CursorRow: cursorRow, CursorCol: cursorCol,
 		}
-		if timedOut && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity || mode == modeTimer) {
+		if timedOut && !afresh && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity || mode == modeTimer) {
 			screen, opts.NoClear = fillScreen(screen, rows, cols), true
 		}
 
@@ -569,6 +593,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 			deadline = tm.deadline(time.Now())
 		case redrawOnTimer:
 			deadline = nextRedraw(time.Now(), cfg.Refresh)
+			if mode == modeDashboard && !dashTimer.IsZero() && dashTimer.Before(deadline) {
+				deadline = dashTimer
+			}
 		}
 		_ = conn.SetReadDeadline(deadline)
 
@@ -707,7 +734,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case action == adminUsers && cfg.Users == nil:
 				message = "There is no user database."
 			case action == adminUsers:
-				mode, us = modeUsers, usersState{checklists: cfg.Checklists, trelloBaseURL: cfg.TrelloBaseURL}
+				mode, us = modeUsers, usersState{checklists: cfg.Checklists, timers: cfg.Timers, trelloBaseURL: cfg.TrelloBaseURL}
 			case action == adminGoogleClient && cfg.Users == nil:
 				message = "There is no user database to keep a Google client in."
 			case action == adminGoogleClient:
@@ -801,8 +828,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode, message, messageOK = settingsBack, said, true
 			}
 		case modeTimer:
-			if tm.handle(resp, time.Now(), logf) {
-				mode = modeDashboard
+			if back, said := tm.handle(resp, time.Now(), cfg.Timers, user.ID, logf); back {
+				mode, message = modeDashboard, said
 			}
 		case modeSignup:
 			created := func(name string) {
@@ -865,7 +892,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			typed := resp.Values[commandField]
 			if resp.AID == go3270.AIDEnter && typed == "" {
 				if id, ok := checklistAt[resp.Row]; ok {
-					mode, cl = modeChecklist, checklistState{owner: ownerOf(user), open: id}
+					mode, cl = modeChecklist, checklistState{owner: user.ID, open: id}
 				}
 				break
 			}
@@ -932,7 +959,8 @@ func taskBackend(c *tasks.Cache) TaskBackend {
 	return c
 }
 
-// ownerOf is the owner of u's checklists: their ID, or zero with no user.
+// ownerOf is the owner of u's checklists and timer: their ID, or zero,
+// no one, with no user, who has neither.
 func ownerOf(u *users.User) int {
 	if u == nil {
 		return 0
@@ -1112,11 +1140,21 @@ type view struct {
 
 	Checklists    []checklist.Checklist
 	ChecklistsErr error
+
+	// Timer is the user's timer, if HasTimer; TimerErr is why it could not
+	// be read. NoFlash is the user's preference for avoiding flashing,
+	// which its line, once its time is up, otherwise does; it is the
+	// session's, not gathered.
+	Timer    timers.Timer
+	HasTimer bool
+	TimerErr error
+	NoFlash  bool
 }
 
 // gather reads the current state of every source: the agenda from
 // agendaCache, the tasks from taskCache and the busy state from light, nil
-// for none, and the checklists owner's.
+// for none, and the checklists and timer owner's: none for owner zero, no
+// one.
 func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tasks.Cache, owner int, light busy.Source) view {
 	v := view{Now: now}
 	if light != nil {
@@ -1128,9 +1166,12 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tas
 		v.Agenda = agendaCache.Snapshot()
 	}
 
-	if cfg.Checklists != nil {
+	if cfg.Checklists != nil && owner != 0 {
 		v.Checklists, v.ChecklistsErr = cfg.Checklists.Load()
 		v.Checklists = checklist.Owned(v.Checklists, owner)
+	}
+	if cfg.Timers != nil && owner != 0 {
+		v.Timer, v.HasTimer, v.TimerErr = cfg.Timers.Get(owner)
 	}
 
 	if taskCache != nil {

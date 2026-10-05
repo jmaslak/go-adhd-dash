@@ -77,7 +77,7 @@ node, is set aside likewise; the flag must then be plugged in again.
 
 `-backup`, or admin menu option `8`, saves the configuration and data,
 the users file (users, passwords, Google and Trello links, the OAuth
-clients, the site address) and the checklist database, in one archive in
+clients, the site address) and the database, in one archive in
 `-backup-dir` (`~/backup`), named for when it was made (`-backup` then
 exits):
 
@@ -95,17 +95,19 @@ outside these files (such as `/etc/default/adhd-dash`), are not backed up.
 `-restore FILE` puts them back, then exits. A file named without a
 directory is looked for in `-backup-dir` if it is not in the current one.
 The server must be stopped first: while it runs it holds
-`<checklist-db>.lock` locked, and a restore (or a second server on the
+`<db>.lock` locked, and a restore (or a second server on the
 same files) refuses to start. Everything in the archive is checked before
 anything is replaced (the users file must be valid, the database sound),
 and what is replaced is backed up first, to undo the restore with. What the
-archive does not hold is left as it is.
+archive does not hold is left as it is. A backup made before the
+database was renamed (holding `adhd-dash-checklists.db`) restores the
+same.
 
 ```
 adhd-dash -restore adhd-dash-20261002-174428.tar.gz
 ```
 
-Both take the same `-users-file` and `-checklist-db` as the server, so give
+Both take the same `-users-file` and `-db` as the server, so give
 them any it is given. Installed with `install-ubuntu.sh`, run them as its
 user, in its home:
 
@@ -130,11 +132,11 @@ sudo systemctl start adhd-dash
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
-| `-checklist-db` | `~/adhd-dash-checklists.db` | SQLite database the checklists are kept in |
-| `-checklist-json` | `~/adhd-dash-checklists.json` | JSON file checklists were kept in before `-checklist-db`, imported into it at startup, then renamed with `.imported` added |
+| `-db` | `~/adhd-dash.db` | SQLite database the checklists and each user's timer are kept in; at its default, one at the old default, `~/adhd-dash-checklists.db`, is renamed to it at startup (see [The database](#the-database)) |
+| `-checklist-json` | `~/adhd-dash-checklists.json` | JSON file checklists were kept in before there was a database, imported into `-db` at startup, then renamed with `.imported` added |
 | `-users-file` | `~/adhd-dash-users.json` | JSON file the users are kept in |
-| `-backup` | `false` | back up `-users-file` and `-checklist-db` into `-backup-dir`, then exit (see [Backups](#backups)) |
-| `-restore` | (none) | restore `-users-file` and `-checklist-db` from a backup, backing up what it replaces first, then exit; the server must be stopped |
+| `-backup` | `false` | back up `-users-file` and `-db` into `-backup-dir`, then exit (see [Backups](#backups)) |
+| `-restore` | (none) | restore `-users-file` and `-db` from a backup, backing up what it replaces first, then exit; the server must be stopped |
 | `-backup-dir` | `~/backup` | where `-backup` writes, and where `-restore` looks for a file named without a directory |
 | `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
 | `-max-connections-per-ip` | `16` | most open at once from one address (an IPv6 one by its /64); `0` for no limit |
@@ -195,7 +197,8 @@ nor the cursor, and the screen says so. `PF3` goes back.
 
 The preferences screen has one, for now: `Avoid flashing`, `Y` or `N`
 (blank is `N`). With `Y`, nothing flashes: the timer shows `DONE`
-steadily, in red, rather than flashing the screen. `Enter` saves it
+steadily, in red, rather than flashing the screen, and the dashboard's
+line about a timer whose time is up is steadily red. `Enter` saves it
 (the settings screen then shows "no flashing" beside option `4`); `PF3`
 goes back without saving. It is kept with the user in `-users-file`, as
 `"preferences": {"no_flash": true}`, and takes effect at once, in every
@@ -487,17 +490,47 @@ seconds, each optional but in that order (`2h3m20s`, `45m`, `90s`), in
 any case, up to 99:59:59; or, on its second line (`Or until`), until when,
 as an alarm: a 24-hour time, `hh:mm` or `hh:mm:ss` (or `hhmm`), the next
 time it comes, today or, if already past, tomorrow, by the server's clock
-(the one in the title row). Type one or the other, not both, and `Enter`
-starts it. Counting down to a time of day, it shows `Until` that time
+(the one in the title row). Type one or the other, not both. On its third
+line (`What for`), type what the timer is for (up to 40 characters, such
+as `laundry`), shown as it runs and once done; left blank, it is `Timer`.
+`Enter` starts it. Counting down to a time of day, it shows `Until` that time
 (and `tomorrow` if so) below the digits. It then counts down in
 large digits filling the screen, redrawn each second (`mm:ss`, or
 `h:mm:ss` for an hour or more), green, then yellow in the last minute and
-red in the last ten seconds, with when it ends below; `PF3` stops it.
+red in the last ten seconds, with when it ends below (the time of day;
+`tomorrow` after it on the next day, or the day of the week first later,
+as `Ends Thu at 01:00:00`); `PF3` goes back to
+the dashboard, leaving it running (`timer` shows it again), and `PF6`
+stops it.
 When it is done, the screen flashes `DONE`, filled with red every other
 second (or, for a user who avoids flashing, shows it steadily), until
-`Enter` (or `PF3`) goes back to the dashboard. The timer lasts only
-while its screen is shown, and the terminal does not beep (go3270 cannot
-sound the alarm).
+`Enter` (or `PF6`) dismisses it and goes back to the dashboard; `PF3` goes
+back leaving it done, to show again the next time the timer is opened. The
+terminal does not beep (go3270 cannot sound the alarm).
+
+Each user has one timer, kept in `-db` beside their checklists,
+so it survives leaving its screen and restarting the server, and is shared
+by all their sessions: started in one, it counts down in every one showing
+the timer screen (which, asking, checks each second, keeping what is
+typed); stopped or dismissed in one, the others go back to asking, saying
+so. Starting a timer replaces any running. One that ran out unseen, or left
+done with `PF3`, shows `DONE` the next time the timer is opened. A
+deleted user's timer goes with them.
+
+While a user has a timer, the dashboard shows it above the agenda, with a
+blank row above and below (with no timer, those rows go to the agenda and
+tasks), counting down as the dashboard redraws, in the timer's colors:
+`Timer: Laundry, 04:59 left, ends 09:05:00` (with no note, just
+`Timer: 04:59 left, ...`; `tomorrow` after the time on the next day, or
+the day of the week before it later, as `ends Thu 01:00:00`), then,
+in red, `Timer: Laundry, time is up. Type TIMER to dismiss it.`, the
+whole row flashing in reverse video every other second (steadily red, not
+flashing, for a user who avoids flashing). While it shows, the dashboard
+is redrawn as the timer runs out and each second while it flashes, even
+with a slower `-refresh`. The note
+is cut to the room the rest of the line leaves, so the line never runs
+past the screen's edge and the rest is always whole. It goes
+once the timer is stopped (`PF6`) or dismissed on the timer screen.
 
 The calculator is RPN. Type numbers and the operators `+ - * / ^`,
 separated by spaces, and press `Enter`: numbers are pushed and operators
@@ -603,17 +636,33 @@ and what was typed is left on the screen to fix.
 Neither screen redraws on a timer, since that would wipe what was typed but
 not yet saved.
 
-The checklists are kept in `-checklist-db`, a SQLite database (in WAL
-mode, so it comes with `-wal` and `-shm` files beside it while the server
-runs, readable only by its owner). Each change is one transaction, and the
-checklists are read on every redraw, so every session of a user sees the
-same ones. Its tables:
+### The database
+
+The checklists, and each user's timer, are kept in `-db`, a SQLite
+database (in WAL mode, so it comes with `-wal` and `-shm` files beside it
+while the server runs, readable only by its owner). Each change is one
+transaction, and the checklists are read on every redraw, so every session
+of a user sees the same ones.
+
+It was `~/adhd-dash-checklists.db` while it held only checklists. Started
+with `-db` at its default (with `-backup` and `-restore` too), the server
+renames that one, with its `-wal` and `-shm` files, to `~/adhd-dash.db` if
+there is none yet; with both, it uses `~/adhd-dash.db`, says so, and leaves
+the old one alone. An older server still running on the old one holds its
+lock, and the rename refuses, saying to stop it. Given `-db` explicitly,
+nothing is renamed. The old `-checklist-db` flag is gone: a command line
+still giving it is refused, so change it to `-db`.
+
+Its tables:
 
 - `checklists`: `id`, `owner` (the user's ID in `-users-file`), `name`,
   `active` (starred), `position`;
 - `items`: `id`, `checklist` (its checklist's `id`; removing the checklist
   removes its items), `text`, `done`, `position`;
-- `meta`: `last_id`, the highest ID given, so that none is given twice.
+- `meta`: `last_id`, the highest ID given, so that none is given twice;
+- `timers`: `owner` (the user's ID), `until` (to a time of day), `total_ns`
+  and `end_ns` (Unix nanoseconds), and `note` (what it is for; added, as
+  `Timer`, to a table made before), one row for each user with a timer.
 
 Checklists kept as JSON, as they were before, in `-checklist-json` are
 imported once at startup, IDs and all, and the file is renamed with

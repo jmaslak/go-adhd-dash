@@ -5,17 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jmaslak/go-adhd-dash/internal/db"
 )
 
 // open is a new database in a directory of its own, closed when the test
 // ends.
 func open(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "checklists.db"))
+	return openAt(t, filepath.Join(t.TempDir(), "adhd-dash.db"))
+}
+
+// openAt is the database at path, closed when the test ends.
+func openAt(t *testing.T, path string) *Store {
+	t.Helper()
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() }) //nolint:errcheck
+	t.Cleanup(func() { d.Close() }) //nolint:errcheck
+	s, err := New(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
 
@@ -30,12 +42,10 @@ func count(t *testing.T, s *Store, table string) int {
 }
 
 func TestStore(t *testing.T) {
-	s := open(t)
+	path := filepath.Join(t.TempDir(), "adhd-dash.db")
+	s := openAt(t, path)
 	if lists, err := s.Load(); err != nil || len(lists) != 0 {
 		t.Fatalf("new database: %v, %v; want no checklists", lists, err)
-	}
-	if fi, err := os.Stat(s.Path()); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("database mode %v, %v; want 0600", fi.Mode().Perm(), err)
 	}
 
 	err := s.Update(func(lists *[]Checklist, nextID func() int) error {
@@ -133,13 +143,7 @@ func TestStore(t *testing.T) {
 	}
 
 	// It is all there when opened again.
-	path := s.Path()
-	s.Close() //nolint:errcheck
-	s, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close() //nolint:errcheck
+	s = openAt(t, path)
 	if lists, _ := s.Load(); len(lists) != 1 || lists[0].Name != "Morning" {
 		t.Errorf("opened again: %+v", lists)
 	}
@@ -151,17 +155,6 @@ func TestStore(t *testing.T) {
 	}
 	if lists, _ := s.Load(); lists[1].ID != 7 {
 		t.Errorf("opened again, the next ID is %d; want 7", lists[1].ID)
-	}
-}
-
-func TestOpenNotADatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "checklists.db")
-	if err := os.WriteFile(path, []byte(`{"checklists": []}`+"\n"+string(make([]byte, 200))), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if s, err := Open(path); err == nil {
-		s.Close() //nolint:errcheck
-		t.Errorf("opened a file that is not a database")
 	}
 }
 

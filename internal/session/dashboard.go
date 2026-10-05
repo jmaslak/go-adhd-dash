@@ -18,7 +18,8 @@ import (
 // Fixed rows at the top of the screen: the title, then the busy indicator's
 // banner with its details on the row below. Everything from firstBodyRow
 // down to the spacer above the bottom banner is shared between the agenda
-// and the task list.
+// and the task list, but for the user's timer, when they have one, on
+// firstBodyRow with a blank row below it, the agenda and tasks after.
 const (
 	titleRow     = 0
 	busyRow      = 1
@@ -41,11 +42,19 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	// command line above it.
 	commandRow, bottomBannerRow, helpRow := dashboardCommandRow(rows), rows-2, rows-1
 
+	// The timer, when there is one, takes the first rows, blank above it
+	// (as the row above firstBodyRow always is) and below.
+	timer := timerStatus(v, cols)
+	bodyRow := firstBodyRow
+	if timer != nil {
+		bodyRow += 2
+	}
+
 	// Rows available between the fixed top and the command line: two
 	// section headers and a blank spacer between the sections come out of
 	// it; what remains is split between agenda and task lines. With no
 	// calendar there is no agenda section, and the tasks have it all.
-	body := commandRow - firstBodyRow
+	body := commandRow - bodyRow
 	content := body - 3
 
 	// The first page shows the whole agenda, even if that leaves no room
@@ -81,8 +90,15 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	} else {
 		screen = append(screen, placeLine(busyRow, cols, detail)...)
 	}
+	if timer != nil {
+		// A field of its own starts the blank row below, at its first
+		// column, so that the timer's field, reversed when it flashes,
+		// ends with its own row rather than running on through this one.
+		screen = append(screen, placeLine(firstBodyRow, cols, timer)...)
+		screen = append(screen, go3270.Field{Row: firstBodyRow + 1, Col: 0})
+	}
 
-	row := firstBodyRow
+	row := bodyRow
 	if v.AgendaEnabled {
 		screen = append(screen, placeLine(row, cols, agendaHeader(v))...)
 		row++
@@ -125,6 +141,95 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 		go3270.Field{Row: helpRow, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)},
 	)
 	return screen, shownPage, totalPages, checklistAt
+}
+
+// timerStatus is the dashboard's line about the user's timer, cols wide
+// at most: what it is for and how long it has left, counting down as the
+// dashboard redraws, or that its time is up; nothing with no timer. It is
+// stopped or dismissed on the timer screen. The note is cut to the room
+// the rest of the line leaves, and left out with none, so that the rest is
+// always whole. Once the time is up, the line is one field in red, the
+// whole row in reverse video every other second, as the timer's DONE
+// flashes; or, for a user who avoids flashing, steadily red.
+func timerStatus(v view, cols int) line {
+	label := go3270.Field{Content: "Timer:", Color: go3270.Turquoise}
+	switch {
+	case v.TimerErr != nil:
+		return line{label, {Content: "could not be read: " + v.TimerErr.Error(), Color: go3270.Red}}
+	case !v.HasTimer:
+		return nil
+	}
+	t := v.Timer
+	var rest line
+	if !v.Now.Before(t.End) {
+		rest = line{{Content: "time is up. Type TIMER to dismiss it.", Color: go3270.Red, Intense: true}}
+	} else {
+		left := timeLeft(t.End, v.Now)
+		rest = line{
+			{Content: clockText(left, t.Total) + " left,", Color: countdownColor(left), Intense: true},
+			{Content: "ends " + endText(t.End, v.Now), Color: go3270.Blue},
+		}
+	}
+
+	l := line{label}
+	if t.Note != "" && t.Note != timerNoteless {
+		// The note's field takes a column before it, and its comma one.
+		room := cols - lineWidth(l) - lineWidth(rest) - 2
+		if note := cutRunes(t.Note, room); note != "" {
+			l = append(l, go3270.Field{Content: note + ",", Color: go3270.White, Intense: true})
+		}
+	}
+	l = append(l, rest...)
+	if v.Now.Before(t.End) {
+		return l
+	}
+
+	// Done: the fields run together, each attribute's column a space, so
+	// as wide as before.
+	words := make([]string, len(l))
+	for i, f := range l {
+		words[i] = f.Content
+	}
+	done := go3270.Field{Content: strings.Join(words, " "), Color: go3270.Red, Intense: true}
+	if timerFlashOn(v) {
+		done.Highlighting = go3270.ReverseVideo
+		done.Content += strings.Repeat(" ", max(cols-1-utf8.RuneCountInString(done.Content), 0))
+	}
+	return line{done}
+}
+
+// timerFlashOn reports whether the dashboard's line about a timer whose
+// time is up is in reverse video at v.Now: every other second, as the
+// timer's DONE flashes, but never for a user who avoids flashing.
+func timerFlashOn(v view) bool {
+	return v.Now.Unix()%2 == 0 && !v.NoFlash
+}
+
+// timerRedraw is when the dashboard, showing v, is next redrawn for the
+// user's timer, sooner than its refresh may be: each second while its
+// line flashes, and as it runs out, so that its time is up on time; zero
+// for no need.
+func timerRedraw(v view) time.Time {
+	switch {
+	case !v.HasTimer:
+		return time.Time{}
+	case v.Now.Before(v.Timer.End):
+		return v.Timer.End.Add(5 * time.Millisecond)
+	case v.NoFlash:
+		return time.Time{}
+	}
+	return nextRedraw(v.Now, time.Second)
+}
+
+// lineWidth is how many columns l takes when placed: each field's
+// content and the column before it, which holds its attribute. A line
+// fits a screen cols wide if this is no more than cols.
+func lineWidth(l line) int {
+	w := 0
+	for _, f := range l {
+		w += 1 + utf8.RuneCountInString(f.Content)
+	}
+	return w
 }
 
 // titleFields is the title row: title on the left, the clock on the right.

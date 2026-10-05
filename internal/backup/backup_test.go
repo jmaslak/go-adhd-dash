@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jmaslak/go-adhd-dash/internal/checklist"
+	"github.com/jmaslak/go-adhd-dash/internal/db"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
@@ -19,7 +20,7 @@ import (
 func setup(t *testing.T) Files {
 	t.Helper()
 	dir := t.TempDir()
-	f := Files{Users: filepath.Join(dir, "users.json"), Checklists: filepath.Join(dir, "cl.db")}
+	f := Files{Users: filepath.Join(dir, "users.json"), DB: filepath.Join(dir, "adhd-dash.db")}
 	if _, _, err := users.NewStore(f.Users).Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -27,14 +28,26 @@ func setup(t *testing.T) Files {
 	return f
 }
 
-// setChecklist makes the database's one checklist named name.
-func setChecklist(t *testing.T, f Files, name string) {
+// openChecklists is the checklists in f's database, closed when the test
+// ends.
+func openChecklists(t *testing.T, f Files) *checklist.Store {
 	t.Helper()
-	s, err := checklist.Open(f.Checklists)
+	d, err := db.Open(f.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close() //nolint:errcheck
+	t.Cleanup(func() { d.Close() }) //nolint:errcheck
+	s, err := checklist.New(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// setChecklist makes the database's one checklist named name.
+func setChecklist(t *testing.T, f Files, name string) {
+	t.Helper()
+	s := openChecklists(t, f)
 	if err := s.Update(func(l *[]checklist.Checklist, nextID func() int) error {
 		*l = []checklist.Checklist{{ID: nextID(), Name: name, Owner: 1, Items: []checklist.Item{{ID: nextID(), Text: "an item"}}}}
 		return nil
@@ -46,11 +59,7 @@ func setChecklist(t *testing.T, f Files, name string) {
 // checklistName is the name of the database's one checklist.
 func checklistName(t *testing.T, f Files) string {
 	t.Helper()
-	s, err := checklist.Open(f.Checklists)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close() //nolint:errcheck
+	s := openChecklists(t, f)
 	lists, err := s.Load()
 	if err != nil || len(lists) != 1 {
 		t.Fatalf("checklists %+v, %v", lists, err)
@@ -88,7 +97,7 @@ func TestCreateAndRestore(t *testing.T) {
 	at := time.Date(2026, 10, 2, 17, 44, 28, 0, time.Local)
 
 	// The database open and in use meanwhile, as a server's would be.
-	live, err := checklist.Open(f.Checklists)
+	live, err := db.Open(f.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +109,7 @@ func TestCreateAndRestore(t *testing.T) {
 	if filepath.Base(path) != "adhd-dash-20261002-174428.tar.gz" {
 		t.Errorf("named %s", filepath.Base(path))
 	}
-	if got := strings.Join(contents(t, path), " "); got != "manifest.json adhd-dash-users.json adhd-dash-checklists.db" {
+	if got := strings.Join(contents(t, path), " "); got != "manifest.json adhd-dash-users.json adhd-dash.db" {
 		t.Errorf("holds %s", got)
 	}
 	for p, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
@@ -130,7 +139,7 @@ func TestCreateAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Users || !r.Checklists || !r.Created.Equal(at) || filepath.Base(r.Saved) != "adhd-dash-20261002-184428.tar.gz" {
+	if !r.Users || !r.DB || !r.Created.Equal(at) || filepath.Base(r.Saved) != "adhd-dash-20261002-184428.tar.gz" {
 		t.Errorf("restored %+v", r)
 	}
 	if got := checklistName(t, f); got != "before" {
@@ -160,11 +169,11 @@ func TestCreateAndRestore(t *testing.T) {
 
 func TestCreatePartial(t *testing.T) {
 	dir := t.TempDir()
-	f := Files{Users: filepath.Join(dir, "users.json"), Checklists: filepath.Join(dir, "cl.db")}
+	f := Files{Users: filepath.Join(dir, "users.json"), DB: filepath.Join(dir, "adhd-dash.db")}
 	if _, err := Create(filepath.Join(dir, "backup"), f, time.Now()); !errors.Is(err, ErrNothing) {
 		t.Errorf("with nothing: %v", err)
 	}
-	if _, err := os.Stat(f.Checklists); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(f.DB); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("backing up made a database: %v", err)
 	}
 
@@ -181,7 +190,7 @@ func TestCreatePartial(t *testing.T) {
 	}
 	setChecklist(t, f, "kept")
 	r, err := Restore(path, f, filepath.Join(dir, "backup"), time.Now().Add(time.Second))
-	if err != nil || !r.Users || r.Checklists {
+	if err != nil || !r.Users || r.DB {
 		t.Errorf("restored %+v, %v; want the users file alone", r, err)
 	}
 	if got := checklistName(t, f); got != "kept" {
@@ -218,7 +227,7 @@ func TestRestoreRefuses(t *testing.T) {
 		}
 		gz := gzip.NewWriter(out)
 		tw := tar.NewWriter(gz)
-		for _, name := range []string{"manifest.json", "adhd-dash-users.json", "../evil", "adhd-dash-checklists.db"} {
+		for _, name := range []string{"manifest.json", "adhd-dash-users.json", "../evil", "adhd-dash.db", "adhd-dash-checklists.db"} {
 			if data, ok := files[name]; ok {
 				tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), Typeflag: tar.TypeReg}) //nolint:errcheck
 				tw.Write([]byte(data))                                                                              //nolint:errcheck
@@ -238,7 +247,9 @@ func TestRestoreRefuses(t *testing.T) {
 		{map[string]string{"adhd-dash-users.json": "{}"}, "no manifest.json"},
 		{map[string]string{"manifest.json": "{}", "../evil": "x"}, "not expected"},
 		{map[string]string{"manifest.json": "{}", "adhd-dash-users.json": `{"users": []}`}, "must be an admin"},
-		{map[string]string{"manifest.json": "{}", "adhd-dash-checklists.db": "not a database at all, at all, at all, at all, at all"}, "checklist database"},
+		{map[string]string{"manifest.json": "{}", "adhd-dash.db": "not a database at all, at all, at all, at all, at all"}, "the database"},
+		{map[string]string{"manifest.json": "{}", "adhd-dash-checklists.db": "not a database at all, at all, at all, at all, at all"}, "the database"},
+		{map[string]string{"manifest.json": "{}", "adhd-dash.db": "x", "adhd-dash-checklists.db": "x"}, "not expected"},
 	} {
 		write(c.files)
 		if _, err := Restore(bad, f, dir, time.Now()); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -262,5 +273,37 @@ func TestRestoreRefuses(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".restore-") {
 			t.Errorf("left %s", e.Name())
 		}
+	}
+}
+
+// TestRestoreOldName checks that a backup made while the database was
+// named for the checklists, holding adhd-dash-checklists.db, restores it.
+func TestRestoreOldName(t *testing.T) {
+	f := setup(t)
+	dir := t.TempDir()
+	snapshot := filepath.Join(dir, "snapshot.db")
+	if err := snapshotDB(f.DB, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(dir, "old.tar.gz")
+	m := manifest{Created: time.Now()}
+	if err := os.WriteFile(filepath.Join(dir, "db"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeArchive(old, m, [][2]string{{oldDBName, filepath.Join(dir, "db")}}); err != nil {
+		t.Fatal(err)
+	}
+
+	setChecklist(t, f, "after")
+	r, err := Restore(old, f, filepath.Join(dir, "backup"), time.Now())
+	if err != nil || !r.DB || r.Users {
+		t.Fatalf("restored %+v, %v; want the database alone", r, err)
+	}
+	if got := checklistName(t, f); got != "before" {
+		t.Errorf("checklist %q; want the one backed up", got)
 	}
 }
