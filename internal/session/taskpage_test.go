@@ -141,30 +141,17 @@ func TestTaskListScreen(t *testing.T) {
 			fields[f.Name] = f
 		}
 	}
-	if len(fields) != 36 {
-		t.Errorf("%d input fields, want 18 marks and 18 titles", len(fields))
-	}
-	// Each title is typed over in place, to the edge of the screen.
-	if f := fields["title:101"]; f.Content != "task 1" || f.Row != taskFirstRow || f.Col != taskTitleCol || f.Highlighting != go3270.Underscore {
-		t.Errorf("task 1's title field is %+v", f)
-	}
-	stops := 0
-	for _, f := range s {
-		if f.Col == 79 && f.Row >= taskFirstRow && f.Row < taskFirstRow+18 && !f.Write {
-			stops++
-		}
-	}
-	if stops != 18 {
-		t.Errorf("%d title fields ended at the edge, want 18", stops)
+	if len(fields) != 18 {
+		t.Errorf("%d input fields, want 18 marks", len(fields))
 	}
 	if f := fields["mark:101"]; f.Content != "X" || f.Row != taskFirstRow || f.Col != 0 {
 		t.Errorf("task 1's mark field is %+v", f)
 	}
-	// Untagged, the title follows the mark, so typing a mark goes on into
-	// it; tags between are skipped (see TestTaskListTags).
+	// The title, after the mark, is only to look at, and skipped over, so
+	// that typing a mark goes on to the next task's.
 	for _, f := range s {
-		if f.Row >= taskFirstRow && f.Row < taskFirstRow+18 && f.Col == taskTitleCol && !f.Write {
-			t.Errorf("field after the mark on row %d is not the title: %+v", f.Row, f)
+		if f.Row >= taskFirstRow && f.Row < taskFirstRow+18 && f.Col == taskTitleCol && (f.Write || !f.Autoskip) {
+			t.Errorf("title on row %d is not skipped over: %+v", f.Row, f)
 		}
 	}
 
@@ -245,7 +232,7 @@ func TestTaskListMarking(t *testing.T) {
 
 func TestArchiveConfirm(t *testing.T) {
 	all := someTasks(3)
-	s := buildArchiveConfirm(24, 80, now, all)
+	s := buildTaskConfirm(24, 80, now, &taskPageState{confirming: all})
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
 	for _, want := range []string{"COMPLETE TASKS", "Complete these 3 tasks?", "   task 2", "Their Trello cards will be marked complete and taken off their lists.", "Press PF4 to complete", "PF4=Complete"} {
 		if !strings.Contains(text, want) {
@@ -283,71 +270,13 @@ func TestArchiveConfirm(t *testing.T) {
 	}
 }
 
-func TestTaskRename(t *testing.T) {
+func TestTaskTitlesNotEditable(t *testing.T) {
 	all := someTasks(3)
-	all[2].Title = strings.Repeat("long ", 30) // cut to fit its field
-	src := &fakeTasks{}
-	tp := &taskPageState{}
-	build := func() string {
-		s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, tp)
-		return strings.Join(screenText(t, s, 24, 80), "\n")
-	}
-	key := func(aid go3270.AID, values map[string]string) taskListAction {
-		build()
-		return tp.handleList(go3270.Response{AID: aid, Values: values}, all, 1, src, noLog)
-	}
-
-	// A title sent back as drawn, cut short or not, is no rename.
-	build()
-	unchanged := map[string]string{"title:101": "task 1", "title:103": tp.shown["title:103"] + "  "}
-	if a := key(go3270.AIDEnter, unchanged); a != taskListStay || tp.renaming != nil {
-		t.Errorf("titles unchanged: %v, renaming %v", a, tp.renaming)
-	}
-
-	// Blanked: refused, still typed.
-	if a := key(go3270.AIDEnter, map[string]string{"title:102": ""}); a != taskListStay || !tp.isError || !strings.Contains(tp.message, "cannot be blank") {
-		t.Errorf("blanked: %v, %q", a, tp.message)
-	}
-
-	// Typed over, whatever the key, asks to confirm, keeping marks typed.
-	if a := key(go3270.AIDPF8, map[string]string{"title:102": " second task ", "mark:101": "X"}); a != taskListConfirm || len(tp.renaming) != 1 || tp.renaming[0].title != "second task" || !tp.marked["101"] {
-		t.Fatalf("typed over: %v, renaming %+v, marks %v", a, tp.renaming, tp.marked)
-	}
-	text := strings.Join(screenText(t, buildTaskConfirm(24, 80, now, tp), 24, 80), "\n")
-	for _, want := range []string{"RENAME TASKS", "Rename this task?", "task 2 to second task", "PF12=Discard"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("confirmation lacks %q:\n%s", want, text)
+	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
+	for _, f := range s {
+		if f.Write && !strings.HasPrefix(f.Name, taskMarkField) {
+			t.Errorf("an input field not a mark: %+v", f)
 		}
-	}
-	// PF3 goes back with it still typed.
-	if !tp.handleConfirm(go3270.Response{AID: go3270.AIDPF3}, src, noLog) || tp.renaming != nil {
-		t.Errorf("PF3 on the confirmation")
-	}
-	if text := build(); !strings.Contains(text, "\n    second task") || len(src.renamed) != 0 {
-		t.Errorf("after PF3, not still typed, or renamed %v:\n%s", src.renamed, text)
-	}
-	// PF12 discards it.
-	key(go3270.AIDEnter, map[string]string{"title:102": "second task"})
-	if !tp.handleConfirm(go3270.Response{AID: go3270.AIDPF12}, src, noLog) || tp.typed != nil || len(src.renamed) != 0 {
-		t.Errorf("PF12: typed %v, renamed %v", tp.typed, src.renamed)
-	}
-	if text := build(); !strings.Contains(text, "task 2") {
-		t.Errorf("after PF12, still typed:\n%s", text)
-	}
-
-	// PF4 renames, stopping at a failure, which stays typed.
-	src.failOn = 2
-	key(go3270.AIDEnter, map[string]string{"title:101": "one", "title:102": "two"})
-	tp.handleConfirm(go3270.Response{AID: go3270.AIDPF4}, src, noLog)
-	if fmt.Sprint(src.renamed) != "[1>one]" || !tp.isError || !strings.Contains(tp.message, `Renamed 1 of 2. "task 2" was not renamed`) || tp.typed["title:102"] != "two" || tp.typed["title:101"] != "" {
-		t.Errorf("failing: renamed %v, %q, typed %v", src.renamed, tp.message, tp.typed)
-	}
-	src.failOn = 0
-	all[0].Title = "one"
-	key(go3270.AIDEnter, map[string]string{"title:102": "two"})
-	tp.handleConfirm(go3270.Response{AID: go3270.AIDPF4}, src, noLog)
-	if fmt.Sprint(src.renamed) != "[1>one 2>two]" || tp.message != "Renamed 1 task." {
-		t.Errorf("retry: renamed %v, %q", src.renamed, tp.message)
 	}
 }
 
@@ -443,7 +372,6 @@ func TestTaskMessagesFit(t *testing.T) {
 	}{
 		{go3270.AIDPF5, nil},
 		{go3270.AIDPF6, nil},
-		{go3270.AIDEnter, map[string]string{"title:101": ""}},
 		{go3270.AIDEnter, map[string]string{"mark:101": "q"}},
 		{go3270.AIDPF10, nil},
 		{go3270.AIDPF11, map[string]string{"mark:101": "X", "mark:102": "X"}},
@@ -463,7 +391,7 @@ func TestTaskMessagesFit(t *testing.T) {
 }
 
 // TestTaskListTags checks a tagged task's row: its tags before its title,
-// skipped over from the mark, and no number.
+// both skipped over from the mark, and no number.
 func TestTaskListTags(t *testing.T) {
 	all := []tasks.Task{{Number: 1, Title: "write report", Tags: []string{"work"}, CardID: "101"}}
 	s, _, _, _, _ := buildTaskList(24, 80, now, tasks.Snapshot{Tasks: all, Fetched: now}, &taskPageState{})
@@ -475,8 +403,8 @@ func TestTaskListTags(t *testing.T) {
 		case f.Row != taskFirstRow:
 		case f.Col == taskTitleCol && (f.Write || !f.Autoskip || f.Content != "[work]"):
 			t.Errorf("tags field is %+v; want [work], skipped over", f)
-		case f.Name == "title:101" && f.Col != taskTitleCol+1+len("[work]"):
-			t.Errorf("title field is %+v; want it after the tags", f)
+		case f.Col == taskTitleCol+1+len("[work]") && (f.Write || !f.Autoskip || f.Content != "write report"):
+			t.Errorf("title field is %+v; want it after the tags, skipped over", f)
 		}
 	}
 }

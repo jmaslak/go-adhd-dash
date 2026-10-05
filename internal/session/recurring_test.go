@@ -66,19 +66,27 @@ func TestUserTasks(t *testing.T) {
 	if isRecurring(snap.Tasks[0]) {
 		t.Errorf("a Trello task is recurring: %+v", snap.Tasks[0])
 	}
-	// On the task screen, the one not yet due is in blue; the rest green.
-	screen, _, _, _, _ := buildTaskList(24, 80, now, snap, &taskPageState{})
+	// On the task screen, recurring tasks are colored as on the
+	// dashboard: the one due an hour green, the one due later blue; one
+	// due over an hour red, its tags too.
+	late := addRecurring(t, s, "Pay rent", 3, "08:59")
+	screen, _, _, _, _ := buildTaskList(24, 80, now, u.Snapshot(), &taskPageState{})
+	colors := map[string]go3270.Color{}
 	for _, f := range screen {
-		if !strings.HasPrefix(f.Name, taskTitleField) {
-			continue
+		if f.Row >= taskFirstRow {
+			colors[f.Content] = f.Color
 		}
-		want := go3270.Green
-		if f.Name == taskTitleName(snap.Tasks[3]) {
-			want = go3270.Blue
+	}
+	for content, want := range map[string]go3270.Color{
+		"task 1": go3270.Green, "Water plants": go3270.Green, "Stretch": go3270.Blue,
+		"Pay rent": go3270.Red, "[recurring] [due 08:59]": go3270.Red, "[recurring] [due 09:00]": go3270.Turquoise,
+	} {
+		if got, ok := colors[content]; !ok || got != want {
+			t.Errorf("%q in %v (shown %v), want %v", content, got, ok, want)
 		}
-		if f.Color != want {
-			t.Errorf("title %q in %v, want %v", f.Content, f.Color, want)
-		}
+	}
+	if err := s.Remove(1, late.ID); err != nil {
+		t.Fatal(err)
 	}
 
 	ctx := context.Background()
@@ -133,7 +141,7 @@ func TestDashboardRecurring(t *testing.T) {
 	}
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"TASKS 5 open", "[recurring] Water plants (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (next 15:00)", "[recurring] Make tea (next 11:00)"} {
+	for _, want := range []string{"TASKS 6 open", "[recurring] Water plants (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (next 15:00)", "[recurring] Make tea (next 11:00)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
@@ -329,12 +337,12 @@ func TestRecurringScreen(t *testing.T) {
 }
 
 func TestTaskListRecurringKeys(t *testing.T) {
-	all := append(someTasks(1), tasks.Task{Number: 2, Title: "Water plants", Tags: []string{recurringTag, "due 09:00"}, CardID: "recurring:7:2026-09-27"})
+	all := append(someTasks(1), tasks.Task{Number: 2, Title: "Water plants", Tags: []string{recurringTag, "due 09:00"}, CardID: "recurring:7:2026-09-27:540"})
 	tp := &taskPageState{}
 	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF2}, all, 1, &fakeTasks{}, noLog); a != taskListRecurring {
 		t.Errorf("PF2: %v", a)
 	}
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:recurring:7:2026-09-27": "X"}}, all, 1, &fakeTasks{}, noLog); a != taskListStay || !strings.Contains(tp.message, "cannot be moved") {
+	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF5, Values: map[string]string{"mark:recurring:7:2026-09-27:540": "X"}}, all, 1, &fakeTasks{}, noLog); a != taskListStay || !strings.Contains(tp.message, "cannot be moved") {
 		t.Errorf("PF5 on a recurring task: %v %q", a, tp.message)
 	}
 	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF1}, all, 1, &fakeTasks{}, noLog); a != taskListDetails || tp.detailsOf.CardID != all[1].CardID {
@@ -351,7 +359,7 @@ func TestTaskListRecurringKeys(t *testing.T) {
 		t.Errorf("PF2 on a Trello list: %v %q", a, tp.message)
 	}
 
-	screen := buildArchiveConfirm(24, 80, now, all[1:])
+	screen := buildTaskConfirm(24, 80, now, &taskPageState{confirming: all[1:]})
 	if text := strings.Join(screenText(t, screen, 24, 80), "\n"); !strings.Contains(text, "marked complete now") {
 		t.Errorf("archiving a recurring task:\n%s", text)
 	}

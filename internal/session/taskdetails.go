@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/racingmars/go3270"
 
@@ -18,11 +19,16 @@ type TaskDetailer interface {
 	Details(ctx context.Context, cardID string) (tasks.Details, error)
 }
 
-// The task details screen (PF1 on a task screen): a task's card, to look
-// at only: its title, list, due date, labels, notes, checklists and
-// comments, a page at a time, from the heading down to above the message
-// row.
-const detailsFirstRow = 2
+// The task details screen (PF1 on a task screen): a task's card: its
+// title, typed over to rename it, then, only to look at, its list, due
+// date, labels, notes, checklists and comments, a page at a time, from the
+// heading down to above the message row. The title is an input field of
+// as many rows as it needs, up to detailsTitleMaxRows, on the first page.
+const (
+	detailsFirstRow     = 2
+	detailsTitleField   = "dtitle"
+	detailsTitleMaxRows = 4
+)
 
 // taskDetailsState is one session's task details screen.
 type taskDetailsState struct {
@@ -30,6 +36,19 @@ type taskDetailsState struct {
 	details tasks.Details
 	err     error // why the details could not be read
 	page    int
+
+	// shown is the title as drawn, and typed the title typed over it and
+	// not yet saved, drawn again in its place.
+	shown string
+	typed *string
+
+	// leaveArmed is set by PF3 with a title not saved: a second PF3 leaves
+	// without saving it.
+	leaveArmed bool
+
+	// message reports the last key's outcome; isError colors it.
+	message string
+	isError bool
 }
 
 // startDetails reads t's details through detailer.
@@ -50,9 +69,23 @@ func detailRows(rows int) int {
 	return max(rows-3-detailsFirstRow, 1)
 }
 
+// title is the task's title: as its card has it, or as listed.
+func (d *taskDetailsState) title() string {
+	return cmp.Or(d.details.Title, d.task.Title)
+}
+
+// titleRows is how many rows the title field takes on a screen cols wide
+// with perPage lines to a page: enough for the title and room to type
+// more, within detailsTitleMaxRows and half a page.
+func (d *taskDetailsState) titleRows(cols, perPage int) int {
+	need := (utf8.RuneCountInString(d.title())+2)/cols + 1
+	return max(min(need, detailsTitleMaxRows, perPage/2), 1)
+}
+
 // detailLines are the lines of the details screen, each fitting width
-// columns, at now: long text wrapped, indented under its heading.
-func (d *taskDetailsState) detailLines(width int, now time.Time) []line {
+// columns, at now: long text wrapped, indented under its heading. The first
+// titleRows are nil, for the title field.
+func (d *taskDetailsState) detailLines(width, titleRows int, now time.Time) []line {
 	var out []line
 	add := func(f ...go3270.Field) { out = append(out, line(f)) }
 	blank := func() { add(go3270.Field{}) }
@@ -67,7 +100,7 @@ func (d *taskDetailsState) detailLines(width int, now time.Time) []line {
 	heading := func(s string) { add(go3270.Field{Content: s, Color: go3270.Turquoise, Intense: true}) }
 
 	t, det := d.task, d.details
-	text(cmp.Or(det.Title, t.Title), 0, go3270.White, true)
+	out = make([]line, titleRows)
 	on := line{{Content: "On " + t.Dest.String(), Color: go3270.Blue}}
 	if t.Dest.Tag != "" {
 		on = append(on, go3270.Field{Content: "[" + t.Dest.Tag + "]", Color: go3270.Turquoise})
@@ -137,33 +170,125 @@ func (d *taskDetailsState) detailLines(width int, now time.Time) []line {
 }
 
 // buildTaskDetails renders a page of the task details, and where the
-// cursor goes: the bottom row, as there is nothing to type.
-func buildTaskDetails(rows, cols int, now time.Time, d *taskDetailsState) go3270.Screen {
-	screen := titleFields(cols, "TASK DETAILS", now)
-	lines := d.detailLines(cols-1, now)
-	shown, totalPages, start, end := pageRange(len(lines), detailRows(rows), d.page)
+// cursor goes: the title, on the first page; otherwise the bottom row, as
+// there is nothing to type.
+func buildTaskDetails(rows, cols int, now time.Time, d *taskDetailsState) (screen go3270.Screen, cursorRow, cursorCol int) {
+	screen = titleFields(cols, "TASK DETAILS", now)
+	perPage := detailRows(rows)
+	titleRows := d.titleRows(cols, perPage)
+	lines := d.detailLines(cols-1, titleRows, now)
+	shown, totalPages, start, end := pageRange(len(lines), perPage, d.page)
 	d.page = shown
 	for i, l := range lines[start:end] {
-		screen = append(screen, placeLine(detailsFirstRow+i, cols, l)...)
+		if l != nil {
+			screen = append(screen, placeLine(detailsFirstRow+i, cols, l)...)
+		}
 	}
-	message := "Only to look at. PF3 goes back to the tasks."
+	cursorRow, cursorCol = rows-1, 0
+	if shown == 0 {
+		// From the first row's second column to the last's next to last,
+		// where the field ending it is.
+		width := titleRows*cols - 2
+		d.shown = cutRunes(d.title(), width)
+		title := d.shown
+		if d.typed != nil {
+			title = cutRunes(*d.typed, width)
+		}
+		last := detailsFirstRow + titleRows - 1
+		screen = append(screen,
+			go3270.Field{
+				Row: detailsFirstRow, Col: 0, Write: true, Name: detailsTitleField, Content: title,
+				Color: go3270.Yellow, Intense: true, Highlighting: go3270.Underscore,
+			},
+			go3270.Field{Row: last, Col: cols - 1},
+		)
+		cursorRow, cursorCol = detailsFirstRow, 1
+	}
+
+	message, color := d.message, go3270.Red
+	if !d.isError {
+		color = go3270.Green
+		if message == "" {
+			color = go3270.Blue
+			switch {
+			case totalPages == 1:
+				message = "Type over the title and press Enter to rename. PF3 goes back to the tasks."
+			case shown == 0:
+				message = fmt.Sprintf("Page 1 of %d. Type over the title and press Enter to rename; PF8 pages.", totalPages)
+			default:
+				message = fmt.Sprintf("Page %d of %d. PF7 and PF8 page; PF3 goes back to the tasks.", shown+1, totalPages)
+			}
+		}
+	}
+	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: color, Intense: d.isError}})...)
+	help := "PF3=Back Enter=Save"
 	if totalPages > 1 {
-		message = fmt.Sprintf("Page %d of %d. PF7 and PF8 page; PF3 goes back to the tasks.", shown+1, totalPages)
+		help += " PF7=Up PF8=Down"
 	}
-	screen = append(screen, placeLine(rows-2, cols, line{{Content: message, Color: go3270.Blue}})...)
-	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate("PF3=Back PF7=Up PF8=Down", cols-1)})
+	screen = append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate(help, cols-1)})
+	return screen, cursorRow, cursorCol
 }
 
 // handle acts on a key on the task details, returning whether to go back
-// to the task screen: PF3 does; PF7 and PF8 page.
-func (d *taskDetailsState) handle(resp go3270.Response) (back bool) {
+// to the task screen. Enter renames the task to the title typed over, if
+// any, through src; PF7 and PF8 page, keeping it typed; PF3 goes back, a
+// second time with a title typed and not saved, which is then dropped.
+func (d *taskDetailsState) handle(resp go3270.Response, src TaskSource, logf func(string, ...any)) (back bool) {
+	d.message, d.isError = "", false
+	armed := d.leaveArmed
+	d.leaveArmed = false
+
+	// What is typed: sent back from the first page, or kept from it.
+	if v, sent := resp.Values[detailsTitleField]; sent {
+		d.typed = &v
+		if strings.TrimSpace(v) == strings.TrimSpace(d.shown) {
+			d.typed = nil
+		}
+	}
+
 	switch resp.AID {
 	case go3270.AIDPF3:
+		if d.typed != nil && !armed {
+			d.leaveArmed = true
+			d.message, d.isError = "Not saved: press Enter to save, or PF3 again to leave without saving.", true
+			return false
+		}
+		d.typed = nil
 		return true
 	case go3270.AIDPF7:
 		d.page = max(d.page-1, 0)
 	case go3270.AIDPF8:
 		d.page++ // the next draw keeps it to the pages there are
+	case go3270.AIDEnter:
+		d.rename(src, logf)
 	}
 	return false
+}
+
+// rename renames the task to the title typed over it, if any, keeping it
+// typed if it cannot.
+func (d *taskDetailsState) rename(src TaskSource, logf func(string, ...any)) {
+	if d.typed == nil {
+		return
+	}
+	fail := func(msg string) { d.message, d.isError = msg, true }
+	title := strings.TrimSpace(*d.typed)
+	switch {
+	case title == "":
+		fail("A title cannot be blank (to finish a task, complete it).")
+		return
+	case src == nil:
+		fail("Renaming is not available.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), taskChangeTimeout)
+	defer cancel()
+	if err := src.Rename(ctx, d.task, title); err != nil {
+		logf("renaming task %q: %v", d.task.Title, err)
+		fail(fmt.Sprintf("%s was not renamed: %v", taskName(d.task), err))
+		return
+	}
+	logf("renamed task %q to %q", d.task.Title, title)
+	d.task.Title, d.details.Title, d.typed = title, title, nil
+	d.message = fmt.Sprintf("Renamed to %q.", title)
 }

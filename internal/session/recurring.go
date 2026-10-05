@@ -17,11 +17,13 @@ import (
 )
 
 // Recurring tasks (see package recurring) are listed on the task screen
-// after the Trello tasks, every one of them, in the order they come due, tagged [recurring] and with
-// when they are due, or next due; on the dashboard, only those due. Each
-// is a tasks.Task there, its card ID recurringCard and its ID and the day
-// it is due, so that one done since it was shown is not done again, and
-// marks on it go once it is.
+// after the Trello tasks, every one of them, in the order they come due,
+// tagged [recurring] and with when they are due, or next due; on the
+// dashboard, those due, due soon or due later today. Each is a tasks.Task
+// on the task screen, its card ID recurringCard and its ID, the day it is
+// due and the minute of the day, so that one done since it was shown is
+// not done again, marks on it go once it is, and it is colored by when it
+// is due as on the dashboard.
 const (
 	recurringCard = "recurring:"
 	recurringTag  = "recurring"
@@ -31,31 +33,33 @@ const (
 
 // recurringCardID is r's card ID on the task screen.
 func recurringCardID(r recurring.Task) string {
-	return recurringCard + strconv.Itoa(r.ID) + ":" + r.Due.String()
+	return recurringCard + strconv.Itoa(r.ID) + ":" + r.Due.String() + ":" + strconv.Itoa(r.At)
 }
 
-// recurringOf is the ID of the recurring task t is, and the day it was
-// due when shown; ok is false for a Trello task.
-func recurringOf(t tasks.Task) (id int, due recurring.Date, ok bool) {
+// recurringOf is the recurring task t is, as shown: its ID, the day it
+// was due (Due) and the time (At); ok is false for a Trello task.
+func recurringOf(t tasks.Task) (r recurring.Task, ok bool) {
 	rest, found := strings.CutPrefix(t.CardID, recurringCard)
 	if !found {
-		return 0, recurring.Date{}, false
+		return recurring.Task{}, false
 	}
-	idText, dueText, _ := strings.Cut(rest, ":")
-	id, err := strconv.Atoi(idText)
-	if err != nil {
-		return 0, recurring.Date{}, false
+	parts := strings.Split(rest, ":")
+	if len(parts) != 3 {
+		return recurring.Task{}, false
 	}
-	due, err = recurring.ParseDate(dueText)
-	if err != nil {
-		return 0, recurring.Date{}, false
+	var err1, err2, err3 error
+	r.ID, err1 = strconv.Atoi(parts[0])
+	r.Due, err2 = recurring.ParseDate(parts[1])
+	r.At, err3 = strconv.Atoi(parts[2])
+	if errors.Join(err1, err2, err3) != nil {
+		return recurring.Task{}, false
 	}
-	return id, due, true
+	return r, true
 }
 
 // isRecurring reports whether t is a recurring task.
 func isRecurring(t tasks.Task) bool {
-	_, _, ok := recurringOf(t)
+	_, ok := recurringOf(t)
 	return ok
 }
 
@@ -139,8 +143,8 @@ func (u userTasks) Snapshot() tasks.Snapshot {
 
 // Archive marks a recurring task done, now, or archives a Trello one.
 func (u userTasks) Archive(ctx context.Context, t tasks.Task) error {
-	if id, due, ok := recurringOf(t); ok {
-		_, err := u.store.Done(u.owner, id, due, u.now())
+	if r, ok := recurringOf(t); ok {
+		_, err := u.store.Done(u.owner, r.ID, r.Due, u.now())
 		return err
 	}
 	if u.trello == nil {
@@ -150,8 +154,8 @@ func (u userTasks) Archive(ctx context.Context, t tasks.Task) error {
 }
 
 func (u userTasks) Rename(ctx context.Context, t tasks.Task, title string) error {
-	if id, _, ok := recurringOf(t); ok {
-		return u.store.Rename(u.owner, id, title)
+	if r, ok := recurringOf(t); ok {
+		return u.store.Rename(u.owner, r.ID, title)
 	}
 	if u.trello == nil {
 		return errNoTrello
@@ -198,19 +202,29 @@ func (u userTasks) Destinations() ([]tasks.Destination, error) {
 const recurringDashTag = "[recurring]"
 
 // recurringTaskLine is r, which at now is due, due soon or due later
-// today, in the dashboard's task list: its tag, its title, and when it came
-// due, or comes due. The title is green while due or due soon (see
-// dueSoon), red with when once it is past due (see pastDue), and blue
-// while it is due later than soon.
+// today, in the dashboard's task list: its tag, its title, in
+// recurringColor, and when it came due, or comes due, in red with the
+// title once it is past due.
 func recurringTaskLine(r recurring.Task, now time.Time) line {
-	title, when := go3270.Field{Content: r.Title, Color: go3270.Green, Intense: true}, go3270.Field{Content: "(" + dueText(r, now) + ")", Color: go3270.Blue}
-	switch {
-	case pastDue(r, now):
-		title.Color, when.Color, when.Intense = go3270.Red, go3270.Red, true
-	case !r.IsDue(now) && !dueSoon(r, now):
-		title.Color, title.Intense = go3270.Blue, false
+	color, intense := recurringColor(r, now)
+	title, when := go3270.Field{Content: r.Title, Color: color, Intense: intense}, go3270.Field{Content: "(" + dueText(r, now) + ")", Color: go3270.Blue}
+	if pastDue(r, now) {
+		when.Color, when.Intense = go3270.Red, true
 	}
 	return line{{Content: recurringDashTag, Color: go3270.Turquoise}, title, when}
+}
+
+// recurringColor is the color of r's title at now, on the dashboard and
+// the task screen alike: red once past due (see pastDue), green while due
+// or due soon (see dueSoon), and blue while due later than that.
+func recurringColor(r recurring.Task, now time.Time) (color go3270.Color, intense bool) {
+	switch {
+	case pastDue(r, now):
+		return go3270.Red, true
+	case r.IsDue(now) || dueSoon(r, now):
+		return go3270.Green, true
+	}
+	return go3270.Blue, false
 }
 
 // laterToday reports whether r, not due at now, comes due later on now's

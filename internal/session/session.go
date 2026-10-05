@@ -499,7 +499,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			screen, cursorRow, cursorCol = buildBrowse(rows, cols, now, &bs)
 			redrawOnTimer = false
 		case modeTaskDetails:
-			screen, cursorRow, cursorCol = buildTaskDetails(rows, cols, now, &td), rows-1, 0
+			screen, cursorRow, cursorCol = buildTaskDetails(rows, cols, now, &td)
 			redrawOnTimer = false
 		case modeRecurring:
 			screen, cursorRow, cursorCol = buildRecurring(rows, cols, now, &rt)
@@ -688,8 +688,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case taskListMove:
 				mode, mv = modeMoveTask, startMove(own, tp.moving)
 			case taskListDetails:
-				if id, _, ok := recurringOf(tp.detailsOf); ok {
-					mode, rt = modeRecurring, startRecurring(cfg.Recurring, user.ID, id)
+				if r, ok := recurringOf(tp.detailsOf); ok {
+					mode, rt = modeRecurring, startRecurring(cfg.Recurring, user.ID, r.ID)
 					break
 				}
 				mode, td = modeTaskDetails, startDetails(backend, tp.detailsOf)
@@ -710,7 +710,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeBrowse
 			}
 		case modeTaskDetails:
-			if td.handle(resp) {
+			if td.handle(resp, tp.source(cfg.ownTasks(user)), logf) {
 				mode = modeTasks
 			}
 		case modeRecurring:

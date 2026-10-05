@@ -42,21 +42,20 @@ const taskChangeTimeout = time.Minute
 
 // Task screen layout: the heading, the column headings, then one task per
 // row down to the row above the message row. Each task has a
-// one-character input field before it for its mark, then its number and
-// tags, then its title, typed over to rename it.
+// one-character input field before it for its mark, then its tags and
+// title, only to look at (PF1's details screen renames it).
 const (
 	taskHeaderRow   = 2
 	taskColumnRow   = 3
 	taskFirstRow    = 4
 	taskMarkField   = "mark:"
-	taskTitleField  = "title:"
 	taskTitleCol    = 2
-	taskMarkMessage = "Mark tasks with X: PF5 moves them, PF6 completes. Type over a title to rename."
+	taskMarkMessage = "Mark tasks with X: PF5 moves them, PF6 completes. PF1 shows one, to rename it."
 )
 
 // taskPageState is one session's place on a task screen: which tasks it
-// shows (view), the page shown, the tasks marked, titles typed over, and
-// those awaiting confirmation.
+// shows (view), the page shown, the tasks marked, and those awaiting
+// confirmation.
 type taskPageState struct {
 	// view is the Trello list shown, picked with PF9; nil for the user's
 	// tasks.
@@ -68,19 +67,12 @@ type taskPageState struct {
 	// They are kept by card because numbers shift when tasks are archived.
 	marked map[string]bool
 
-	// shown are the titles as drawn, by their fields' names, and rowCards
-	// the card on each row, from the last screen drawn.
-	shown    map[string]string
+	// rowCards is the card on each row, from the last screen drawn.
 	rowCards map[int]string
 
-	// typed are titles typed over and not yet saved, by field name, drawn
-	// again in place of the tasks' own.
-	typed map[string]string
-
 	// confirming are the tasks shown on the confirmation for archiving,
-	// and renaming those on the confirmation for renaming, awaiting PF4.
+	// awaiting PF4.
 	confirming []tasks.Task
-	renaming   []taskRename
 
 	// moving are the tasks marked when PF5 was pressed, for the move-task
 	// screen.
@@ -118,20 +110,9 @@ func (tp *taskPageState) adder(backend TaskBackend) TaskAdder {
 	return backend
 }
 
-// taskRename is a task, and the title typed over its own.
-type taskRename struct {
-	task  tasks.Task
-	title string
-}
-
 // taskMarkName is the name of the input field marking t.
 func taskMarkName(t tasks.Task) string {
 	return taskMarkField + t.CardID
-}
-
-// taskTitleName is the name of the input field holding t's title.
-func taskTitleName(t tasks.Task) string {
-	return taskTitleField + t.CardID
 }
 
 // taskRows is how many tasks fit on one page of the task screen.
@@ -153,7 +134,7 @@ func taskName(t tasks.Task) string {
 }
 
 // buildTaskList renders one page of the tasks in snap, each with its mark
-// field and its title to type over, and where the cursor goes: the first
+// field and its title, and where the cursor goes: the first
 // mark field, or the task followed. page is clamped to the pages that
 // exist, and the page shown is returned with the page count.
 func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskPageState) (screen go3270.Screen, shownPage, totalPages, cursorRow, cursorCol int) {
@@ -210,7 +191,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 		})
 	}
 
-	tp.shown, tp.rowCards = map[string]string{}, map[int]string{}
+	tp.rowCards = map[int]string{}
 	cursorRow, cursorCol = rows-1, 0
 	for i, t := range pageTasks {
 		row := taskFirstRow + i
@@ -227,7 +208,8 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 			cursorRow, cursorCol = row, 1
 		}
 		// With tags, they come first, then the title in a field of its
-		// own; with none, the title alone.
+		// own; with none, the title alone. Both are autoskip, so that the
+		// cursor goes on from a mark, once typed, to the next task's.
 		prefix := taskPrefix(t)
 		titleCol := taskTitleCol
 		if prefix != "" {
@@ -239,30 +221,25 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 			screen = append(screen, placeLineAt(row, taskTitleCol, cols, line{{Content: prefix, Color: go3270.Turquoise, Autoskip: true}})...)
 			continue
 		}
-		name := taskTitleName(t)
-		tp.shown[name] = cutRunes(t.Title, width)
-		title := tp.shown[name]
-		if v, ok := tp.typed[name]; ok {
-			title = cutRunes(v, width)
-		}
 		if prefix != "" {
-			// Autoskip sends the cursor on from the mark, once typed, to
-			// the title, rather than into the tags.
-			screen = append(screen, go3270.Field{Row: row, Col: taskTitleCol, Content: prefix, Color: go3270.Turquoise, Autoskip: true})
+			// A recurring task past due has them, with when it was due, in
+			// red, as the dashboard has when.
+			tags := go3270.Field{Row: row, Col: taskTitleCol, Content: prefix, Color: go3270.Turquoise, Autoskip: true}
+			if r, ok := recurringOf(t); ok && pastDue(r, now) {
+				tags.Color, tags.Intense = go3270.Red, true
+			}
+			screen = append(screen, tags)
 		}
-		// A recurring task not yet due is in blue, as on the dashboard.
+		// A recurring task is colored by when it is due, as on the
+		// dashboard.
 		color, intense := go3270.Green, true
-		if notYetDue(t) {
-			color, intense = go3270.Blue, false
+		if r, ok := recurringOf(t); ok {
+			color, intense = recurringColor(r, now)
 		}
-		screen = append(screen,
-			go3270.Field{
-				Row: row, Col: titleCol, Write: true, Name: name, Content: title,
-				Color: color, Intense: intense, Highlighting: go3270.Underscore,
-			},
-			// Ends the title field at the edge of the screen.
-			go3270.Field{Row: row, Col: cols - 1},
-		)
+		screen = append(screen, go3270.Field{
+			Row: row, Col: titleCol, Content: truncate(t.Title, width),
+			Color: color, Intense: intense, Autoskip: true,
+		})
 	}
 	tp.follow = ""
 
@@ -301,17 +278,9 @@ func countFunc(ts []tasks.Task, f func(tasks.Task) bool) int {
 	return n
 }
 
-// buildTaskConfirm renders the confirmation of archiving the tasks marked,
-// or renaming those typed over.
+// buildTaskConfirm renders the confirmation of archiving the tasks marked.
 func buildTaskConfirm(rows, cols int, now time.Time, tp *taskPageState) go3270.Screen {
-	if len(tp.renaming) > 0 {
-		return buildRenameConfirm(rows, cols, now, tp.renaming)
-	}
-	return buildArchiveConfirm(rows, cols, now, tp.confirming)
-}
-
-// buildArchiveConfirm renders the confirmation for archiving ts.
-func buildArchiveConfirm(rows, cols int, now time.Time, ts []tasks.Task) go3270.Screen {
+	ts := tp.confirming
 	screen := titleFields(cols, "COMPLETE TASKS", now)
 	screen = append(screen, placeLine(taskHeaderRow, cols, line{{
 		Content: "Complete " + theseTasks(len(ts)) + "?", Color: go3270.Yellow, Intense: true,
@@ -331,25 +300,6 @@ func buildArchiveConfirm(rows, cols int, now time.Time, ts []tasks.Task) go3270.
 	screen = append(screen, placeLine(rows-3, cols, line{{Content: note, Color: go3270.Turquoise}})...)
 	screen = append(screen, placeLine(rows-2, cols, line{{Content: "Press PF4 to complete them, or PF3 to go back.", Color: go3270.White, Intense: true}})...)
 	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate("PF3=Back PF4=Complete", cols-1)})
-}
-
-// buildRenameConfirm renders the confirmation for renaming tasks.
-func buildRenameConfirm(rows, cols int, now time.Time, rs []taskRename) go3270.Screen {
-	screen := titleFields(cols, "RENAME TASKS", now)
-	screen = append(screen, placeLine(taskHeaderRow, cols, line{{
-		Content: "Rename " + theseTasks(len(rs)) + "?", Color: go3270.Yellow, Intense: true,
-	}})...)
-	lines := make([]line, len(rs))
-	for i, r := range rs {
-		lines[i] = line{
-			{Content: r.task.Title, Color: go3270.Green},
-			{Content: "to", Color: go3270.White},
-			{Content: r.title, Color: go3270.Green, Intense: true},
-		}
-	}
-	screen = appendConfirmList(screen, rows, cols, lines)
-	screen = append(screen, placeLine(rows-2, cols, line{{Content: "Press PF4 to rename, PF3 to change what was typed, or PF12 to discard it.", Color: go3270.White, Intense: true}})...)
-	return append(screen, go3270.Field{Row: rows - 1, Col: 0, Color: go3270.Blue, Content: truncate("PF3=Back PF4=Rename PF12=Discard", cols-1)})
 }
 
 // theseTasks is "this task", or "these n tasks".
@@ -403,27 +353,6 @@ func (tp *taskPageState) recordMarks(values map[string]string, all []tasks.Task)
 	return ""
 }
 
-// typedRenames are the titles typed over on the page just shown, in task
-// order, reporting a title blanked.
-func (tp *taskPageState) typedRenames(values map[string]string, all []tasks.Task) (renames []taskRename, typed map[string]string, bad string) {
-	typed = map[string]string{}
-	for _, t := range all {
-		name := taskTitleName(t)
-		shown, drawn := tp.shown[name]
-		v, ok := values[name]
-		if !drawn || !ok || strings.TrimSpace(v) == strings.TrimSpace(shown) {
-			continue
-		}
-		typed[name] = v
-		if strings.TrimSpace(v) == "" {
-			bad = fmt.Sprintf("%s: a title cannot be blank (to finish a task, complete it).", taskName(t))
-			continue
-		}
-		renames = append(renames, taskRename{task: t, title: strings.TrimSpace(v)})
-	}
-	return renames, typed, bad
-}
-
 // markedTasks are the open tasks marked, in task order. Marks on tasks no
 // longer open are dropped.
 func (tp *taskPageState) markedTasks(all []tasks.Task) []tasks.Task {
@@ -448,7 +377,7 @@ type taskListAction int
 
 const (
 	taskListStay      taskListAction = iota // the task list again
-	taskListConfirm                         // the confirmation for archiving or renaming
+	taskListConfirm                         // the confirmation for archiving
 	taskListAdd                             // the add-task screen
 	taskListMove                            // the move-task screen, for tp.moving
 	taskListBrowse                          // the Trello lists, to pick one to show
@@ -458,28 +387,9 @@ const (
 )
 
 // handleList acts on a key pressed on the task list, returning where to go
-// next. The marks typed are kept whatever the key, except PF3. Titles
-// typed over, whatever the key, ask first to confirm renaming them.
+// next. The marks typed are kept whatever the key, except PF3.
 func (tp *taskPageState) handleList(resp go3270.Response, all []tasks.Task, totalPages int, src TaskSource, logf func(string, ...any)) taskListAction {
 	tp.message, tp.isError = "", false
-	renames, typed, bad := tp.typedRenames(resp.Values, all)
-	if bad != "" {
-		tp.typed, tp.message, tp.isError = typed, bad, true
-		return taskListStay
-	}
-	if len(renames) > 0 {
-		if src == nil {
-			tp.typed, tp.message, tp.isError = typed, "Renaming is not available.", true
-			return taskListStay
-		}
-		tp.typed, tp.renaming = typed, renames
-		if msg := tp.recordMarks(resp.Values, all); msg != "" {
-			tp.renaming, tp.message, tp.isError = nil, msg, true
-			return taskListStay
-		}
-		return taskListConfirm
-	}
-	tp.typed = nil
 	if resp.AID == go3270.AIDPF3 {
 		return taskListLeave
 	}
@@ -623,63 +533,40 @@ func midpoint(a, b float64) string {
 	return strconv.FormatFloat((a+b)/2, 'f', -1, 64)
 }
 
-// handleConfirm acts on a key pressed on the confirmation of archiving or
-// renaming, returning whether to go back to the task list. Only PF4 does
-// it; PF3 goes back with the marks, or the titles typed, kept; for
-// renaming, PF12 goes back discarding what was typed; any other key leaves
-// the confirmation up. Archiving or renaming stops at the first task that
-// fails, which stays marked, or typed.
+// handleConfirm acts on a key pressed on the confirmation of archiving,
+// returning whether to go back to the task list. Only PF4 does it; PF3 goes
+// back with the marks kept; any other key leaves the confirmation up.
+// Archiving stops at the first task that fails, which stays marked.
 func (tp *taskPageState) handleConfirm(resp go3270.Response, src TaskSource, logf func(string, ...any)) (back bool) {
-	renaming := len(tp.renaming) > 0
-	switch {
-	case resp.AID == go3270.AIDPF3:
-		tp.confirming, tp.renaming = nil, nil
+	switch resp.AID {
+	case go3270.AIDPF3:
+		tp.confirming = nil
 		return true
-	case resp.AID == go3270.AIDPF12 && renaming:
-		tp.renaming, tp.typed = nil, nil
-		tp.message, tp.isError = "Discarded the titles typed.", false
-		return true
-	case resp.AID != go3270.AIDPF4:
+	case go3270.AIDPF4:
+	default:
 		return false
 	}
 
-	verb, past := "complete", "Completed"
 	n := len(tp.confirming)
-	if renaming {
-		verb, past, n = "rename", "Renamed", len(tp.renaming)
-	}
 	done := 0
 	tp.message, tp.isError = "", false
-	for i := range n {
-		var t tasks.Task
+	for _, t := range tp.confirming {
 		ctx, cancel := context.WithTimeout(context.Background(), taskChangeTimeout)
-		var err error
-		if renaming {
-			t = tp.renaming[i].task
-			err = src.Rename(ctx, t, tp.renaming[i].title)
-		} else {
-			t = tp.confirming[i]
-			err = src.Archive(ctx, t)
-		}
+		err := src.Archive(ctx, t)
 		cancel()
 		if err != nil {
-			logf("%sing task %q: %v", strings.TrimSuffix(verb, "e"), t.Title, err)
-			tp.message = fmt.Sprintf("%s %d of %d. %s was not %sd: %v", past, done, n, taskName(t), verb, err)
+			logf("completing task %q: %v", t.Title, err)
+			tp.message = fmt.Sprintf("Completed %d of %d. %s was not completed: %v", done, n, taskName(t), err)
 			tp.isError = true
 			break
 		}
-		if renaming {
-			logf("renamed task %q to %q", t.Title, tp.renaming[i].title)
-			delete(tp.typed, taskTitleName(t))
-		} else {
-			logf("completed task %q", t.Title)
-			delete(tp.marked, t.CardID)
-		}
+		logf("completed task %q", t.Title)
+		delete(tp.marked, t.CardID)
 		done++
 	}
 	if !tp.isError {
-		tp.message = fmt.Sprintf("%s %s.", past, countText(done, "task", 0, 1))
+		tp.message = fmt.Sprintf("Completed %s.", countText(done, "task", 0, 1))
 	}
-	tp.confirming, tp.renaming = nil, nil
+	tp.confirming = nil
 	return true
 }

@@ -166,9 +166,9 @@ After the Trello tasks, the dashboard's task list has the recurring tasks
 that are due, each tagged `[recurring]`, with when it came
 due (`(due 09:00)`, or `(due Fri 08:00)` for an earlier day). One due for
 over an hour, past due, has its title and when in red. Those due later
-today are listed too, with when they come due (`(next 15:30)`), but not
-counted as open: in blue, then in green from an hour before they come due
-(listed then even if that is just after midnight). It ends with
+today are listed too, with when they come due (`(next 15:30)`): in blue,
+not counted as open, then in green, counted, from an hour before they come
+due (listed then even if that is just after midnight). It ends with
 the starred checklists, each as a task
 tagged `[checklist]` with how many of its items are done.
 Both are counted in the number of tasks open. Move the cursor onto a
@@ -417,10 +417,11 @@ connect one in `settings`.
 The task screen lists every open task, whatever its tags. Type `X` in the
 `S` column beside tasks, then press `PF5` to move them or `PF6` to complete
 them; a confirmation lists them, and `PF4` does it. Marks are kept while
-paging. Typing `X` moves the cursor on to the task's title.
+paging. Typing `X` moves the cursor on to the next task's mark. Titles are
+only to look at here; `PF1` renames a task.
 
-- `PF1`: the task's details: its notes, checklists and more (below); on a
-  recurring task, its screen, to edit it
+- `PF1`: the task's details, to rename it: its notes, checklists and more
+  (below); on a recurring task, its screen, to edit it
 - `PF2`: add a recurring task (see [Recurring tasks](#recurring-tasks))
 - `PF4`: add a task
 - `PF5`: move the marked tasks to another Trello list, after confirmation
@@ -430,15 +431,13 @@ paging. Typing `X` moves the cursor on to the task's title.
   the task list, on a task screen of their own
 - `PF10` / `PF11`: move the task marked (or, with none marked, the one the
   cursor is on) up / down one place in its Trello list
-- type over a title, and press any key: rename the task, after confirmation
 - `Enter`: keep the marks typed
-- `PF4` (on a confirmation): complete, or rename
-- `PF3`: back (from a confirmation, to the list with the marks, and titles
-  typed, kept)
+- `PF4` (on a confirmation): complete
+- `PF3`: back (from a confirmation, to the list with the marks kept)
 
 `PF1` shows the details of the task marked, or with none marked, the one the
-cursor is on, read from its Trello card, only to look at: its full title,
-its list, its due date (marked overdue, or complete), its labels, its notes
+cursor is on, read from its Trello card: its full title, to type over, then,
+only to look at, its list, its due date (marked overdue, or complete), its labels, its notes
 (Trello's description), each of its checklists with how many items are
 done and each item checked `[X]` or not `[ ]`, and its newest twenty
 comments, long text wrapped, a page at a time (`PF7` / `PF8`). `PF3` goes
@@ -446,12 +445,16 @@ back with the marks kept. It works on a list shown with `PF9` too. (The
 task screen's help row leaves out `PF5` and `PF6`, for room: the row above
 it says what they do.)
 
-To rename tasks, type over their titles; whatever key is pressed then, a
-confirmation lists each task with its new title. `PF4` renames them,
-stopping at the first that fails, which stays typed; `PF3` goes back to
-change what was typed; `PF12` discards it. A title cannot be blanked (to
-finish a task, complete it). A title too long to fit is shown cut short;
-typing over it renames the task to what is typed.
+To rename a task, type over its title on its details screen (the first
+page; the field takes up to four rows, as the title needs) and press
+`Enter`: the task is renamed at once, and `PF3` then goes back to the task
+screen, which shows the new title. Only `Enter` saves; other keys keep what
+was typed, paging too. `PF3` with a
+title typed and not saved warns first: `Enter` saves it, or `PF3` again
+goes back without saving. If it cannot be renamed, the screen says why and
+keeps what was typed. A title cannot be blanked (to finish a task,
+complete it). A title too long for the field is shown cut short; typing
+over it renames the task to what is typed.
 
 `PF10` and `PF11` move one task within its own Trello list, past the task
 before or after it there: on the task screen, which lists several lists'
@@ -482,7 +485,7 @@ can see, as `PF5` does (those your tasks come from show their tag), a page
 at a time. Type any character beside one and press `Enter` to show its open
 cards on a task screen of their own (TRELLO LIST); the
 heading says whether they are on your task list. It works as the task
-screen does: mark, move, complete, rename, reorder and add (`PF4` adds to
+screen does: mark, move, complete, rename (from `PF1`), reorder and add (`PF4` adds to
 the bottom of that list), with the same keys. Its cards are read again
 after every change, and once a minute. `PF3` goes back to the lists, and
 `PF3` there to the task screen as it was left, with any marks kept; `PF9`
@@ -508,9 +511,10 @@ Trello linked has the task screen for their recurring tasks alone.
 The task screen lists all of a user's recurring tasks after their Trello
 tasks, in the order they come due, each tagged
 `[recurring]` and with when it came due (`[due 09:00]`) or, if not yet due,
-when it next does (`[next Tue 09:00]`). Those not yet due are in blue, and
-not counted as open. They are marked, completed (`PF6`) and renamed (typing over the
-title) as Trello tasks are. They cannot be moved (`PF5`) or reordered
+when it next does (`[next Tue 09:00]`), colored as on the dashboard: red
+(tags too) once due over an hour, green while due or due within the hour,
+blue while due later. Those not yet due are not counted as open. They are marked and completed (`PF6`) as Trello tasks are, and
+renamed on their own screen (`PF1`). They cannot be moved (`PF5`) or reordered
 (`PF10` / `PF11`). Completing one not yet due marks that coming one done.
 Each task is marked by the day it is due as shown, so completing it again from
 a screen drawn before it was done, in this session or another, does

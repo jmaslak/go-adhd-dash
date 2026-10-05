@@ -149,7 +149,7 @@ func TestTaskScreenOfAList(t *testing.T) {
 	}
 
 	// The same keys as the user's tasks: here, marking two and archiving
-	// them, then renaming one.
+	// them, then renaming one from its details.
 	all := tp.view.Snapshot().Tasks
 	if a := tp.handleList(go3270.Response{AID: go3270.AIDPF6, Values: map[string]string{"mark:c0": "X", "mark:c2": "X"}}, all, total, tp.source(backend), noLog); a != taskListConfirm {
 		t.Fatalf("PF6: %v, %q", a, tp.message)
@@ -158,11 +158,9 @@ func TestTaskScreenOfAList(t *testing.T) {
 	if fmt.Sprint(backend.archived) != "[1 3]" || tp.message != "Completed 2 tasks." {
 		t.Errorf("archived %v: %q", backend.archived, tp.message)
 	}
-	buildTaskList(24, 80, now, tp.view.Snapshot(), tp)
-	if a := tp.handleList(go3270.Response{AID: go3270.AIDEnter, Values: map[string]string{"title:c1": "idea two"}}, all, total, tp.source(backend), noLog); a != taskListConfirm {
-		t.Fatalf("Enter with a title typed over: %v, %q", a, tp.message)
-	}
-	tp.handleConfirm(go3270.Response{AID: go3270.AIDPF4}, tp.source(backend), noLog)
+	d := startDetails(backend, all[1])
+	buildTaskDetails(24, 80, now, &d)
+	d.handle(go3270.Response{AID: go3270.AIDEnter, Values: map[string]string{detailsTitleField: "idea two"}}, tp.source(backend), noLog)
 	if fmt.Sprint(backend.renamed) != "[2>idea two]" {
 		t.Errorf("renamed %v", backend.renamed)
 	}
