@@ -112,7 +112,7 @@ func (d *taskDetailsState) detailLines(width, titleRows int, now time.Time) []li
 		return out
 	}
 	if !det.Due.IsZero() {
-		due := line{{Content: "Due " + det.Due.Local().Format("Mon Jan 2 15:04"), Color: go3270.Yellow}}
+		due := line{{Content: "Due " + det.Due.In(now.Location()).Format("Mon Jan 2 15:04"), Color: go3270.Yellow}}
 		switch {
 		case det.DueComplete:
 			due = append(due, go3270.Field{Content: "(complete)", Color: go3270.Green})
@@ -162,7 +162,7 @@ func (d *taskDetailsState) detailLines(width, titleRows int, now time.Time) []li
 		blank()
 		heading("Comments, newest first")
 		for _, c := range det.Comments {
-			add(go3270.Field{Content: "  " + c.Author + ", " + c.Date.Local().Format("Mon Jan 2 15:04") + ":", Color: go3270.Blue})
+			add(go3270.Field{Content: "  " + c.Author + ", " + c.Date.In(now.Location()).Format("Mon Jan 2 15:04") + ":", Color: go3270.Blue})
 			text(c.Text, 4, go3270.Green, false)
 		}
 	}

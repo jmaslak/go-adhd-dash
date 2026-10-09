@@ -138,16 +138,22 @@ func TestDashboardRecurring(t *testing.T) {
 		{ID: 4, Title: "Bins", At: 7 * 60, Due: day.AddDays(1)},
 		{ID: 5, Title: "Feed cat", At: 8*60 + 59, Due: day},
 		{ID: 6, Title: "Make tea", At: 11 * 60, Due: day},
+		{ID: 7, Title: "Hidden soon", At: 11 * 60, Due: day, HideUntilDue: true},
+		{ID: 8, Title: "Hidden later", At: 15 * 60, Due: day, HideUntilDue: true},
+		{ID: 9, Title: "Shown once due", At: 9 * 60, Due: day, HideUntilDue: true},
 	}
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"TASKS 6 open", "[recurring] Water plants (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (next 15:00)", "[recurring] Make tea (next 11:00)"} {
+	for _, want := range []string{"TASKS 7 open", "[recurring] Water plants (due 09:00)", "[recurring] Shown once due (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (next 15:00)", "[recurring] Make tea (next 11:00)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
 	}
 	if strings.Contains(text, "Bins") {
 		t.Errorf("a recurring task due tomorrow is shown:\n%s", text)
+	}
+	if strings.Contains(text, "Hidden") {
+		t.Errorf("a recurring task hidden until due is shown before it is due:\n%s", text)
 	}
 	// Due an hour, or due within the next hour, green; due over an hour,
 	// past due, red, whatever the day; due later today, blue.
@@ -195,7 +201,7 @@ func TestDueSoon(t *testing.T) {
 func recurringForm(pairs ...string) map[string]string {
 	v := map[string]string{
 		rtTitleField: "Water plants", rtTimeField: "09:00", rtStartField: "",
-		rtDayField + "0": "X", rtDayField + "2": "x", rtWeeksField: "1", rtApartField: "", rtAfterField: "N",
+		rtDayField + "0": "X", rtDayField + "2": "x", rtWeeksField: "1", rtApartField: "", rtAfterField: "N", rtHideField: "N",
 	}
 	for i := 0; i+1 < len(pairs); i += 2 {
 		v[pairs[i]] = pairs[i+1]
@@ -210,6 +216,17 @@ func TestRecurringParse(t *testing.T) {
 	if bad != "" || got.Schedule != recurring.Weekly || got.Weeks != 1 || got.At != 9*60 || !got.Start.Equal(today) ||
 		!got.Days.Has(time.Monday) || !got.Days.Has(time.Wednesday) || got.Days.Has(time.Tuesday) {
 		t.Errorf("weekly: %+v, %q %q", got, field, bad)
+	}
+	if got.HideUntilDue {
+		t.Errorf("hidden until due with N: %+v", got)
+	}
+	for _, hide := range []string{"y", " Y "} {
+		if got, _, bad = r.parse(recurringForm(rtHideField, hide), now); bad != "" || !got.HideUntilDue {
+			t.Errorf("hide %q: %+v, %q", hide, got, bad)
+		}
+	}
+	if got, _, bad = r.parse(recurringForm(rtHideField, ""), now); bad != "" || got.HideUntilDue {
+		t.Errorf("hide blank: %+v, %q", got, bad)
 	}
 	got, _, bad = r.parse(recurringForm(rtDayField+"0", "", rtDayField+"2", "", rtApartField, "3", rtAfterField, "y"), now)
 	if bad != "" || got.Schedule != recurring.After || got.Interval != 3 || got.Days != 0 {
@@ -236,6 +253,7 @@ func TestRecurringParse(t *testing.T) {
 		"no weeks":         {[]string{rtWeeksField, "0"}, rtWeeksField},
 		"neither":          {[]string{rtDayField + "0", "", rtDayField + "2", ""}, rtDayField + "0"},
 		"bad apart":        {[]string{rtDayField + "0", "", rtDayField + "2", "", rtApartField, "0"}, rtApartField},
+		"bad hide":         {[]string{rtHideField, "X"}, rtHideField},
 	} {
 		if _, field, bad := r.parse(recurringForm(tc.values...), now); bad == "" || field != tc.field {
 			t.Errorf("%s: %q on %q, want an error on %q", name, bad, field, tc.field)
@@ -257,7 +275,7 @@ func TestRecurringScreen(t *testing.T) {
 	var r recurringState
 	screen, crow, ccol := buildRecurring(24, 80, now, &r)
 	text := strings.Join(screenText(t, screen, 24, 80), "\n")
-	for _, want := range []string{"NEW RECURRING TASK", "Title      ===>", "Mon   Tue   Wed", "Days apart ===>", "After done ===>", "PF3=Cancel Enter=Save", recurring.DateOf(now).String()} {
+	for _, want := range []string{"NEW RECURRING TASK", "Title      ===>", "Mon   Tue   Wed", "Days apart ===>", "After done ===>", "Hide       ===> N", "PF3=Cancel Enter=Save", recurring.DateOf(now).String()} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
@@ -293,7 +311,7 @@ func TestRecurringScreen(t *testing.T) {
 	r = startRecurring(s, 1, list[0].ID)
 	screen, _, _ = buildRecurring(24, 80, now, &r)
 	text = strings.Join(screenText(t, screen, 24, 80), "\n")
-	for _, want := range []string{"RECURRING TASK", "Water plants", "08:15", "Due now, since 08:15", "PF6=Delete"} {
+	for _, want := range []string{"RECURRING TASK", "Water plants", "08:15", "Due now, since 08:15", "Hide       ===> N", "PF6=Delete"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("editing, screen lacks %q:\n%s", want, text)
 		}
@@ -304,6 +322,15 @@ func TestRecurringScreen(t *testing.T) {
 	}
 	if got, _ := s.Get(1, list[0].ID); got.Title != "Water the plants" || !got.Due.Equal(list[0].Due) {
 		t.Errorf("after editing the title: %+v", got)
+	}
+	r = startRecurring(s, 1, list[0].ID)
+	if back, _, _ := enter(recurringForm(append(daily, rtTimeField, "08:15", rtHideField, "Y")...)); !back {
+		t.Errorf("hiding until due: %q", r.message)
+	}
+	r = startRecurring(s, 1, list[0].ID)
+	screen, _, _ = buildRecurring(24, 80, now, &r)
+	if text := strings.Join(screenText(t, screen, 24, 80), "\n"); !r.task.HideUntilDue || !strings.Contains(text, "Hide       ===> Y") {
+		t.Errorf("editing one hidden until due:\n%s", text)
 	}
 
 	// PF6 asks; PF4 then deletes; any other key between forgets it, and

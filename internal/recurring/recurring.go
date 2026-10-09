@@ -131,6 +131,10 @@ type Task struct {
 	// Due is the day it next comes due, at At. It is due from then until
 	// it is done.
 	Due Date
+
+	// HideUntilDue keeps it off the dashboard until it is due, rather than
+	// listing it while due soon or due later the same day.
+	HideUntilDue bool
 }
 
 // DueAt is when t next comes due, in loc.
@@ -246,10 +250,15 @@ CREATE TABLE IF NOT EXISTS recurring (
 	every_days INTEGER NOT NULL DEFAULT 0,
 	at_minute  INTEGER NOT NULL,
 	start      TEXT    NOT NULL,
-	due        TEXT    NOT NULL
+	due        TEXT    NOT NULL,
+	hide_until_due INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS recurring_by_owner ON recurring (owner);
 `
+
+// addHideUntilDue adds hide_until_due to a table made before recurring
+// tasks had it, none of its tasks hidden.
+const addHideUntilDue = `ALTER TABLE recurring ADD COLUMN hide_until_due INTEGER NOT NULL DEFAULT 0`
 
 // Store reads and writes the recurring tasks. One Store is shared by every
 // session.
@@ -263,10 +272,19 @@ func New(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("making the recurring tasks' table: %w", err)
 	}
+	var hasHide bool
+	if err := db.QueryRow(`SELECT count(*) > 0 FROM pragma_table_info('recurring') WHERE name = 'hide_until_due'`).Scan(&hasHide); err != nil {
+		return nil, fmt.Errorf("reading the recurring tasks' table: %w", err)
+	}
+	if !hasHide {
+		if _, err := db.Exec(addHideUntilDue); err != nil {
+			return nil, fmt.Errorf("adding hide until due to the recurring tasks' table: %w", err)
+		}
+	}
 	return &Store{db: db}, nil
 }
 
-const columns = `id, owner, title, schedule, days, weeks, every_days, at_minute, start, due`
+const columns = `id, owner, title, schedule, days, weeks, every_days, at_minute, start, due, hide_until_due`
 
 // scanner is a *sql.Row or *sql.Rows.
 type scanner interface{ Scan(...any) error }
@@ -274,7 +292,7 @@ type scanner interface{ Scan(...any) error }
 func scan(r scanner) (Task, error) {
 	var t Task
 	var start, due string
-	if err := r.Scan(&t.ID, &t.Owner, &t.Title, &t.Schedule, &t.Days, &t.Weeks, &t.Interval, &t.At, &start, &due); err != nil {
+	if err := r.Scan(&t.ID, &t.Owner, &t.Title, &t.Schedule, &t.Days, &t.Weeks, &t.Interval, &t.At, &start, &due, &t.HideUntilDue); err != nil {
 		return Task{}, err
 	}
 	var err error
@@ -330,9 +348,9 @@ func (s *Store) Add(t Task, today Date) (Task, error) {
 		return Task{}, err
 	}
 	t.Due = t.First(today)
-	res, err := s.db.Exec(`INSERT INTO recurring (owner, title, schedule, days, weeks, every_days, at_minute, start, due)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Owner, t.Title, t.Schedule, t.Days, t.Weeks, t.Interval, t.At, t.Start.String(), t.Due.String())
+	res, err := s.db.Exec(`INSERT INTO recurring (owner, title, schedule, days, weeks, every_days, at_minute, start, due, hide_until_due)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Owner, t.Title, t.Schedule, t.Days, t.Weeks, t.Interval, t.At, t.Start.String(), t.Due.String(), t.HideUntilDue)
 	if err != nil {
 		return Task{}, fmt.Errorf("adding the recurring task: %w", err)
 	}
@@ -363,9 +381,9 @@ func (s *Store) Update(t Task, today Date) (Task, error) {
 		if !t.SameSchedule(old) {
 			t.Due = t.First(today)
 		}
-		_, err = tx.Exec(`UPDATE recurring SET title = ?, schedule = ?, days = ?, weeks = ?, every_days = ?, at_minute = ?, start = ?, due = ?
+		_, err = tx.Exec(`UPDATE recurring SET title = ?, schedule = ?, days = ?, weeks = ?, every_days = ?, at_minute = ?, start = ?, due = ?, hide_until_due = ?
 			WHERE owner = ? AND id = ?`,
-			t.Title, t.Schedule, t.Days, t.Weeks, t.Interval, t.At, t.Start.String(), t.Due.String(), t.Owner, t.ID)
+			t.Title, t.Schedule, t.Days, t.Weeks, t.Interval, t.At, t.Start.String(), t.Due.String(), t.HideUntilDue, t.Owner, t.ID)
 		return err
 	})
 	if err != nil {

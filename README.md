@@ -168,7 +168,8 @@ due (`(due 09:00)`, or `(due Fri 08:00)` for an earlier day). One due for
 over an hour, past due, has its title and when in red. Those due later
 today are listed too, with when they come due (`(next 15:30)`): in blue,
 not counted as open, then in green, counted, from an hour before they come
-due (listed then even if that is just after midnight). It ends with
+due (listed then even if that is just after midnight). One set to `Hide`
+until due is left off until it comes due. It ends with
 the starred checklists, each as a task
 tagged `[checklist]` with how many of its items are done.
 Both are counted in the number of tasks open. Move the cursor onto a
@@ -188,7 +189,7 @@ commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
 stands, chosen by number as the admin menu's are: `1` changes their
 password, `2` connects their Google calendar and chooses its calendars
 (showing, e.g., "connected, 2 calendars shown"), `3` links Trello and
-chooses their task lists, `4` sets their preferences, and `5` tests the
+chooses their task lists, `4` sets their general preferences, and `5` tests the
 terminal. Each of those comes back to the settings screen, saying what was
 done.
 
@@ -205,14 +206,37 @@ received (quoted, so that spaces and odd characters show), the key, and
 where the cursor was. `PA1`-`PA3` and `Clear` send neither what was typed
 nor the cursor, and the screen says so. `PF3` goes back.
 
-The preferences screen has one, for now: `Avoid flashing`, `Y` or `N`
+The preferences screen has three. `Avoid flashing` is `Y` or `N`
 (blank is `N`). With `Y`, nothing flashes: the timer shows `DONE`
 steadily, in red, rather than flashing the screen, and the dashboard's
-line about a timer whose time is up is steadily red. `Enter` saves it
-(the settings screen then shows "no flashing" beside option `4`); `PF3`
-goes back without saving. It is kept with the user in `-users-file`, as
-`"preferences": {"no_flash": true}`, and takes effect at once, in every
-session of theirs. The commands `google` (or `gcal`), `trello` and `password`
+line about a timer whose time is up is steadily red. `Time zone` is an
+IANA zone name, such as `America/Denver`, `Europe/Amsterdam` or `UTC`;
+blank is the server's. Every time the user is shown is in it: the clock
+in each screen's title, the agenda and calendar (an all-day event keeps
+its date), the timer's end, recurring tasks' due times (a task due at
+09:00 is due at 09:00 in the user's zone), Trello due dates and comments,
+chat messages, and the activity viewer. A zone that does not exist is
+refused. `PF1` with the cursor on the time zone lists every zone, in
+columns, opening at the page of the one typed, which is picked out; `PF7`
+and `PF8` page, and `PF3` goes back to the preferences as they were typed.
+The list is `internal/session/zonenames.txt`, made from the zone data of
+the Go that builds the server (which `time/tzdata` embeds) by `go generate
+./internal/session`; run that after a Go upgrade. `Calendar clocks` are
+the times listed under the calendar's month, up to 10, each a time zone
+(`PF1` on one lists them, as for the time zone) and, optionally, the name
+it is shown by there, up to 14 characters; without one, it is the zone's
+city (`Buenos Aires` for `America/Argentina/Buenos_Aires`). Until the user
+changes them, they are the usual six (Denver, Los Angeles, New York,
+Japan, Amsterdam and UTC), filled in on the screen. Blank rows are
+dropped and the rest kept in order; with every row blank, the calendar
+shows none. A name without a zone, or a zone that does not exist, is
+refused. `Enter` saves them (the settings screen then shows "no flashing"
+and the zone beside option `4`); `PF3` goes back without saving. They
+are kept with the user in `-users-file`, as `"preferences": {"no_flash":
+true, "time_zone": "America/Denver", "clocks": [{"zone": "Asia/Tokyo",
+"name": "Japan"}]}` (no `clocks` for the usual ones, `[]` for none), and
+take effect at once, in every session of theirs. The login screen, before anyone is logged in, shows
+the server's time. The commands `google` (or `gcal`), `trello` and `password`
 (or `passwd`) still open them straight from the dashboard, and come back
 there, but `help` does not list them. The dashboard's timed redraw writes over the screen
 without erasing it, so a command half typed survives it.
@@ -412,7 +436,8 @@ On the calendar, a month is shown with the selected day's events beside it. Move
 The calendar reads each month from Google as it is shown and reuses it for
 `-agenda-refresh`, separately from the today-and-tomorrow agenda. A user
 with no calendar connected sees the month and the clocks, with a note to
-connect one in `settings`.
+connect one in `settings`. The clocks, under the month, are the user's
+choice, set in their preferences.
 
 The task screen lists every open task, whatever its tags. Type `X` in the
 `S` column beside tasks, then press `PF5` to move them or `PF6` to complete
@@ -503,7 +528,7 @@ try again.
 ### Recurring tasks
 
 A recurring task is kept in `-db`, not Trello, and comes due at a time of
-day, by the server's clock, on the days its schedule says. It shows on the
+day, in the user's time zone, on the days its schedule says. It shows on the
 dashboard's task list from then until it is completed on the task screen,
 which marks it done at that moment and gives it the next day it comes due. A user without
 Trello linked has the task screen for their recurring tasks alone.
@@ -536,7 +561,10 @@ recurring task screen asks:
   many days after it was last done, at the time of day it was done (to
   the minute): done at 18:05, it comes due again at 18:05. Its `Time` is
   only when it first comes due; once it is done, the edit screen shows the
-  time it was done.
+  time it was done;
+- `Hide`: `Y` keeps it off the dashboard until it comes due, rather than
+  listing it while due later today or within the hour; `N`, the default,
+  lists it then. The task screen lists it either way.
 
 `Enter` saves it and goes back to the task screen, saying when it is next
 due. Changing its title alone keeps when it is due. Changing its schedule,
@@ -553,8 +581,8 @@ is an hour and a half, `0:05` five minutes) or as hours, minutes and
 seconds, each optional but in that order (`2h3m20s`, `45m`, `90s`), in
 any case, up to 99:59:59; or, on its second line (`Or until`), until when,
 as an alarm: a 24-hour time, `hh:mm` or `hh:mm:ss` (or `hhmm`), the next
-time it comes, today or, if already past, tomorrow, by the server's clock
-(the one in the title row). Type one or the other, not both. On its third
+time it comes, today or, if already past, tomorrow, in the user's time
+zone (the clock in the title row). Type one or the other, not both. On its third
 line (`What for`), type what the timer is for (up to 40 characters, such
 as `laundry`), shown as it runs and once done; left blank, it is `Timer`.
 `Enter` starts it. Counting down to a time of day, it shows `Until` that time
@@ -731,7 +759,9 @@ Its tables:
 - `recurring`: `id` (never reused), `owner` (the user's ID), `title`,
   `schedule` (`weekly`, `every` or `after`), `days` (for `weekly`, a bit
   for each day of the week, Sunday's 1), `weeks`, `every_days`,
-  `at_minute` (minutes after midnight), `start` and `due` (`yyyy-mm-dd`).
+  `at_minute` (minutes after midnight), `start` and `due` (`yyyy-mm-dd`),
+  and `hide_until_due` (1 to keep it off the dashboard until due; added,
+  as 0, to a table made before).
   A user's recurring tasks are removed with them, and at startup any of a
   user no longer there.
 

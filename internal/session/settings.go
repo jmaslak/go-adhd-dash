@@ -26,7 +26,7 @@ var settingsOptions = []struct{ number, what, command string }{
 	{"1", "Password: change it", "password"},
 	{"2", "Google calendar: connect, choose calendars", "google"},
 	{"3", "Trello: link, choose your task lists", "trello"},
-	{"4", "Preferences: how the screens behave", "preferences"},
+	{"4", "Preferences: time zone, clocks, flashing", "preferences"},
 	{"5", "Terminal test: colors, highlighting, characters, keys", "termtest"},
 }
 
@@ -64,8 +64,15 @@ func settingsStatus(store *users.Store, id int) map[string]string {
 	default:
 		out["trello"] = "linked, " + countText(len(u.Trello.Lists), "list", 0, 1)
 	}
+	var prefs []string
 	if u.Preferences.NoFlash {
-		out["preferences"] = "no flashing"
+		prefs = append(prefs, "no flashing")
+	}
+	if u.Preferences.TimeZone != "" {
+		prefs = append(prefs, u.Preferences.TimeZone)
+	}
+	if len(prefs) > 0 {
+		out["preferences"] = strings.Join(prefs, ", ")
 	}
 	return out
 }

@@ -71,7 +71,7 @@ func TestTaskDetailsScreen(t *testing.T) {
 	text := strings.Join(rows, "\n")
 	for _, want := range []string{
 		"TASK DETAILS", "Renew the passport", "On Home / Errands [home]",
-		"Due " + now.Add(-time.Hour).Local().Format("Mon Jan 2 15:04") + " (overdue)", "Labels: urgent, blue",
+		"Due " + now.Add(-time.Hour).Format("Mon Jan 2 15:04") + " (overdue)", "Labels: urgent, blue",
 		"Notes", "  Bring the old one, two photos and the form.", "  The office is on 5th street,",
 		"Checklist: Before (1 of 2 done)", "  [X] photos", "  [ ] fill in the form",
 		"Checklist: After (0 of 1 done)", "  [ ] file the receipt",

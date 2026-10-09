@@ -18,9 +18,12 @@ func at(h, m int) time.Time {
 type fakeSource struct {
 	events []Event
 	err    error
+
+	from time.Time // as last asked for
 }
 
-func (f *fakeSource) Events(context.Context, time.Time, time.Time) ([]Event, error) {
+func (f *fakeSource) Events(_ context.Context, from, _ time.Time) ([]Event, error) {
+	f.from = from
 	return f.events, f.err
 }
 
@@ -92,11 +95,11 @@ func TestPool(t *testing.T) {
 		return &fakeSource{events: []Event{{Summary: "A", Start: at(9, 0), End: at(10, 0)}}}
 	}
 
-	a := p.Get("alice", source)
-	if p.Get("alice", source) != a || made != 1 {
+	a := p.Get("alice", time.Local, source)
+	if p.Get("alice", time.Local, source) != a || made != 1 {
 		t.Errorf("the same key gave another cache, or made another source (%d)", made)
 	}
-	b := p.Get("bob", source)
+	b := p.Get("bob", time.Local, source)
 	if b == a || made != 2 {
 		t.Errorf("another key shared a cache, or made no source (%d)", made)
 	}
@@ -111,14 +114,59 @@ func TestPool(t *testing.T) {
 	p.mu.Lock()
 	p.entries["alice"].lastUsed = time.Now().Add(-4 * time.Hour)
 	p.mu.Unlock()
-	p.Get("bob", source)
+	p.Get("bob", time.Local, source)
 	p.mu.Lock()
 	_, kept := p.entries["alice"]
 	p.mu.Unlock()
 	if kept {
 		t.Errorf("unused cache kept")
 	}
-	if p.Get("alice", source) == a || made != 3 {
+	if p.Get("alice", time.Local, source) == a || made != 3 {
 		t.Errorf("dropped key gave its old cache back, or made no source (%d)", made)
+	}
+}
+
+func TestCacheIn(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skip("no zone files:", err)
+	}
+	src := &fakeSource{}
+	NewCacheIn(src, tokyo).refresh(context.Background())
+	if src.from.Location() != tokyo || src.from.Hour() != 0 || src.from.Minute() != 0 {
+		t.Errorf("fetched from %v; want midnight in Tokyo", src.from)
+	}
+
+	p := NewPool(context.Background(), time.Hour)
+	if p.Get("alice", tokyo, func() Source { return src }).loc != tokyo {
+		t.Errorf("pool's cache is not in the zone asked for")
+	}
+}
+
+func TestEventIn(t *testing.T) {
+	denver, err := time.LoadLocation("America/Denver")
+	if err != nil {
+		t.Skip("no zone files:", err)
+	}
+	// 05:00 UTC on the 27th is 23:00 on the 26th in Denver.
+	timed := Event{Summary: "late", Start: at(5, 0), End: at(6, 0)}
+	if got := timed.In(denver); got.Start.Location() != denver || !got.Start.Equal(timed.Start) || got.Start.Day() != 26 {
+		t.Errorf("timed event moved to %v", got.Start)
+	}
+	// An all-day event on the 27th stays on the 27th.
+	allDay := Event{Summary: "holiday", Start: base, End: base.AddDate(0, 0, 1), AllDay: true}
+	got := allDay.In(denver)
+	if want := time.Date(2026, 9, 27, 0, 0, 0, 0, denver); !got.Start.Equal(want) || !got.End.Equal(want.AddDate(0, 0, 1)) {
+		t.Errorf("all-day event is %v to %v; want the 27th in Denver", got.Start, got.End)
+	}
+
+	// Moving the all-day event to Denver's midnight, 06:00 UTC, puts it
+	// after the timed one, and the list is put back in order.
+	s := Snapshot{Events: []Event{allDay, timed}, Fetched: at(4, 0)}.In(denver)
+	if s.Events[0].Summary != "late" || s.Events[1].Summary != "holiday" || s.Fetched.Location() != denver {
+		t.Errorf("snapshot in Denver = %+v", s)
+	}
+	if EventsIn(nil, denver) != nil {
+		t.Errorf("no events gave some")
 	}
 }

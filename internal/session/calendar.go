@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
 // Calendar screen layout. The month grid is on the left, one cell per day:
@@ -28,14 +30,41 @@ const (
 	calClockRow = calFirstWeekRow + 6 + 1
 )
 
-// worldClocks are the places whose time is listed under the month grid.
-var worldClocks = []struct{ name, zone string }{
-	{"Denver", "America/Denver"},
-	{"Los Angeles", "America/Los_Angeles"},
-	{"New York", "America/New_York"},
-	{"Japan", "Asia/Tokyo"},
-	{"Amsterdam", "Europe/Amsterdam"},
-	{"UTC", "UTC"},
+// defaultClocks are the places whose time is listed under the month grid
+// for a user who has not chosen their own.
+var defaultClocks = []users.Clock{
+	{Zone: "America/Denver", Name: "Denver"},
+	{Zone: "America/Los_Angeles", Name: "Los Angeles"},
+	{Zone: "America/New_York", Name: "New York"},
+	{Zone: "Asia/Tokyo", Name: "Japan"},
+	{Zone: "Europe/Amsterdam", Name: "Amsterdam"},
+	{Zone: "UTC", Name: "UTC"},
+}
+
+// clockNameWidth is the most a clock's name can take up, beside its time,
+// in the room left of the selected day's events.
+const clockNameWidth = 14
+
+// clockNameColumn is the least room the clocks' names take up, so that the
+// usual ones line up as they always have.
+const clockNameColumn = 11
+
+// clocksOf is the clocks prefs shows on the calendar screen.
+func clocksOf(prefs users.Preferences) []users.Clock {
+	if prefs.Clocks == nil {
+		return defaultClocks
+	}
+	return prefs.Clocks
+}
+
+// clockName is what c is called on the calendar screen: its name, or else
+// its zone's city, "Los Angeles" for America/Los_Angeles.
+func clockName(c users.Clock) string {
+	name := c.Name
+	if name == "" {
+		name = strings.ReplaceAll(c.Zone[strings.LastIndex(c.Zone, "/")+1:], "_", " ")
+	}
+	return cutRunes(name, clockNameWidth)
 }
 
 // calendarFetchTimeout bounds reading a month, which holds up the session.
@@ -111,13 +140,17 @@ type calendarView struct {
 	// Events are the month's; Err is why they could not be read.
 	Events []agenda.Event
 	Err    error
+
+	// Clocks are the times listed under the month grid.
+	Clocks []users.Clock
 }
 
-// view is what the state shows at now.
-func (c *calendarState) view(now time.Time, agendaEnabled bool) calendarView {
+// view is what the state shows at now, in now's time zone, with clocks
+// under the month grid.
+func (c *calendarState) view(now time.Time, agendaEnabled bool, clocks []users.Clock) calendarView {
 	return calendarView{
-		Now: now, AgendaEnabled: agendaEnabled,
-		Month: c.month, Selected: c.selected, Events: c.events, Err: c.err,
+		Now: now, AgendaEnabled: agendaEnabled, Clocks: clocks,
+		Month: c.month, Selected: c.selected, Events: agenda.EventsIn(c.events, now.Location()), Err: c.err,
 	}
 }
 
@@ -165,7 +198,7 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 		}
 	}
 
-	screen = append(screen, clockFields(rows, v.Now)...)
+	screen = append(screen, clockFields(rows, v.Now, v.Clocks)...)
 	screen = append(screen, dayFields(rows, cols, v)...)
 
 	if v.Err != nil {
@@ -178,22 +211,26 @@ func buildCalendar(rows, cols int, v calendarView) (screen go3270.Screen, cursor
 	return screen, cursorRow, cursorCol
 }
 
-// clockFields lists the world clocks' times at now under the month grid, as
-// many as fit above the message row. A zone that cannot be loaded shows
-// "--:--".
-func clockFields(rows int, now time.Time) []go3270.Field {
+// clockFields lists clocks' times at now under the month grid, as many as
+// fit above the message row, their names in a column as wide as the
+// longest. A zone that cannot be loaded shows "--:--".
+func clockFields(rows int, now time.Time, clocks []users.Clock) []go3270.Field {
+	width := clockNameColumn
+	for _, c := range clocks {
+		width = max(width, utf8.RuneCountInString(clockName(c)))
+	}
 	var out []go3270.Field
-	for i, c := range worldClocks {
+	for i, c := range clocks {
 		row := calClockRow + i
 		if row > rows-3 {
 			break
 		}
 		t := "--:--"
-		if loc, err := time.LoadLocation(c.zone); err == nil {
+		if loc, err := loadZone(c.Zone); err == nil && c.Zone != "" {
 			t = now.In(loc).Format("15:04")
 		}
 		out = append(out, placeLineAt(row, 0, calGridWidth+1, line{
-			{Content: fmt.Sprintf("%-11s", c.name), Color: go3270.Turquoise},
+			{Content: fmt.Sprintf("%-*s", width, clockName(c)), Color: go3270.Turquoise},
 			{Content: t, Color: go3270.White},
 		})...)
 	}

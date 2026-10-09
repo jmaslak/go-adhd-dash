@@ -187,6 +187,9 @@ func Handle(rawConn net.Conn, cfg Config) {
 	// Every session logs in first. user is who is logged in: nil until
 	// then.
 	var user *users.User
+	// userNow is the time in the user's time zone (see Preferences); the
+	// server's until someone logs in.
+	userNow := func() time.Time { return time.Now().In(cfg.locationFor(user)) }
 	var login loginState
 	var calc calcState // kept while the session lasts, as a calculator's stack is
 	var su signupState
@@ -252,7 +255,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 	// bye leaves text on the terminal as the session disconnects.
 	bye := func(text string) {
-		_, _ = go3270.ShowScreenOpts(sanitizeScreen(tint(buildFarewell(cols, time.Now(), text)), cp), nil, conn, go3270.ScreenOpts{
+		_, _ = go3270.ShowScreenOpts(sanitizeScreen(tint(buildFarewell(cols, userNow(), text)), cp), nil, conn, go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, NoResponse: true,
 		})
 	}
@@ -355,7 +358,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 			mode, tp = modeTasks, taskPageState{}
 		case "cal":
 			mode = modeCalendar
-			cal.goTo(time.Now())
+			cal.goTo(userNow())
 		case "calc", "dbm":
 			mode, calc.dbm = modeCalc, c.name == "dbm"
 		case "checklist":
@@ -407,7 +410,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	}
 
 	for {
-		now := time.Now()
+		now := userNow()
 		var screen go3270.Screen
 		var totalPages, cursorRow, cursorCol int
 		// A timed redraw would wipe marks typed on the task screen, a line
@@ -467,7 +470,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case modeCalendar:
 			cache := cfg.agendaFor(user)
 			cal.load(cache, cfg.AgendaRefresh, now)
-			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, cache != nil))
+			screen, cursorRow, cursorCol = buildCalendar(rows, cols, cal.view(now, cache != nil, clocksOf(prefsOf(cfg.Users, ownerOf(user)))))
 		case modeTasks:
 			snap := tasks.Snapshot{Err: errors.New("no Trello lists are linked")}
 			if src := tp.source(cfg.ownTasks(user)); src != nil {
@@ -658,11 +661,11 @@ func Handle(rawConn net.Conn, cfg Config) {
 			case go3270.AIDPF3:
 				mode = modeDashboard
 			case go3270.AIDPF4:
-				cal.goTo(time.Now())
+				cal.goTo(userNow())
 			case go3270.AIDPF7:
-				cal.changeMonth(-1, time.Now())
+				cal.changeMonth(-1, userNow())
 			case go3270.AIDPF8:
-				cal.changeMonth(1, time.Now())
+				cal.changeMonth(1, userNow())
 			case go3270.AIDEnter:
 				if day, ok := calendarDayAt(cal.month, resp.Row, resp.Col); ok {
 					cal.selected = day
@@ -714,7 +717,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = modeTasks
 			}
 		case modeRecurring:
-			if back, said, isError := rt.handle(resp, cfg.Recurring, user.ID, time.Now(), logf); back {
+			if back, said, isError := rt.handle(resp, cfg.Recurring, user.ID, userNow(), logf); back {
 				mode, tp.message, tp.isError = modeTasks, said, isError
 			}
 		case modeBrowse:
@@ -859,7 +862,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode, message, messageOK = settingsBack, said, true
 			}
 		case modeTimer:
-			if back, said := tm.handle(resp, time.Now(), cfg.Timers, user.ID, logf); back {
+			if back, said := tm.handle(resp, userNow(), cfg.Timers, user.ID, logf); back {
 				mode, message = modeDashboard, said
 			}
 		case modeSignup:
@@ -1191,7 +1194,7 @@ type view struct {
 // gather reads the current state of every source: the agenda from
 // agendaCache, the tasks from taskCache and the busy state from light, nil
 // for none, and the checklists and timer owner's: none for owner zero, no
-// one.
+// one. Times are given in now's time zone.
 func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tasks.Cache, owner int, light busy.Source) view {
 	v := view{Now: now}
 	if light != nil {
@@ -1200,7 +1203,7 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tas
 	}
 	if agendaCache != nil {
 		v.AgendaEnabled = true
-		v.Agenda = agendaCache.Snapshot()
+		v.Agenda = agendaCache.Snapshot().In(now.Location())
 	}
 
 	if cfg.Checklists != nil && owner != 0 {
@@ -1217,7 +1220,7 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tas
 	if taskCache != nil {
 		snap := taskCache.Snapshot()
 		v.TasksEnabled = true
-		v.Tasks, v.TasksErr, v.TasksFetched, v.TasksLoading = snap.Tasks, snap.Err, snap.Fetched, snap.Loading
+		v.Tasks, v.TasksErr, v.TasksFetched, v.TasksLoading = snap.Tasks, snap.Err, snap.Fetched.In(now.Location()), snap.Loading
 	}
 	return v
 }

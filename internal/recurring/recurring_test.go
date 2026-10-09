@@ -9,6 +9,31 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/db"
 )
 
+// TestNewAddsHideUntilDue checks that a table made before recurring tasks
+// could be hidden until due gets hide_until_due, its tasks not hidden.
+func TestNewAddsHideUntilDue(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "adhd-dash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close() //nolint:errcheck
+	if _, err := d.Exec(`CREATE TABLE recurring (id INTEGER PRIMARY KEY AUTOINCREMENT, owner INTEGER NOT NULL, title TEXT NOT NULL,
+			schedule TEXT NOT NULL, days INTEGER NOT NULL DEFAULT 0, weeks INTEGER NOT NULL DEFAULT 1,
+			every_days INTEGER NOT NULL DEFAULT 0, at_minute INTEGER NOT NULL, start TEXT NOT NULL, due TEXT NOT NULL);
+		INSERT INTO recurring (owner, title, schedule, every_days, at_minute, start, due) VALUES (1, 'Old', 'every', 1, 540, '2026-10-01', '2026-10-01')`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // and again, with the column there
+		s, err := New(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if list, err := s.List(1); err != nil || len(list) != 1 || list[0].Title != "Old" || list[0].HideUntilDue {
+			t.Errorf("the old task: %+v, %v", list, err)
+		}
+	}
+}
+
 // open makes recurring tasks in a new database, closed when the test ends.
 func open(t *testing.T) *Store {
 	t.Helper()
@@ -205,8 +230,16 @@ func TestStore(t *testing.T) {
 	if err != nil || !got.Due.Equal(day(6)) {
 		t.Errorf("rescheduled: %+v, %v", got, err)
 	}
-	if read, err := s.Get(1, plants.ID); err != nil || read.Title != "Water the plants" || read.Interval != 2 {
+	if read, err := s.Get(1, plants.ID); err != nil || read.Title != "Water the plants" || read.Interval != 2 || read.HideUntilDue {
 		t.Errorf("read after update: %+v, %v", read, err)
+	}
+	// Hidden until due, kept so, and the day due kept.
+	got.HideUntilDue = true
+	if got, err = s.Update(got, day(5)); err != nil || !got.Due.Equal(day(6)) {
+		t.Errorf("hidden by update: %+v, %v", got, err)
+	}
+	if read, err := s.Get(1, plants.ID); err != nil || !read.HideUntilDue {
+		t.Errorf("read after hiding: %+v, %v", read, err)
 	}
 
 	if err := s.Rename(1, bins.ID, "Put out the bins"); err != nil {

@@ -608,7 +608,7 @@ type taskEntry struct {
 // taskEntries is the dashboard's task list, and how many of its lines are
 // open tasks: the tasks, then the recurring tasks due, due soon or due
 // later today, each tagged [recurring] (those due later than soon, in
-// blue, not counted as open), then the starred checklists, each as a task
+// blue, not counted as open; those hidden until due, only once due), then the starred checklists, each as a task
 // tagged [checklist], or the reason either could not be read. The task
 // screen lists the tasks and every recurring task, but no checklists.
 func taskEntries(v view) (entries []taskEntry, open int) {
@@ -622,6 +622,9 @@ func taskEntries(v view) (entries []taskEntry, open int) {
 		}})
 	}
 	for _, r := range v.Recurring {
+		if r.HideUntilDue && !r.IsDue(v.Now) {
+			continue
+		}
 		// Those in red or green, due or due soon, are open; those in
 		// blue, due later today, are not.
 		switch {

@@ -59,12 +59,30 @@ type User struct {
 	Preferences Preferences `json:"preferences,omitzero"`
 }
 
-// Preferences are a user's choices of how the screens behave, each off
-// unless set.
+// Preferences are a user's general choices: how the screens behave, the
+// time zone their times are shown in, and the calendar's clocks; each
+// unset is the usual.
 type Preferences struct {
 	// NoFlash avoids flashing: the timer shows DONE steadily, rather than
 	// flashing the screen.
 	NoFlash bool `json:"no_flash,omitempty"`
+
+	// TimeZone is the IANA name of the zone the user's times are shown
+	// in, such as America/Denver; "" for the server's.
+	TimeZone string `json:"time_zone,omitempty"`
+
+	// Clocks are the times the calendar screen shows, in order, at most
+	// MaxClocks of them: nil for the usual ones, empty for none.
+	Clocks []Clock `json:"clocks,omitzero"`
+}
+
+// MaxClocks is the most clocks the calendar screen shows.
+const MaxClocks = 10
+
+// Clock is a time zone whose time the calendar screen shows.
+type Clock struct {
+	Zone string `json:"zone"`           // an IANA name, such as Asia/Tokyo
+	Name string `json:"name,omitempty"` // what it is called there; "" for its city
 }
 
 // TrelloClient is the Trello API key users link their Trello accounts

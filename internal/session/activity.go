@@ -278,9 +278,10 @@ func buildActivity(rows, cols int, now time.Time, sessions []SessionActivity, se
 		case s.Gone:
 			doing, color = "Disconnected", go3270.Blue
 		}
-		since := s.Connected.Format("15:04")
-		if !dayOf(s.Connected).Equal(dayOf(now)) {
-			since = s.Connected.Format("Jan 2")
+		connected := s.Connected.In(now.Location())
+		since := connected.Format("15:04")
+		if !dayOf(connected).Equal(dayOf(now)) {
+			since = connected.Format("Jan 2")
 		}
 		screen = append(screen,
 			go3270.Field{
@@ -350,7 +351,7 @@ func buildTerminateConfirm(rows, cols int, now time.Time, self uint64, a *activi
 		}
 		screen = append(screen, go3270.Field{
 			Row: row, Col: actTextCol, Color: go3270.Green,
-			Content: truncate(activityFormat(star, s.LU, s.User, s.Screen, s.Connected.Format("15:04"), duration(now.Sub(s.LastKey)), s.Addr), cols-actTextCol-1),
+			Content: truncate(activityFormat(star, s.LU, s.User, s.Screen, s.Connected.In(now.Location()).Format("15:04"), duration(now.Sub(s.LastKey)), s.Addr), cols-actTextCol-1),
 		})
 		row++
 	}

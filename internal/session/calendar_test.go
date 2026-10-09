@@ -4,19 +4,66 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jmaslak/go-adhd-dash/internal/agenda"
+	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
 
 func sampleCalendar() calendarView {
 	v := sampleView(0)
 	return calendarView{
 		Now: now, AgendaEnabled: true,
-		Month: monthOf(now), Selected: dayOf(now), Events: v.Agenda.Events,
+		Month: monthOf(now), Selected: dayOf(now), Events: v.Agenda.Events, Clocks: defaultClocks,
+	}
+}
+
+func TestCalendarClocks(t *testing.T) {
+	v := sampleCalendar()
+	// A name is used as given, cut to fit; without one, the zone's city;
+	// a zone that will not load shows no time.
+	v.Clocks = []users.Clock{
+		{Zone: "Asia/Kolkata", Name: "Bengaluru office"},
+		{Zone: "America/Argentina/Buenos_Aires"},
+		{Zone: "UTC", Name: "Zulu"},
+		{Zone: "Nowhere/Atall", Name: "Gone"},
+	}
+	s, _, _ := buildCalendar(24, 80, v)
+	rows := screenText(t, s, 24, 80)
+	for i, want := range []string{" Bengaluru offi 15:30", " Buenos Aires   07:00", " Zulu           10:00", " Gone           --:--"} {
+		if got := rows[calClockRow+i]; got != want {
+			t.Errorf("clock row %d is %q, want %q", i, got, want)
+		}
+	}
+	if rows[calClockRow+4] != "" {
+		t.Errorf("a fifth clock: %q", rows[calClockRow+4])
+	}
+
+	// Ten fit on a 24-row screen, above the message row, beside the day's
+	// events.
+	v.Clocks = nil
+	for i := range users.MaxClocks {
+		v.Clocks = append(v.Clocks, users.Clock{Zone: "UTC", Name: fmt.Sprintf("Clock %d", i+1)})
+	}
+	s, _, _ = buildCalendar(24, 80, v)
+	rows = screenText(t, s, 24, 80)
+	if got := rows[calClockRow+users.MaxClocks-1]; !strings.HasPrefix(got, " Clock 10    10:00") {
+		t.Errorf("tenth clock is %q", got)
+	}
+	if !strings.Contains(rows[calDayRow+1], "Holiday") {
+		t.Errorf("the day's events are gone: %q", rows[calDayRow+1])
+	}
+
+	// None chosen: the usual ones. None at all: nothing.
+	if got := clocksOf(users.Preferences{}); !slices.Equal(got, defaultClocks) {
+		t.Errorf("clocks of no choice: %v", got)
+	}
+	if got := clocksOf(users.Preferences{Clocks: []users.Clock{}}); len(got) != 0 {
+		t.Errorf("clocks of none: %v", got)
 	}
 }
 

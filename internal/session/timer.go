@@ -227,6 +227,7 @@ func timeLeft(end, now time.Time) time.Duration {
 // next day, with "tomorrow" after it; later, with the day of the week
 // before it, which is never ambiguous, as a timer runs under 100 hours.
 func endText(end, now time.Time) string {
+	end = end.In(now.Location())
 	clock := end.Format("15:04:05")
 	switch {
 	case endsLater(end, now):
@@ -239,7 +240,7 @@ func endText(end, now time.Time) string {
 
 // endsLater reports whether end is after tomorrow, seen at now.
 func endsLater(end, now time.Time) bool {
-	return dayOf(end).After(dayOf(now).AddDate(0, 0, 1))
+	return dayOf(end.In(now.Location())).After(dayOf(now).AddDate(0, 0, 1))
 }
 
 // endsAt is the timer screen's "Ends at" for a timer ending at end, seen
@@ -247,6 +248,7 @@ func endsLater(end, now time.Time) bool {
 // goes first: "Ends Thu at 01:00:00".
 func endsAt(end, now time.Time) string {
 	if endsLater(end, now) {
+		end = end.In(now.Location())
 		return "Ends " + end.Format("Mon") + " at " + end.Format("15:04:05")
 	}
 	return "Ends at " + endText(end, now)

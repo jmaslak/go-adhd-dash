@@ -77,9 +77,10 @@ func (cfg Config) agendaFor(u *users.User) *agenda.Cache {
 		ids[j], aliases[j] = c.ID, c.Alias
 	}
 	// Anything that changes what is read changes the key, and so the cache.
+	loc := locationOf(list[i].Preferences)
 	key := strings.Join(append([]string{strconv.Itoa(u.ID), client.ClientID, client.ClientSecret, link.RefreshToken},
-		fmt.Sprint(ids), fmt.Sprint(aliases)), "\x00")
-	return cfg.Agendas.Get(key, func() agenda.Source {
+		fmt.Sprint(ids), fmt.Sprint(aliases), loc.String()), "\x00")
+	return cfg.Agendas.Get(key, loc, func() agenda.Source {
 		return agenda.NewGoogle(google.Tokens(google.Client{ID: client.ClientID, Secret: client.ClientSecret}, link.RefreshToken), ids, aliases)
 	})
 }

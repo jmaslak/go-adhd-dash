@@ -19,7 +19,8 @@ import (
 // Recurring tasks (see package recurring) are listed on the task screen
 // after the Trello tasks, every one of them, in the order they come due,
 // tagged [recurring] and with when they are due, or next due; on the
-// dashboard, those due, due soon or due later today. Each is a tasks.Task
+// dashboard, those due, due soon or due later today, but those hidden
+// until due (recurring.Task.HideUntilDue) only once due. Each is a tasks.Task
 // on the task screen, its card ID recurringCard and its ID, the day it is
 // due and the minute of the day, so that one done since it was shown is
 // not done again, marks on it go once it is, and it is colored by when it
@@ -115,7 +116,7 @@ func (cfg Config) ownTasks(u *users.User) TaskSource {
 	trello := taskBackend(cfg.tasksFor(u))
 	switch {
 	case cfg.Recurring != nil && u != nil:
-		return userTasks{trello: trello, store: cfg.Recurring, owner: u.ID, now: time.Now}
+		return userTasks{trello: trello, store: cfg.Recurring, owner: u.ID, now: func() time.Time { return time.Now().In(cfg.locationFor(u)) }}
 	case trello == nil:
 		return nil
 	}
@@ -256,7 +257,8 @@ func pastDue(r recurring.Task, now time.Time) bool {
 // The recurring task screen (PF2 on the task screen to add one, PF1 on one
 // to edit it): its title, time and start date, then either the days of the
 // week it is on, every so many weeks, or how many days apart it is, on a
-// fixed schedule or counted from when it is done.
+// fixed schedule or counted from when it is done; then whether it is
+// hidden from the dashboard until due.
 const (
 	rtTitleRow   = 3
 	rtTimeRow    = 4
@@ -267,7 +269,8 @@ const (
 	rtDailyRow   = 11
 	rtApartRow   = 12
 	rtAfterRow   = 13
-	rtStatusRow  = 15
+	rtHideRow    = 15
+	rtStatusRow  = 17
 	rtLabelWidth = 16 // "Days apart ===>" and its attribute byte; the fields' attribute bytes go here
 
 	rtTitleField = "rtitle"
@@ -277,6 +280,7 @@ const (
 	rtWeeksField = "rweeks"
 	rtApartField = "rapart"
 	rtAfterField = "rafter"
+	rtHideField  = "rhide"
 
 	rtPrompt = "Mark days of the week with X, or type days apart; then press Enter to save."
 )
@@ -330,13 +334,14 @@ func (r *recurringState) value(name, stored string) string {
 // on today.
 func (r *recurringState) stored(today recurring.Date) map[string]string {
 	t := r.task
-	out := map[string]string{rtWeeksField: "1", rtAfterField: "N", rtStartField: today.String()}
+	out := map[string]string{rtWeeksField: "1", rtAfterField: "N", rtHideField: "N", rtStartField: today.String()}
 	if t.ID == 0 {
 		return out
 	}
 	out[rtTitleField] = t.Title
 	out[rtTimeField] = fmt.Sprintf("%02d:%02d", t.At/60, t.At%60)
 	out[rtStartField] = t.Start.String()
+	out[rtHideField] = yesNo(t.HideUntilDue)
 	switch t.Schedule {
 	case recurring.Weekly:
 		out[rtWeeksField] = strconv.Itoa(t.Weeks)
@@ -405,6 +410,8 @@ func buildRecurring(rows, cols int, now time.Time, r *recurringState) (screen go
 	heading(rtDailyRow, "Or every so many days:")
 	labeled(rtApartRow, "Days apart ===>", rtApartField, 3, fmt.Sprintf("1 to %d", recurring.MaxInterval))
 	labeled(rtAfterRow, "After done ===>", rtAfterField, 1, "Y: that many days after it is done, at the time done")
+
+	labeled(rtHideRow, "Hide       ===>", rtHideField, 1, "Y: not on the dashboard until it is due")
 
 	help := "PF3=Cancel Enter=Save"
 	if r.task.ID != 0 {
@@ -515,6 +522,15 @@ func (r *recurringState) parse(values map[string]string, now time.Time) (t recur
 		if t.Interval, err = strconv.Atoi(apart); err != nil || t.Interval < 1 || t.Interval > recurring.MaxInterval {
 			return t, rtApartField, fmt.Sprintf("Type how many days apart, 1 to %d.", recurring.MaxInterval)
 		}
+	}
+
+	switch hide := strings.ToUpper(strings.TrimSpace(values[rtHideField])); hide {
+	case "", "N":
+		t.HideUntilDue = false
+	case "Y":
+		t.HideUntilDue = true
+	default:
+		return t, rtHideField, fmt.Sprintf("Type Y or N for hide, not %q.", hide)
 	}
 	return t, "", ""
 }

@@ -212,8 +212,9 @@ func chatPrefixWidth(nameWidth int) int {
 
 // chatLines wraps messages into lines of at most width runes, the text after
 // the time and poster, continuation lines indented to it. Lines are broken
-// at spaces where they can be. own is the name whose messages are marked.
-func chatLines(messages []ChatMessage, width int, own string) []chatLine {
+// at spaces where they can be. own is the name whose messages are marked;
+// times are told in loc.
+func chatLines(messages []ChatMessage, width int, own string, loc *time.Location) []chatLine {
 	textWidth := max(width-chatPrefixWidth(chatNameWidth(messages)), 10)
 	var out []chatLine
 	for _, m := range messages {
@@ -221,7 +222,7 @@ func chatLines(messages []ChatMessage, width int, own string) []chatLine {
 		for _, part := range wrapText(m.Text, textWidth) {
 			l := chatLine{text: part, own: m.From == own}
 			if first {
-				l.when, l.from, first = m.Time.Format("15:04"), m.From, false
+				l.when, l.from, first = m.Time.In(loc).Format("15:04"), m.From, false
 			}
 			out = append(out, l)
 		}
@@ -257,7 +258,7 @@ func wrapText(s string, width int) []string {
 func buildChat(rows, cols int, now time.Time, chat *Chat, name string, c *chatState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	messages, version, here := chat.snapshot()
 	c.shown = version
-	lines := chatLines(messages, cols-1, name)
+	lines := chatLines(messages, cols-1, name, now.Location())
 	nameWidth := chatNameWidth(messages)
 	if c.scroll > 0 {
 		c.scroll += len(lines) - c.lines // keep what is shown in place

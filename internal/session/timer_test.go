@@ -529,6 +529,23 @@ func TestDashboardTimerFlash(t *testing.T) {
 // TestEndText checks how a timer's end is told: the time today, "tomorrow"
 // after it the next day, and the day of the week before it later; and that
 // the timer screen and the dashboard tell it so.
+func TestEndTextInNowsZone(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skip("no zone files:", err)
+	}
+	// 14:00 UTC is 23:00 in Tokyo; a timer ending at 15:30 UTC ends
+	// tomorrow there.
+	now := time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC).In(tokyo)
+	end := time.Date(2026, 10, 3, 15, 30, 0, 0, time.UTC)
+	if got := endText(end, now); got != "00:30:00 tomorrow" {
+		t.Errorf("endText = %q", got)
+	}
+	if got := endsAt(end.Add(48*time.Hour), now); got != "Ends Tue at 00:30:00" {
+		t.Errorf("endsAt = %q", got)
+	}
+}
+
 func TestEndText(t *testing.T) {
 	now := time.Date(2026, 10, 3, 22, 0, 0, 0, time.Local) // a Saturday
 	for end, want := range map[time.Time]string{

@@ -38,6 +38,46 @@ type Event struct {
 	OthersDeclined bool
 }
 
+// In is e with its times in loc. An all-day event keeps its dates, from
+// midnight to midnight in loc, as a date is the same day wherever it is
+// seen.
+func (e Event) In(loc *time.Location) Event {
+	if e.AllDay {
+		e.Start, e.End = sameDateIn(e.Start, loc), sameDateIn(e.End, loc)
+	} else {
+		e.Start, e.End = e.Start.In(loc), e.End.In(loc)
+	}
+	return e
+}
+
+// sameDateIn is midnight in loc on t's date, as told where t is.
+func sameDateIn(t time.Time, loc *time.Location) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+}
+
+// EventsIn is events with their times in loc (see Event.In), in a new
+// slice, put back in order of start and end, as moving an all-day event's
+// dates can move it past timed events.
+func EventsIn(events []Event, loc *time.Location) []Event {
+	if events == nil {
+		return nil
+	}
+	out := make([]Event, len(events))
+	for i, e := range events {
+		out[i] = e.In(loc)
+	}
+	slices.SortStableFunc(out, func(a, b Event) int {
+		return cmp.Or(a.Start.Compare(b.Start), a.End.Compare(b.End))
+	})
+	return out
+}
+
+// In is s with its times in loc (see Event.In).
+func (s Snapshot) In(loc *time.Location) Snapshot {
+	s.Events, s.Fetched = EventsIn(s.Events, loc), s.Fetched.In(loc)
+	return s
+}
+
 // Source produces the events between two times.
 type Source interface {
 	Events(ctx context.Context, from, to time.Time) ([]Event, error)
@@ -70,14 +110,22 @@ func (s Snapshot) Upcoming(now time.Time) []Event {
 // Cache holds the latest Snapshot. It is safe for concurrent use.
 type Cache struct {
 	source Source
+	loc    *time.Location // whose today and tomorrow are fetched
 
 	mu   sync.Mutex
 	snap Snapshot
 }
 
-// NewCache returns a cache over source. Call Run to fill it.
+// NewCache returns a cache over source of today and tomorrow in the
+// server's time zone. Call Run to fill it.
 func NewCache(source Source) *Cache {
-	return &Cache{source: source, snap: Snapshot{Err: errors.New("not yet fetched")}}
+	return NewCacheIn(source, time.Local)
+}
+
+// NewCacheIn returns a cache over source of today and tomorrow in loc.
+// Call Run to fill it.
+func NewCacheIn(source Source, loc *time.Location) *Cache {
+	return &Cache{source: source, loc: loc, snap: Snapshot{Err: errors.New("not yet fetched")}}
 }
 
 // Snapshot returns the latest agenda.
@@ -99,11 +147,12 @@ func (c *Cache) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// refresh fetches from the start of today to the end of tomorrow. A failure
+// refresh fetches from the start of today to the end of tomorrow, in the
+// cache's time zone. A failure
 // keeps the events already known: a calendar that briefly cannot be read
 // should not blank the agenda.
 func (c *Cache) refresh(ctx context.Context) {
-	now := time.Now()
+	now := time.Now().In(c.loc)
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	to := from.AddDate(0, 0, 2)
 
@@ -146,10 +195,11 @@ func NewPool(ctx context.Context, interval time.Duration) *Pool {
 	return &Pool{ctx: ctx, interval: interval, entries: map[string]*poolEntry{}}
 }
 
-// Get returns the cache for key, starting one over the source newSource
-// makes if there is none. A key should change whenever the source would:
-// the cache under the old one is then dropped once unused.
-func (p *Pool) Get(key string, newSource func() Source) *Cache {
+// Get returns the cache for key, starting one of today and tomorrow in loc
+// over the source newSource makes if there is none. A key should change
+// whenever the source or loc would: the cache under the old one is then
+// dropped once unused.
+func (p *Pool) Get(key string, loc *time.Location, newSource func() Source) *Cache {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
@@ -162,7 +212,7 @@ func (p *Pool) Get(key string, newSource func() Source) *Cache {
 	e, ok := p.entries[key]
 	if !ok {
 		ctx, stop := context.WithCancel(p.ctx)
-		e = &poolEntry{cache: NewCache(newSource()), stop: stop}
+		e = &poolEntry{cache: NewCacheIn(newSource(), loc), stop: stop}
 		p.entries[key] = e
 		go e.cache.Run(ctx, p.interval)
 	}

@@ -156,7 +156,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 		screen = titleFields(cols, "TRELLO LIST", now)
 		header = line{{Content: tp.view.dest.String(), Color: go3270.Turquoise, Intense: true}}
 	}
-	status, ok := tasksStatus(snap.Err, snap.Fetched, snap.Loading)
+	status, ok := tasksStatus(snap.Err, snap.Fetched.In(now.Location()), snap.Loading)
 	if ok {
 		// Recurring tasks not yet due are listed, to edit, but not open.
 		info := fmt.Sprintf("%d open", len(all)-countFunc(all, notYetDue))
