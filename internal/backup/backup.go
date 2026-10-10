@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package backup saves the server's configuration and data, the users file
 // and the database, in one archive, and puts them back from one.
 //

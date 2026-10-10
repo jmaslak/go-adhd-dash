@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 //go:build ignore
 
 // zonenames_gen writes zonenames.txt: the time zones the preferences

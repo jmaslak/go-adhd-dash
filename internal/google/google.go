@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package google connects a user's Google calendar: the OAuth authorization
 // that gets a refresh token for the server's shared client, and the Calendar
 // API calls that list the calendars a user can choose from, and read their

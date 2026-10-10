@@ -1,8 +1,8 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package luxafor drives Luxafor flag USB indicators over HID. It is
 // go-busy-indicator's driver, brought here with the rest of its logic.
-//
-// Copyright © 2026 Joelle Maslak
-// All Rights Reserved - See License
 package luxafor
 
 import (

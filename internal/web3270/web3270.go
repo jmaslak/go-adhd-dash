@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package web3270 runs moshix's web3270, a TN3270 emulator in the browser,
 // beside the server, in kiosk mode, connecting only to the server itself,
 // and serves it to browsers over HTTPS through a reverse proxy, with the

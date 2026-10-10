@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package tasks reads a user's open tasks from Trello: the cards on the
 // lists they chose, each list's cards tagged as they said. Nothing is kept
 // on disk; the cards are cached in memory and fetched again in the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package recurring keeps each user's recurring tasks in the server's
 // SQLite database (see package db), shared by every session.
 //

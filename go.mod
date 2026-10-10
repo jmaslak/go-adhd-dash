@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 module github.com/jmaslak/go-adhd-dash
 
 go 1.27.0

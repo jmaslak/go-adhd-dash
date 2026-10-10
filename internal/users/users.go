@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package users keeps the user database in a JSON file: each user's name,
 // whether they are an admin, their password, hashed with Argon2id, and the
 // Google calendar they have connected, if any. At least one user is always

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package certs gets, keeps and renews the server's TLS certificates from
 // an ACME certificate authority (Let's Encrypt), for its HTTPS web pages
 // and its TN3270 port alike, and imports a certificate obtained elsewhere,

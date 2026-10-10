@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package timers keeps each user's timer in the server's SQLite database
 // (see package db), shared by every session, so that all of a user's sessions show
 // the same timer.

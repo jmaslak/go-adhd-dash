@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package busy drives the busy light: Luxafor flags red while a user who
 // controls them is in a meeting, by their calendar, and as those users set
 // it by hand. It is go-busy-indicator's logic, brought here so that the

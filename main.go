@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Command adhd-dash serves a dashboard to TN3270 (mainframe) terminal
 // clients, each user's: the busy light's state, their calendar's next 24
 // hours, and their open tasks from Trello. It also drives the busy light,

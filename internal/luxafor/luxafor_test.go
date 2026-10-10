@@ -1,4 +1,4 @@
-// Copyright © 2026 Joelle Maslak
+// Copyright (C) 2026 Joelle Maslak
 // All Rights Reserved - See License
 
 package luxafor_test

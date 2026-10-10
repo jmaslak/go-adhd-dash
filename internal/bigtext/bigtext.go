@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package bigtext draws text in large characters made of # (which every
 // code page has), each Height rows high and Width columns wide, for
 // banners and countdowns on a character screen.

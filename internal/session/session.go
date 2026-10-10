@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package session drives one TN3270 client connection: telnet negotiation,
 // then a dashboard that redraws itself on a timer until the client quits,
 // with a calendar screen, a task screen, a calculator and checklists a key

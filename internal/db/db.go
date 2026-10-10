@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package db opens the server's SQLite database, shared by every session,
 // which keeps the checklists and each user's timer, each package making
 // its own tables in it.

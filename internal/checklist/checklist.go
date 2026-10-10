@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package checklist keeps named checklists in the server's SQLite
 // database, shared by every session. Each checklist is one user's.
 //

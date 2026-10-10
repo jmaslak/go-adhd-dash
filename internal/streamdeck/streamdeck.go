@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package streamdeck drives an Elgato Stream Deck Mini (six keys) as the
 // busy light's buttons, as the sd program did, but setting the light
 // directly rather than running a program: Busy, Free and Green set it red,

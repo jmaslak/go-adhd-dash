@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package agenda keeps today's and tomorrow's meetings, refreshed in the
 // background and shared by every dashboard session of a user, so that each
 // connection does not call Google on its own.

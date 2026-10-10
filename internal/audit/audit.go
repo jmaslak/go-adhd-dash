@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package audit keeps the audit log: a file of one line per event (a user
 // logging in or out, or being disconnected, or a user signing up),
 // appended to and flushed to disk as each is written.

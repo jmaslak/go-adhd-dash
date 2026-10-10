@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joelle Maslak
+// All Rights Reserved - See License
+
 // Package web serves the service's web site: its public pages (what it is,
 // its privacy policy and its terms of service, as Google requires of an app
 // that reads its users' calendars), and the pages where a user signs in and
