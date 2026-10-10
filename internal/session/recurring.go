@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +20,7 @@ import (
 
 // Recurring tasks (see package recurring) are listed on the task screen
 // after the Trello tasks, every one of them, in the order they come due,
-// tagged [recurring] and with when they are due, or next due; on the
+// tagged [recurring] and with when they are, or were, due; on the
 // dashboard, those due, due soon or due later today, but those hidden
 // until due (recurring.Task.HideUntilDue) only once due. Each is a tasks.Task
 // on the task screen, its card ID recurringCard and its ID, the day it is
@@ -31,8 +30,6 @@ import (
 const (
 	recurringCard = "recurring:"
 	recurringTag  = "recurring"
-	// recurringNext starts the tag of a recurring task not yet due.
-	recurringNext = "next "
 )
 
 // recurringCardID is r's card ID on the task screen.
@@ -67,9 +64,10 @@ func isRecurring(t tasks.Task) bool {
 	return ok
 }
 
-// notYetDue reports whether t is a recurring task not yet due.
-func notYetDue(t tasks.Task) bool {
-	return isRecurring(t) && slices.ContainsFunc(t.Tags, func(tag string) bool { return strings.HasPrefix(tag, recurringNext) })
+// notYetDue reports whether t is a recurring task not yet due at now.
+func notYetDue(t tasks.Task, now time.Time) bool {
+	r, ok := recurringOf(t)
+	return ok && !r.IsDue(now)
 }
 
 // whenText is at, as seen at now: the time alone on now's day, with the
@@ -84,14 +82,10 @@ func whenText(at, now time.Time) string {
 	return at.Format("Jan 2 15:04")
 }
 
-// dueText is when r came due, "due 09:00", or if it is not yet due, when
-// it next does, "next Tue 09:00", at now.
+// dueText is when r is, or was, due, as seen at now: "due 09:00",
+// "due Tue 09:00".
 func dueText(r recurring.Task, now time.Time) string {
-	at := r.DueAt(now.Location())
-	if r.IsDue(now) {
-		return "due " + whenText(at, now)
-	}
-	return recurringNext + whenText(at, now)
+	return "due " + whenText(r.DueAt(now.Location()), now)
 }
 
 // recurringTask is r as a task on the task screen, numbered n.
@@ -418,7 +412,7 @@ func buildRecurring(rows, cols int, now time.Time, r *recurringState) (screen go
 
 	help := "PF3=Cancel Enter=Save"
 	if r.task.ID != 0 {
-		status := line{{Content: "Next due " + r.task.DueAt(now.Location()).Format("Mon Jan 2 15:04"), Color: go3270.White}}
+		status := line{{Content: "Due " + r.task.DueAt(now.Location()).Format("Mon Jan 2 15:04"), Color: go3270.White}}
 		if r.task.IsDue(now) {
 			status = line{{Content: "Due now, since " + whenText(r.task.DueAt(now.Location()), now), Color: go3270.Yellow, Intense: true}}
 		}
@@ -605,7 +599,7 @@ func (r *recurringState) handle(resp go3270.Response, store *recurring.Store, ow
 		return false, "", false
 	}
 	logf("%s recurring task %d %q", strings.ToLower(verb), t.ID, t.Title)
-	when := "next due " + whenText(t.DueAt(now.Location()), now)
+	when := "due " + whenText(t.DueAt(now.Location()), now)
 	if t.IsDue(now) {
 		when = "due now"
 	}

@@ -162,7 +162,7 @@ func buildTaskList(rows, cols int, now time.Time, snap tasks.Snapshot, tp *taskP
 	status, ok := tasksStatus(snap.Err, snap.Fetched.In(now.Location()), snap.Loading)
 	if ok {
 		// Recurring tasks not yet due are listed, to edit, but not open.
-		info := fmt.Sprintf("%d open", len(all)-countFunc(all, notYetDue))
+		info := fmt.Sprintf("%d open", len(all)-countFunc(all, func(t tasks.Task) bool { return notYetDue(t, now) }))
 		if totalPages > 1 {
 			info += fmt.Sprintf(", page %d/%d", shownPage+1, totalPages)
 		}

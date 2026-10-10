@@ -180,7 +180,7 @@ After the Trello tasks, the dashboard's task list has the recurring tasks
 that are due, each tagged `[recurring]`, with when it came
 due (`(due 09:00)`, or `(due Fri 08:00)` for an earlier day). One due for
 over an hour, past due, has its title and when in red. Those due later
-today are listed too, with when they come due (`(next 15:30)`): in blue,
+today are listed too, with when they come due (`(due 15:30)`): in blue,
 not counted as open, then in green, counted, from an hour before they come
 due (listed then even if that is just after midnight). One set to `Hide`
 until due is left off until it comes due. It ends with

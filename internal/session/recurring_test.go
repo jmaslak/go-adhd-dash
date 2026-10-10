@@ -60,10 +60,10 @@ func TestUserTasks(t *testing.T) {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 	got := snap.Tasks[2]
-	if got.Number != 3 || got.Title != "Water plants" || strings.Join(got.Tags, "|") != "recurring|due 09:00" || notYetDue(got) {
+	if got.Number != 3 || got.Title != "Water plants" || strings.Join(got.Tags, "|") != "recurring|due 09:00" || notYetDue(got, now) {
 		t.Errorf("the recurring task due: %+v", got)
 	}
-	if got := snap.Tasks[3]; got.Number != 4 || strings.Join(got.Tags, "|") != "recurring|next 15:30" || !notYetDue(got) {
+	if got := snap.Tasks[3]; got.Number != 4 || strings.Join(got.Tags, "|") != "recurring|due 15:30" || !notYetDue(got, now) {
 		t.Errorf("the recurring task not due: %+v", got)
 	}
 	if isRecurring(snap.Tasks[0]) {
@@ -147,7 +147,7 @@ func TestDashboardRecurring(t *testing.T) {
 	}
 	s, _, _, _ := buildDashboard(24, 80, v, 0, "")
 	text := strings.Join(screenText(t, s, 24, 80), "\n")
-	for _, want := range []string{"TASKS 7 open", "[recurring] Water plants (due 09:00)", "[recurring] Shown once due (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (next 15:00)", "[recurring] Make tea (next 11:00)"} {
+	for _, want := range []string{"TASKS 7 open", "[recurring] Water plants (due 09:00)", "[recurring] Shown once due (due 09:00)", "[recurring] Pay rent (due Fri 08:00)", "[recurring] Stretch (due 15:00)", "[recurring] Make tea (due 11:00)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen lacks %q:\n%s", want, text)
 		}
@@ -171,7 +171,7 @@ func TestDashboardRecurring(t *testing.T) {
 			if f.Color != go3270.Red {
 				t.Errorf("past due, not in red: %+v", f)
 			}
-		case strings.Contains(f.Content, "Stretch") || strings.Contains(f.Content, "next 15:00"):
+		case strings.Contains(f.Content, "Stretch") || strings.Contains(f.Content, "due 15:00"):
 			if f.Color != go3270.Blue {
 				t.Errorf("due later today, not in blue: %+v", f)
 			}
