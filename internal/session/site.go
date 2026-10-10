@@ -44,7 +44,7 @@ type siteState struct {
 }
 
 // buildSite renders the web site screen; listen is where the pages are
-// served, "" for nowhere.
+// served, as addresses with their schemes, "" for nowhere.
 func buildSite(rows, cols int, now time.Time, site *users.Site, loadErr error, listen string, s *siteState) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "WEB SITE", now)
 	header := line{{Content: "Web site", Color: go3270.Turquoise, Intense: true}}
@@ -52,9 +52,9 @@ func buildSite(rows, cols int, now time.Time, site *users.Site, loadErr error, l
 	case loadErr != nil:
 		header = append(header, go3270.Field{Content: loadErr.Error(), Color: go3270.Red})
 	case listen == "":
-		header = append(header, go3270.Field{Content: "not served (-http-port 0)", Color: go3270.Yellow})
+		header = append(header, go3270.Field{Content: "not served (-http-port 0, no HTTPS)", Color: go3270.Yellow})
 	default:
-		header = append(header, go3270.Field{Content: "served over HTTP at " + listen, Color: go3270.Blue})
+		header = append(header, go3270.Field{Content: "served at " + listen, Color: go3270.Blue})
 	}
 	screen = append(screen, placeLine(2, cols, header)...)
 	for i, t := range siteText {

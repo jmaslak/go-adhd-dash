@@ -122,8 +122,8 @@ func TestAdminMenu(t *testing.T) {
 		}
 	}
 
-	s, _, _ = buildAdmin(24, 80, now, `There is no option "9".`, false, 1)
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, `There is no option "9".`) {
+	s, _, _ = buildAdmin(24, 80, now, `There is no option "11".`, false, 1)
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, `There is no option "11".`) {
 		t.Errorf("admin menu lacks the message:\n%s", text)
 	}
 
@@ -140,7 +140,9 @@ func TestAdminMenu(t *testing.T) {
 		{go3270.AIDEnter, "4", adminUsers, false},
 		{go3270.AIDEnter, "8", adminBackup, false},
 		{go3270.AIDEnter, "", adminStay, false},
-		{go3270.AIDEnter, "9", adminStay, true},
+		{go3270.AIDEnter, "9", adminTLS, false},
+		{go3270.AIDEnter, "10", adminWebTerm, false},
+		{go3270.AIDEnter, "11", adminStay, true},
 		{go3270.AIDPF4, "1", adminStay, false},
 	} {
 		action, msg := adminChoice(go3270.Response{AID: c.aid, Values: map[string]string{adminOptionField: c.typed}})

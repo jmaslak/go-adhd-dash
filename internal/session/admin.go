@@ -27,6 +27,8 @@ var adminOptions = []struct{ number, what string }{
 	{"6", "Web site: its public address, and who its privacy policy names"},
 	{"7", "Trello API key: what users link their Trello accounts through"},
 	{"8", "Back up the users and checklists"},
+	{"9", "TLS: the domain name, turning on TLS for terminals and HTTPS"},
+	{"10", "Web terminal: web3270, a TN3270 terminal in the browser"},
 }
 
 // buildAdmin renders the admin menu, with message below the option field,
@@ -81,6 +83,8 @@ const (
 	adminSite                            // the web site
 	adminTrelloKey                       // the Trello API key
 	adminBackup                          // a backup, made at once
+	adminTLS                             // the TLS domain
+	adminWebTerm                         // the web terminal
 )
 
 // adminChoice is what the admin menu's key asks for, and when it is to stay
@@ -111,6 +115,10 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 		return adminTrelloKey, ""
 	case "8":
 		return adminBackup, ""
+	case "9":
+		return adminTLS, ""
+	case "10":
+		return adminWebTerm, ""
 	default:
 		return adminStay, fmt.Sprintf("There is no option %q.", typed)
 	}

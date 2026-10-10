@@ -113,9 +113,17 @@ type Config struct {
 	// zero for every second.
 	Refresh time.Duration
 
-	// HTTPListen is where the web pages are served, for the admin to see;
-	// "" when they are not.
+	// HTTPListen is where the web pages are served over HTTP, for the
+	// admin to see, such as "http://localhost:3280"; "" when they are not.
 	HTTPListen string
+
+	// TLS is the server's TLS, its domain set on the admin menu; nil when
+	// it cannot be.
+	TLS TLSControl
+
+	// Web3270 is the web terminal, enabled on the admin menu; nil when it
+	// cannot be.
+	Web3270 Web3270Control
 
 	// AgendaRefresh is how long the calendar screen reuses a month it has
 	// read before reading it again.
@@ -281,6 +289,8 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var tr trelloState
 	var tk trelloKeyState
 	var site siteState
+	var tlsSt tlsState
+	var wt webTermState
 	defer cfg.Chat.unwatch(sessionID)
 	var lights lightWatch // the busy state the dashboard shows, to redraw when it changes
 	defer lights.stop()
@@ -311,7 +321,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		}
 		switch command {
 		case "google":
-			g, why := startGoogle(cfg.Users, id, cfg.HTTPListen != "")
+			g, why := startGoogle(cfg.Users, id, cfg.webListen() != "")
 			if why != "" {
 				return why
 			}
@@ -329,7 +339,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		case "termtest":
 			mode, tt = modeTermTest, termTestState{}
 		case "trello":
-			t, why := startTrello(cfg.Users, id, cfg.HTTPListen != "", cfg.TrelloBaseURL)
+			t, why := startTrello(cfg.Users, id, cfg.webListen() != "", cfg.TrelloBaseURL)
 			if why != "" {
 				return why
 			}
@@ -563,7 +573,13 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modeSite:
 			settings, err := cfg.Users.Site()
-			screen, cursorRow, cursorCol = buildSite(rows, cols, now, settings, err, cfg.HTTPListen, &site)
+			screen, cursorRow, cursorCol = buildSite(rows, cols, now, settings, err, cfg.webListen(), &site)
+			redrawOnTimer = false
+		case modeTLS:
+			screen, cursorRow, cursorCol = buildTLS(rows, cols, now, cfg.TLS, &tlsSt)
+			redrawOnTimer = false
+		case modeWebTerm:
+			screen, cursorRow, cursorCol = buildWebTerm(rows, cols, now, cfg.Web3270, &wt)
 			redrawOnTimer = false
 		case modeShutdownConfirm:
 			screen, cursorRow, cursorCol = buildShutdownConfirm(rows, cols, now, cfg.Shutdown.Sessions()), rows-1, 0
@@ -781,6 +797,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 				message = "There is no user database to keep the web site's settings in."
 			case action == adminSite:
 				mode, site = modeSite, siteState{}
+			case action == adminTLS && cfg.TLS == nil:
+				message = "This server cannot set its TLS domain."
+			case action == adminTLS:
+				mode, tlsSt = modeTLS, tlsState{}
+			case action == adminWebTerm && cfg.Web3270 == nil:
+				message = "This server cannot run the web terminal."
+			case action == adminWebTerm:
+				mode, wt = modeWebTerm, webTermState{}
 			case action == adminClearChat:
 				mode = modeClearChatConfirm
 			case action == adminActivity:
@@ -893,6 +917,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 			if site.handle(resp, cfg.Users, logf) {
 				mode = modeAdmin
 			}
+		case modeTLS:
+			if tlsSt.handle(resp, cfg.TLS, logf) {
+				mode = modeAdmin
+			}
+		case modeWebTerm:
+			if wt.handle(resp, cfg.Web3270, logf) {
+				mode = modeAdmin
+			}
 		case modeClearChatConfirm:
 			switch resp.AID {
 			case go3270.AIDPF3:
@@ -974,6 +1006,8 @@ const (
 	modeTermTest
 	modeTaskDetails
 	modeRecurring
+	modeTLS
+	modeWebTerm
 )
 
 // chatName is who a session is on the chat: its user's name, or with no

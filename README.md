@@ -58,7 +58,9 @@ sudo ./install-ubuntu.sh --binary adhd-dash   # or one built elsewhere:
 ```
 
 It makes a system user, `adhd-dash`, whose home, `/var/lib/adhd-dash`,
-holds the server's files; installs `/usr/local/bin/adhd-dash`; writes the
+holds the server's files; installs `/usr/local/bin/adhd-dash`, and
+downloads web3270 as `/usr/local/bin/web3270` (see
+[Web terminal](#web-terminal); `--no-web3270` skips it); writes the
 options to `/etc/default/adhd-dash` the first time only (`--host`, `--port`
 and `--http-port` set them then; by default only this machine can
 connect); writes a sandboxed systemd unit, restarting the server only
@@ -124,7 +126,7 @@ sudo systemctl start adhd-dash
 | Flag | Default | Description |
 |---|---|---|
 | `-host` | `localhost` | address to listen on |
-| `-port` | `3270` | TCP port to listen on |
+| `-port` | `3270` | TCP port to listen on; TLS from the first byte while there is a TLS domain |
 | `-refresh` | `1s` | how often the screens that redraw themselves (the dashboard, calendar, chat and activity viewer) do, at whole seconds |
 | `-flag` | `true` | drive the Luxafor flags attached to this machine as the busy light; `-flag=false` for none (`-externalrgb` and the banner still work) |
 | `-streamdeck` | `true` | use a Stream Deck Mini attached to this machine as the busy light's buttons (see [Busy light](#busy-light)); `-streamdeck=false` for none |
@@ -133,6 +135,18 @@ sudo systemctl start adhd-dash
 | `-agenda-file` | (none) | show every user the agenda in a JSON file instead of their Google calendars |
 | `-agenda-refresh` | `5m` | how often a user's calendars are read |
 | `-http-port` | `3280` | TCP port the web pages (home page, privacy policy, terms of service) are served on over plain HTTP, on `-host`; `0` for none (see [Web site](#web-site)) |
+| `-tls-domain-file` | `~/adhd-dash-tls-domain.txt` | plain text file the TLS domain, set on admin menu option `9`, is kept in; none, or no file, for no TLS (see [TLS](#tls)) |
+| `-https-port` | `443` | TCP port, on `-host`, the web pages are served on over HTTPS while there is a TLS domain; `0` for none |
+| `-acme-http-port` | `80` | TCP port, on `-host`, answering Let's Encrypt's `http-01` challenges and sending browsers to HTTPS, while there is a TLS domain; `0` for none |
+| `-tls-dir` | `~/adhd-dash-certs` | where the certificates, their keys and the ACME account key are kept |
+| `-tls-email` | (none) | contact email given to the certificate authority |
+| `-tls-acme-url` | Let's Encrypt's | the certificate authority's ACME directory (Let's Encrypt's staging one, `https://acme-staging-v02.api.letsencrypt.org/directory`, for trying it out) |
+| `-tls-import-cert`, `-tls-import-key` | (none) | import a certificate chain and its key (PEM) into `-tls-dir` for the names it is for, then exit |
+| `-web3270-bin` | `web3270` | web3270's program, a path or a name looked for in `$PATH` (see [Web terminal](#web-terminal)) |
+| `-web3270-file` | `~/adhd-dash-web3270.txt` | plain text file saying the web terminal is enabled, set on admin menu option `10` |
+| `-web3270-proxy-port` | `32700` | TCP port, on `-host`, the web terminal is served on over HTTPS |
+| `-web3270-port` | `3271` | TCP port web3270 itself listens on, over HTTP, on the loopback address |
+| `-web3270-tn3270-port` | `3272` | TCP port of the unencrypted TN3270 port, on the loopback address, web3270 is locked to |
 | `-db` | `~/adhd-dash.db` | SQLite database the checklists, recurring tasks and each user's timer are kept in; at its default, one at the old default, `~/adhd-dash-checklists.db`, is renamed to it at startup (see [The database](#the-database)) |
 | `-checklist-json` | `~/adhd-dash-checklists.json` | JSON file checklists were kept in before there was a database, imported into `-db` at startup, then renamed with `.imported` added |
 | `-users-file` | `~/adhd-dash-users.json` | JSON file the users are kept in |
@@ -296,6 +310,11 @@ The admin menu (`admin`) lists its options by number; type one on the
 - `8`: back up the users and checklists, at once, as `-backup` does; the
   menu says the archive's name and directory, or why it failed (see
   [Backups](#backups)).
+- `9`: TLS: the domain name the server is reached at, which turns on TLS
+  for terminals and HTTPS for the web pages, or blanked, turns them off,
+  each after a confirmation (`PF4`); see [TLS](#tls).
+- `10`: the web terminal: enable or disable web3270 (`Y` / `N`); see
+  [Web terminal](#web-terminal).
 
 ### Users
 
@@ -980,9 +999,11 @@ serves them itself, over plain HTTP on `-http-port` (3280), on `-host`:
 - `/trello`: the same, for linking their Trello account (see
   [Tasks](#tasks)).
 
-They are meant to be reached at an HTTPS address through a web server in
-front (a reverse proxy such as nginx or Caddy, terminating TLS on port 443
-and passing requests to port 3280). The server never sees that address, so
+They are meant to be reached at an HTTPS address: served over it by the
+server itself, with a TLS domain (see [TLS](#tls)), or through a web
+server in front (a reverse proxy such as nginx or Caddy, terminating TLS on
+port 443 and passing requests to port 3280). The server never sees that
+address, so
 an admin types it on admin menu option `6`: `Public address`, e.g.
 `https://adhd.example.com/`, with the `Organization` running the service
 and a `Contact email`, which the policy and terms name. Every link on the
@@ -1005,6 +1026,114 @@ only from the site's own origin, and signing out takes the session's own
 token. A connection begun at Google is good for one return, within 10
 minutes, to the browser session that began it. The privacy policy and terms are a starting
 point: have whoever handles your organization's legal matters read them.
+
+### TLS
+
+With a TLS domain, set on admin menu option `9`, the server keeps its own
+certificates, from Let's Encrypt, and needs no web server in front. The
+domain is kept in `-tls-domain-file`, a plain text file holding the names,
+one per line (or separated by commas or spaces); with no file, or none in
+it, there is no TLS. Setting or clearing it takes effect at once, for new
+connections; sessions connected stay as they were. Turning TLS on or off
+asks first, since every terminal connecting must then change. If the
+server cannot open the ports TLS needs, the domain is not set, and at
+startup, a domain whose ports cannot be opened stops the server rather
+than leaving it unencrypted: remove the file to start without TLS. With a
+domain:
+
+- `-port` speaks TLS from the first byte (connect with `x3270
+  L:adhd.example.com:3270`, or a client's "SSL/TLS" setting; STARTTLS is not
+  offered, and a client not using TLS is refused);
+- the web pages are served over HTTPS on `-https-port` (443), and the admin
+  menu's `Public address` is still set to the address they are reached at;
+- `-acme-http-port` (80) answers Let's Encrypt, and sends anything else to
+  HTTPS.
+
+A certificate missing at startup is got then, and each one is renewed in
+the background a third of its lifetime before it expires (30 days of a
+90-day one), retrying until that works. For Let's Encrypt to give one, the
+domain must resolve to this machine, and it must be reachable there on 443
+(`tls-alpn-01`) or 80 (`http-01`); 3270 is no use for that. When getting
+one fails, the log says so once, and Let's Encrypt is not asked again for
+30 minutes, however many clients connect meanwhile (each then refused with
+the reason), since it stops trying a name for a while after five failures
+in an hour. `PF5` on the TLS screen, or setting the domain again, asks at
+once. autocert's "no viable challenge type found" means both ways failed:
+Let's Encrypt could not reach this server as the domain on 443 or 80,
+because the domain's DNS points elsewhere, something else (such as the web
+server that was in front) answers there, or the ports are not forwarded or
+are firewalled. The log says at
+startup, and each day, when each certificate expires, warning when one has
+under 14 days left, since renewal has failed by then. The TLS screen shows
+each domain's certificate's expiry too. A domain removed is still renewed
+in the background until the server restarts. The certificates are
+kept in `-tls-dir`, readable only by the server's user; it is not backed
+up, since they can be got again.
+
+A client that names no server (sends no SNI), as many TN3270 emulators do
+not, is given the first domain's certificate. The `-host` given is used for
+all the ports, `-control-port` and `-http-port` included: with `-host
+0.0.0.0`, set `-http-port 0`, and leave `-control-port` off or firewalled.
+Served directly, a request's `X-Forwarded-For` is whatever the browser
+sent, and is recorded as such in the audit log.
+
+Moving from a web server in front that kept its own certificate, such as
+Caddy, its certificate can be imported first, so that the server has one
+before the domain's DNS points at it (otherwise it gets one as soon as it
+does). Caddy keeps them under its data directory, by default
+`~/.local/share/caddy` for the user it runs as (`/var/lib/caddy/.local/share/caddy`
+for Ubuntu's package):
+
+```
+d=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/adhd.example.com
+sudo install -o adhd-dash -m 600 $d/adhd.example.com.crt $d/adhd.example.com.key /var/lib/adhd-dash/
+sudo -u adhd-dash env HOME=/var/lib/adhd-dash adhd-dash \
+    -tls-import-cert /var/lib/adhd-dash/adhd.example.com.crt -tls-import-key /var/lib/adhd-dash/adhd.example.com.key
+sudo rm /var/lib/adhd-dash/adhd.example.com.crt /var/lib/adhd-dash/adhd.example.com.key
+```
+
+It is imported for each name it is for (and for a domain in
+`-tls-domain-file` it is good for by a wildcard), so it can be imported
+before the domain is set. It must be unexpired, and match the key; one in
+`-tls-dir` expiring no sooner is kept instead. The import takes ECDSA and
+RSA keys. Its renewals reuse its key. Installed with
+`install-ubuntu.sh`, the server may bind 80 and 443 as its own user.
+
+### Web terminal
+
+The server can run [web3270](https://github.com/moshix/web3270), moshix's
+TN3270 terminal in the browser, so that the dashboard can be used without
+an emulator. `install-ubuntu.sh` installs it as `/usr/local/bin/web3270`
+(4.2.9, checked against its SHA-256; `--no-web3270` skips it). It is
+released as programs only, under moshix's own license, MSL-1.0, which
+among other things does not allow its use in some countries: read it
+before enabling it.
+
+Enabled on admin menu option `10` (kept in `-web3270-file`), it runs while
+there is a TLS domain and the program is installed, and is restarted when
+the domain changes, and when it exits (after 5 seconds, doubling up to 5
+minutes while it keeps failing). It is started:
+
+- in kiosk mode (`-lock`), able to connect only to this server;
+- listening over plain HTTP on `127.0.0.1:3271` (`-web3270-port`), which
+  only this machine can reach;
+- connecting to `127.0.0.1:3272` (`-web3270-tn3270-port`), a TN3270 port
+  the server opens for it on the loopback address. web3270 speaks TN3270
+  only unencrypted, so it cannot use the TLS port; its traffic stays on
+  this machine.
+
+Browsers reach it at `https://<domain>:32700/web3270`
+(`-web3270-proxy-port`), through a proxy in the server, with the server's
+certificate, and from the HTTPS site at `/3270`, which sends them there.
+The proxy passes WebSockets through and keeps the address the browser
+asked for, which web3270 checks a WebSocket's origin against. It tells
+web3270 who each browser is (`X-Forwarded-For`, dropping any the browser
+sent), and web3270 trusts that only from `127.0.0.1`, for its limit of 5
+connections from one address. The server, though, sees each web terminal
+session as coming from `127.0.0.1`: in the activity viewer, the log and the
+audit log, and for `-max-connections`, which does not count this
+machine's. web3270's own output goes to the server's log, each line marked
+`web3270:`. It is stopped when the server is.
 
 ### Tasks
 

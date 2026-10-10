@@ -20,7 +20,7 @@ func TestSiteScreen(t *testing.T) {
 	var text string
 	draw := func() {
 		site, err := store.Site()
-		screen, _, _ = buildSite(24, 80, now, site, err, "localhost:3280", &s)
+		screen, _, _ = buildSite(24, 80, now, site, err, "http://localhost:3280", &s)
 		text = strings.Join(screenText(t, screen, 24, 80), "\n")
 	}
 	key := func(aid go3270.AID, typed map[string]string) bool {
@@ -46,7 +46,7 @@ func TestSiteScreen(t *testing.T) {
 	}
 
 	draw()
-	if !strings.Contains(text, "served over HTTP at localhost:3280") || !strings.Contains(text, "by path alone") {
+	if !strings.Contains(text, "served at http://localhost:3280") || !strings.Contains(text, "by path alone") {
 		t.Errorf("unset:\n%s", text)
 	}
 
@@ -95,7 +95,7 @@ func TestSiteScreen(t *testing.T) {
 	// Not served, the screen says so.
 	site, err := store.Site()
 	screen, _, _ = buildSite(24, 80, now, site, err, "", &s)
-	if text := strings.Join(screenText(t, screen, 24, 80), "\n"); !strings.Contains(text, "not served (-http-port 0)") {
+	if text := strings.Join(screenText(t, screen, 24, 80), "\n"); !strings.Contains(text, "not served (-http-port 0, no HTTPS)") {
 		t.Errorf("not served:\n%s", text)
 	}
 }

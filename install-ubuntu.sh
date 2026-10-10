@@ -13,6 +13,9 @@ set -euo pipefail
 #     the server's files: the users, checklists and audit log;
 #   - installs the program as /usr/local/bin/adhd-dash, built here from this
 #     checkout (with Go), or given ready built (--binary);
+#   - downloads moshix's web3270, the web terminal the server runs when it
+#     is enabled on its admin menu, as /usr/local/bin/web3270, checking it
+#     against the checksum below (unless --no-web3270);
 #   - writes /etc/default/adhd-dash, the server's options, the first time
 #     only, so that changes made to it are kept;
 #   - writes the udev rules that let that user open the Luxafor flag and the
@@ -24,11 +27,12 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<EOF
-usage: sudo $0 [--binary PATH] [--user NAME] [--host ADDRESS] [--port PORT] [--http-port PORT]
+usage: sudo $0 [--binary PATH] [--no-web3270] [--user NAME] [--host ADDRESS] [--port PORT] [--http-port PORT]
 
   --binary PATH     install this adhd-dash, built for Linux (for example on
                     another machine: GOOS=linux GOARCH=amd64 go build), rather
                     than building it here with Go
+  --no-web3270      do not download web3270 (an installed one is left alone)
   --user NAME       the system user the server runs as (default adhd-dash)
   --host ADDRESS    the address it listens on, the first time the options are
                     written (default localhost: only this machine can connect)
@@ -39,6 +43,7 @@ EOF
 }
 
 binary=
+web3270=1
 svc_user=adhd-dash
 host=localhost
 port=3270
@@ -46,6 +51,7 @@ http_port=3280
 while [ $# -gt 0 ]; do
     case $1 in
         --binary) binary=${2:?}; shift 2 ;;
+        --no-web3270) web3270=0; shift ;;
         --user) svc_user=${2:?}; shift 2 ;;
         --host) host=${2:?}; shift 2 ;;
         --port) port=${2:?}; shift 2 ;;
@@ -138,6 +144,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# web3270, a TN3270 terminal in the browser, released as programs only,
+# under moshix's own license (MSL-1.0: read it, at
+# https://github.com/moshix/web3270/blob/4.2.9/LICENSE, before using it). The
+# server runs it only once it is enabled on its admin menu (option 10).
+web3270_prog=/usr/local/bin/web3270
+web3270_tag=4.2.9
+web3270_version=4.2.9.2
+declare -A web3270_sha256=(
+    [amd64]=78d6e4a3e697f064065426fd48cd86b202784e09a47a4c85cc8f70ed2a543adc
+    [arm64]=7ef39fe411e89e208f686006850e4483876ce712f5df79b936c12fee605f4f3e
+)
+if [ "$web3270" -eq 1 ]; then
+    say "Installing web3270 $web3270_version as $web3270_prog"
+    case $(uname -m) in
+        x86_64) arch=amd64 ;;
+        aarch64 | arm64) arch=arm64 ;;
+        *) arch= ;;
+    esac
+    want=${web3270_sha256[$arch]:-}
+    if [ -z "$arch" ]; then
+        echo "skipped: there is no web3270 for $(uname -m)"
+    elif [ -f "$web3270_prog" ] && [ "$(sha256sum "$web3270_prog" | cut -d' ' -f1)" = "$want" ]; then
+        echo "already installed"
+    else
+        url=https://github.com/moshix/web3270/releases/download/$web3270_tag/web3270-$web3270_version-linux-$arch
+        if command -v curl >/dev/null; then
+            curl -fsSL -o "$tmp/web3270" "$url" || die "could not download $url"
+        elif command -v wget >/dev/null; then
+            wget -q -O "$tmp/web3270" "$url" || die "could not download $url"
+        else
+            die "curl or wget is needed to download web3270 (or give --no-web3270)"
+        fi
+        got=$(sha256sum "$tmp/web3270" | cut -d' ' -f1)
+        [ "$got" = "$want" ] || die "$url is not the web3270 expected: its SHA-256 is $got, not $want"
+        # Replaced as adhd-dash is; a running one is restarted with the
+        # server, below.
+        install -m 755 "$tmp/web3270" "$web3270_prog.new"
+        mv -f "$web3270_prog.new" "$web3270_prog"
+        echo "installed from $url"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 say "Writing $options"
 
 if [ -f "$options" ]; then
@@ -152,6 +201,16 @@ else
 # -host localhost lets only this machine connect. To let terminals and a web
 # server in front elsewhere connect, set it to this machine's address, or
 # 0.0.0.0 for all of them, and firewall the ports.
+#
+# To serve it directly, without a web server in front, with certificates
+# from Let's Encrypt (kept in $home/adhd-dash-certs), set the TLS domain on
+# the admin menu (option 9; it is kept in $home/adhd-dash-tls-domain.txt).
+# That makes -port TLS, serves the web pages over HTTPS on 443, and answers
+# Let's Encrypt on 80; the domain must resolve to this machine, -host must
+# be reachable on 80 and 443, and -http-port 0 stops the plain HTTP pages:
+#   ADHD_DASH_OPTS="-host 0.0.0.0 -port 3270 -http-port 0"
+# The web terminal (web3270, option 10), once enabled, is then served over
+# HTTPS on 32700, and reached from the site at /3270.
 #
 # After a change: sudo systemctl restart adhd-dash
 ADHD_DASH_OPTS="-host $host -port $port -http-port $http_port"
@@ -252,6 +311,11 @@ ExecStart=$prog \$ADHD_DASH_OPTS
 # it; it is restarted only after a failure.
 Restart=on-failure
 RestartSec=5
+
+# Allowed ports below 1024, for HTTPS on 443 and Let's Encrypt on 80; it
+# has no other privilege.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Sandboxing: it writes only its home, and of the devices, sees only the
 # HID ones (the flag and the deck), including those plugged in later.
