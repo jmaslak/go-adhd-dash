@@ -1016,8 +1016,10 @@ The pages run no scripts, and are sent with a strict
 `Content-Security-Policy` and the usual headers against framing and
 sniffing. The public ones answer only `GET` and `HEAD`. Signing in follows
 the terminal's rules (the default admin password is refused, and so is a
-restricted user), and is recorded in the audit log with `via=web`, the
-address it came from, and the `X-Forwarded-For` the proxy added. Five
+restricted user), and is recorded in the audit log with `via=web` and the
+address it came from. An `X-Forwarded-For` header is ignored: the browser
+can put anything in it, so behind a proxy, the address logged is the
+proxy's. Five
 failed sign-ins as one name within 15 minutes stop that name signing in
 here until the oldest is 15 minutes old. A sign-in lasts 30 minutes, in
 memory, kept by an `HttpOnly`, `SameSite=Lax` cookie (`Secure` when the

@@ -491,16 +491,15 @@ func (s *Server) recentFailures(key string) []time.Time {
 }
 
 // record adds a sign-in event to the audit log, marked as from the web,
-// with the address the request came from and any it was forwarded for.
+// with the address the request came from. Any X-Forwarded-For header is
+// ignored: the client sets it as it likes, and no proxy here vouches for
+// it, so it would put a made-up address in the log.
 func (s *Server) record(event string, r *http.Request, name string, extra ...audit.Field) {
 	ip := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(ip); err == nil {
 		ip = h
 	}
 	fields := []audit.Field{audit.F("user", name), audit.F("via", "web"), audit.F("ip", ip)}
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		fields = append(fields, audit.F("forwarded_for", fwd))
-	}
 	s.Audit.Record(event, append(fields, extra...)...)
 }
 

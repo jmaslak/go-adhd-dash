@@ -263,6 +263,29 @@ func TestSignInAndConnect(t *testing.T) {
 	}
 }
 
+// TestAuditIgnoresForwardedFor checks that a sign-in is logged with the
+// address it came from, not one the client claims in X-Forwarded-For.
+func TestAuditIgnoresForwardedFor(t *testing.T) {
+	r := newAuthRig(t)
+	req, _ := http.NewRequest(http.MethodPost, r.srv.URL+"/google/login", strings.NewReader("name=joelle&password=wrong"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", r.srv.URL)
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	resp, err := r.browser.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close() //nolint:errcheck
+
+	data, _ := os.ReadFile(r.auditTo)
+	if !strings.Contains(string(data), "LOGIN-FAILED user=joelle via=web ip=127.0.0.1 ") {
+		t.Errorf("audit log lacks the sign-in from 127.0.0.1:\n%s", data)
+	}
+	if strings.Contains(string(data), "203.0.113.9") || strings.Contains(string(data), "forwarded_for") {
+		t.Errorf("audit log took the client's X-Forwarded-For:\n%s", data)
+	}
+}
+
 func between(s, from, to string) string {
 	_, rest, _ := strings.Cut(s, from)
 	v, _, _ := strings.Cut(rest, to)
