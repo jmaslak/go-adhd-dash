@@ -36,8 +36,10 @@ import (
 //   - GET /callback: where it comes back. From Google, it brings a code,
 //     traded for the user's refresh token. From Trello, it brings the
 //     token in the address's fragment, which only the browser sees: the
-//     page has a script post it to /trello/token;
-//   - POST /trello/token: takes the Trello token;
+//     page has a script post it to /trello/token. Either brings back the
+//     state the session began with, so that a page elsewhere cannot send
+//     the browser here with an authorization of its own;
+//   - POST /trello/token: takes the Trello token, with that state;
 //   - POST /logout: signs out.
 //
 // A sign-in lasts sessionLife, in memory only, kept by a cookie that only
@@ -70,8 +72,13 @@ type session struct {
 	authExpires time.Time
 
 	// trelloKey is the API key a Trello authorization was begun with,
-	// until trelloExpires, or until its token comes back.
+	// until trelloExpires, or until its token comes back. trelloState is
+	// the random value Trello is asked to bring back in the callback's
+	// address, which only this session knows: Trello's authorization has
+	// no state of its own, and without one a page elsewhere could send a
+	// signed-in browser to the callback with a token for its own account.
 	trelloKey     string
+	trelloState   string
 	trelloExpires time.Time
 }
 
@@ -174,10 +181,16 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request, path strin
 		http.Redirect(w, r, p.Here, http.StatusSeeOther)
 	case "/start":
 		if svc == trelloService {
+			state, err := randomToken()
+			if err != nil {
+				s.renderConnect(w, r, p, svc, sess, "Could not begin: "+err.Error(), true)
+				return
+			}
 			s.mu.Lock()
-			sess.trelloKey, sess.trelloExpires = tClient.APIKey, s.now().Add(authLife)
+			sess.trelloKey, sess.trelloState, sess.trelloExpires = tClient.APIKey, state, s.now().Add(authLife)
 			s.mu.Unlock()
-			http.Redirect(w, r, tasks.AuthorizeURL(tClient.APIKey, AppName, p.Here+"/callback"), http.StatusFound)
+			returnURL := p.Here + "/callback?" + url.Values{"state": {state}}.Encode()
+			http.Redirect(w, r, tasks.AuthorizeURL(tClient.APIKey, AppName, returnURL), http.StatusFound)
 			return
 		}
 		auth, err := google.Begin(google.Client{ID: gClient.ClientID, Secret: gClient.ClientSecret}, p.Home+"google/callback")
@@ -191,8 +204,13 @@ func (s *Server) serveConnect(w http.ResponseWriter, r *http.Request, path strin
 		http.Redirect(w, r, auth.URL, http.StatusFound)
 	case "/callback":
 		if svc == trelloService {
+			state := r.URL.Query().Get("state")
+			if !s.trelloBegun(sess, state) {
+				s.renderConnect(w, r, p, svc, sess, "That was not from a link begun here, or it took too long. Link again.", true)
+				return
+			}
 			w.Header().Set("Content-Security-Policy", csp(true)+"; script-src '"+trelloScriptHash+"'")
-			p.Name, p.CSRF = sess.name, sess.csrf
+			p.Name, p.CSRF, p.State = sess.name, sess.csrf, state
 			render(w, r, trelloCallbackPage, p, http.StatusOK)
 			return
 		}
@@ -342,20 +360,31 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request, p page, sess *
 	s.renderConnect(w, r, p, googleService, sess, "Connected. Now go back to your terminal to choose which calendars to show.", false)
 }
 
+// trelloBegun reports whether sess began a Trello authorization not long
+// ago, which state, brought back from Trello, is the state of.
+func (s *Server) trelloBegun(sess *session, state string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return sess.trelloKey != "" && sess.trelloState != "" && s.now().Before(sess.trelloExpires) &&
+		subtle.ConstantTimeCompare([]byte(state), []byte(sess.trelloState)) == 1
+}
+
 // trelloToken takes the Trello token the callback page posted, if this
 // browser's session began a Trello authorization, with the key still set,
-// not long ago; it is checked with Trello, and becomes the user's.
+// not long ago, and the page carries that authorization's state; it is
+// checked with Trello, and becomes the user's.
 func (s *Server) trelloToken(w http.ResponseWriter, r *http.Request, p page, sess *session, client *users.TrelloClient) {
 	token := strings.TrimSpace(r.PostFormValue("token"))
+	begun := s.trelloBegun(sess, r.PostFormValue("state"))
 	s.mu.Lock()
-	key, expires := sess.trelloKey, sess.trelloExpires
-	sess.trelloKey = "" // good for one try
+	key := sess.trelloKey
+	sess.trelloKey, sess.trelloState = "", "" // good for one try
 	s.mu.Unlock()
 	switch {
 	case !s.csrfOK(r, sess):
 		s.renderConnect(w, r, p, trelloService, sess, "That did not come from this page. Link again.", true)
 		return
-	case key == "" || !s.now().Before(expires):
+	case !begun:
 		s.renderConnect(w, r, p, trelloService, sess, "That was not from a link begun here, or it took too long. Link again.", true)
 		return
 	case key != client.APIKey:
@@ -605,12 +634,12 @@ var trelloScriptHash = func() string {
 var trelloCallbackPage = mustPage(`
 <h1>Link your Trello account</h1>
 <p>Signed in as <strong>{{.Name}}</strong>. Finishing linking your Trello account…</p>
-<form id="got" method="post" action="{{.Here}}/token"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token"></form>
+<form id="got" method="post" action="{{.Here}}/token"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="state" value="{{.State}}"><input type="hidden" name="token"></form>
 <p id="none" class="error" hidden>Trello did not send a token back here.
 <a href="{{.Here}}/start">Link again</a>.</p>
 <noscript><p>This page needs its one short script to pass Trello's token on. Without it,
 copy the token from the address bar (the part after <code>#token=</code>), and paste it here:</p></noscript>
-<form method="post" action="{{.Here}}/token"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<form method="post" action="{{.Here}}/token"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="state" value="{{.State}}">
 <p><label>Trello token<br><input name="token" autocomplete="off" spellcheck="false"></label></p>
 <p><button type="submit">Link</button></p></form>
 <script>` + trelloScript + `</script>

@@ -1164,7 +1164,11 @@ Option `3` on the `settings` screen shows the steps:
    token in the address's `#fragment`, which only the browser sees; a short
    script on that page posts it to the server, which checks it with Trello,
    stores it in your entry, and says *Linked*. Without scripts, the page has
-   a field to paste the token into.
+   a field to paste the token into. The address Trello sends the browser
+   back to carries a random value made when you chose *Link*, which only
+   your sign-in knows; the page takes no token without it, so another site
+   cannot send your browser there with a token for its own Trello account.
+   A link is good for 10 minutes and one try.
 4. Back on the terminal, press `Enter`, to go on to choosing lists.
 
 The screen then lists every open list of every open board, as

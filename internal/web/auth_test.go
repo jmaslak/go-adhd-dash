@@ -399,31 +399,70 @@ func TestTrelloLink(t *testing.T) {
 	}
 
 	// Begun, the browser goes to Trello, which sends it back to the
-	// callback, whose script posts the token.
+	// callback, with the state it was begun with, whose script posts the
+	// token.
 	resp, _ = r.do(http.MethodGet, "/trello/start", nil)
 	to, _ := url.Parse(resp.Header.Get("Location"))
-	if resp.StatusCode != http.StatusFound || to.Query().Get("key") != "tkey" || to.Query().Get("return_url") != r.srv.URL+"/trello/callback" {
+	back, _ := url.Parse(to.Query().Get("return_url"))
+	state := back.Query().Get("state")
+	if resp.StatusCode != http.StatusFound || to.Query().Get("key") != "tkey" || len(state) < 40 ||
+		back.Scheme+"://"+back.Host+back.Path != r.srv.URL+"/trello/callback" {
 		t.Fatalf("start: %s to %q", resp.Status, resp.Header.Get("Location"))
 	}
-	resp, body = r.do(http.MethodGet, "/trello/callback", nil)
+	// Coming back without that state, or with another, shows no script and
+	// no session token: a page elsewhere sending the browser there, with a
+	// token of its own in the fragment, gets nothing posted.
+	for _, q := range []string{"", "?state=", "?state=" + state + "x"} {
+		resp, body := r.do(http.MethodGet, "/trello/callback"+q, nil)
+		if resp.StatusCode != http.StatusBadRequest || strings.Contains(body, "<script>") || !strings.Contains(body, "not from a link begun here") {
+			t.Errorf("callback%s: %s\n%s", q, resp.Status, body)
+		}
+	}
+	resp, body = r.do(http.MethodGet, "/trello/callback?state="+state, nil)
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src '"+trelloScriptHash+"'") || !strings.Contains(body, "<script>"+trelloScript+"</script>") {
 		t.Errorf("callback: CSP %q\n%s", csp, body)
 	}
+	if strings.Count(body, `name="state" value="`+state+`"`) != 2 {
+		t.Errorf("callback page does not carry the state:\n%s", body)
+	}
 	// Without the session's token, refused; that spends the link.
-	r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {"wrong"}, "token": {"GoodToken123"}})
+	r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {"wrong"}, "state": {state}, "token": {"GoodToken123"}})
 	if r.trello() != nil {
 		t.Fatalf("token taken without the session's token")
 	}
-	r.do(http.MethodGet, "/trello/start", nil)
-	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "token": {"BadToken"}}); !strings.Contains(body, "Trello did not accept the token") {
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") || r.trello() != nil {
+		t.Errorf("a spent link's state taken")
+	}
+	// Without the state, refused, and spent too.
+	state = r.beginTrello()
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") || r.trello() != nil {
+		t.Errorf("token taken without the state")
+	}
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") || r.trello() != nil {
+		t.Errorf("state taken after a try without it")
+	}
+	// Begun again, the earlier state is no longer good.
+	old := r.beginTrello()
+	state = r.beginTrello()
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {old}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") || r.trello() != nil {
+		t.Errorf("an earlier state taken")
+	}
+	// Too long ago, refused.
+	state = r.beginTrello()
+	r.now = r.now.Add(authLife)
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") || r.trello() != nil {
+		t.Errorf("a link begun too long ago taken")
+	}
+	state = r.beginTrello()
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"BadToken"}}); !strings.Contains(body, "Trello did not accept the token") {
 		t.Errorf("bad token: %s", body)
 	}
-	r.do(http.MethodGet, "/trello/start", nil)
-	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "token": {"not a token!"}}); !strings.Contains(body, "no usable token") {
+	state = r.beginTrello()
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"not a token!"}}); !strings.Contains(body, "no usable token") {
 		t.Errorf("malformed token taken")
 	}
-	r.do(http.MethodGet, "/trello/start", nil)
-	_, body = r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "token": {"GoodToken123"}})
+	state = r.beginTrello()
+	_, body = r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"GoodToken123"}})
 	if l := r.trello(); l == nil || l.APIKey != "tkey" || l.Token != "GoodToken123" || l.Username != "joelle_t" {
 		t.Fatalf("linked %+v:\n%s", l, body)
 	}
@@ -431,9 +470,25 @@ func TestTrelloLink(t *testing.T) {
 		t.Errorf("linked page:\n%s", body)
 	}
 	// Used once.
-	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") {
+	if _, body := r.do(http.MethodPost, "/trello/token", url.Values{"csrf": {csrf}, "state": {state}, "token": {"GoodToken123"}}); !strings.Contains(body, "not from a link begun here") {
 		t.Errorf("a link used twice")
 	}
+}
+
+// beginTrello begins linking Trello, returning the state Trello is to bring
+// back.
+func (r *authRig) beginTrello() string {
+	r.t.Helper()
+	resp, _ := r.do(http.MethodGet, "/trello/start", nil)
+	to, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	back, err := url.Parse(to.Query().Get("return_url"))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return back.Query().Get("state")
 }
 
 // login2 signs joelle in at path.

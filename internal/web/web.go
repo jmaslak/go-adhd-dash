@@ -79,6 +79,7 @@ type page struct {
 	Connected bool   // their Google calendar, or Trello account, is connected
 	Account   string // the Trello account linked
 	CSRF      string
+	State     string // the Trello authorization's, on the page it comes back to
 
 	// The sign-in and connect pages' own: where they are, and whose
 	// account they connect.
