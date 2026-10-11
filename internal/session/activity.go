@@ -514,6 +514,10 @@ func screenName(mode int, cl *checklistState, calc *calcState) string {
 		return "Sign up"
 	case modeTimer:
 		return "Timer"
+	case modeWeather:
+		return "Weather"
+	case modeAirNowKey:
+		return "AirNow API key"
 	case modePreferences:
 		return "Preferences"
 	case modeTermTest:

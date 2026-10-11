@@ -17,6 +17,7 @@ func TestLookupCommand(t *testing.T) {
 		"calc": "calc", "dbm": "dbm", "busy": "busy", "green": "green", "off": "off",
 		"?": "help", "quit": "exit", "logoff": "exit", "next": "down", "prev": "up",
 		"red": "busy", "cl": "checklist", "Checklist": "checklist",
+		"weather": "weather", "WX": "weather",
 	} {
 		if c, ok := lookupCommand(typed); !ok || c.name != want {
 			t.Errorf("%q: got %q, %v; want %q", typed, c.name, ok, want)

@@ -26,9 +26,11 @@ The data files default to the home directory (`~/adhd-dash.db`,
 `~/adhd-dash-users.json`, `~/adhd-dash-audit.log`, `~/adhd-dash-certs`,
 ...), and `fake.sh` does not override them. When running the server to
 try something out, point `-db`, `-users-file`, `-audit-log`,
-`-tls-domain-file`, `-tls-dir` and `-web3270-file` at a scratch directory,
-and give `-http-port` a free port or `0`, so a live instance's files and
-ports are left alone.
+`-checklist-json`, `-tls-domain-file`, `-tls-dir`, `-web3270-file` and
+`-backup-dir` at a scratch directory, and give `-http-port` a free port
+or `0`, so a live instance's files and ports are left alone. The users
+file and checklist JSON are also moved from their old dotted names
+(`~/.adhd-dash-users.json`) when left at their defaults.
 
 ## Every change
 
@@ -53,7 +55,8 @@ ports are left alone.
 - The other `internal/` packages are the backends: `agenda` and `google`
   (calendars), `tasks` (Trello), `busy`, `luxafor`, `streamdeck`, `db`
   (SQLite), `checklist`, `recurring`, `timers`, `users`, `certs`
-  (TLS/ACME), `web`, `web3270`, `backup`, `audit`, `bigtext`.
+  (TLS/ACME), `web`, `web3270`, `backup`, `audit`, `bigtext`,
+  `weather` (Open-Meteo forecasts).
 
 ## Style
 

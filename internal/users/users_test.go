@@ -329,6 +329,32 @@ func TestSite(t *testing.T) {
 	}
 }
 
+func TestAirNowKey(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
+	if key, err := s.AirNowKey(); err != nil || key != "" {
+		t.Fatalf("no file: %q, %v", key, err)
+	}
+	if _, _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAirNowKey("ABCD-1234"); err != nil {
+		t.Fatal(err)
+	}
+	// Kept across a change to the users.
+	if err := s.Update(func(list *[]User, _ func() int) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := s.AirNowKey(); err != nil || key != "ABCD-1234" {
+		t.Errorf("key %q, %v", key, err)
+	}
+	if err := s.SetAirNowKey(""); err != nil {
+		t.Fatal(err)
+	}
+	if key, _ := s.AirNowKey(); key != "" {
+		t.Errorf("removed key still there: %q", key)
+	}
+}
+
 func TestConnectGoogle(t *testing.T) {
 	s := NewStore(filepath.Join(t.TempDir(), "users.json"))
 	if _, _, err := s.Load(); err != nil {

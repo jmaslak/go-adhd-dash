@@ -63,8 +63,8 @@ type User struct {
 }
 
 // Preferences are a user's general choices: how the screens behave, the
-// time zone their times are shown in, and the calendar's clocks; each
-// unset is the usual.
+// time zone their times are shown in, the calendar's clocks, and where
+// their weather is for; each unset is the usual.
 type Preferences struct {
 	// NoFlash avoids flashing: the timer shows DONE steadily, rather than
 	// flashing the screen.
@@ -77,6 +77,24 @@ type Preferences struct {
 	// Clocks are the times the calendar screen shows, in order, at most
 	// MaxClocks of them: nil for the usual ones, empty for none.
 	Clocks []Clock `json:"clocks,omitzero"`
+
+	// Location is where the weather screen's forecast is for; nil for
+	// Denver, CO, USA.
+	Location *Location `json:"location,omitempty"`
+
+	// Units are the weather screen's: "F" for degrees Fahrenheit and miles
+	// per hour, "C" for degrees Celsius and kilometers per hour; "" for
+	// the usual ones where the location is.
+	Units string `json:"units,omitempty"`
+}
+
+// Location is a place, as the user typed it and as it was found.
+type Location struct {
+	Typed     string  `json:"typed"`
+	Name      string  `json:"name"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Country   string  `json:"country,omitempty"` // its ISO 3166 code, such as US
 }
 
 // MaxClocks is the most clocks the calendar screen shows.
@@ -224,6 +242,10 @@ type file struct {
 	// Site describes the web site, set by an admin; nil until then.
 	Site *Site `json:"site,omitempty"`
 
+	// AirNowKey is the AirNow API key the air quality is measured through;
+	// "" for none.
+	AirNowKey string `json:"airnow_key,omitempty"`
+
 	// LastID is the highest ID ever given, so that a removed user's is not
 	// given again: their checklists, kept by user ID, would go with it.
 	LastID int `json:"last_id,omitempty"`
@@ -369,6 +391,29 @@ func (s *Store) SetSite(site *Site) error {
 		return err
 	}
 	f.Site = site
+	return s.write(f)
+}
+
+// AirNowKey returns the AirNow API key, "" if none is set.
+func (s *Store) AirNowKey() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return f.AirNowKey, err
+}
+
+// SetAirNowKey sets the AirNow API key, or with "" removes it.
+func (s *Store) SetAirNowKey(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := s.read()
+	if err != nil {
+		return err
+	}
+	f.AirNowKey = key
 	return s.write(f)
 }
 

@@ -33,6 +33,7 @@ var commands = []command{
 	{name: "dbm", what: "RPN calculator, in dBm mode"},
 	{name: "checklist", aliases: []string{"cl"}, what: "Checklists"},
 	{name: "timer", what: "Count down a time, then flash DONE"},
+	{name: "weather", aliases: []string{"wx"}, what: "The next 24 hours' weather, by the hour"},
 	{name: "busy", aliases: []string{"red"}, key: "PF1", what: "Mark yourself busy (red)"},
 	{name: "green", what: "Mark yourself available (green)"},
 	{name: "off", key: "PF2", what: "Not busy until the meetings under way end"},

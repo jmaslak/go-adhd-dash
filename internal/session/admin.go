@@ -32,6 +32,7 @@ var adminOptions = []struct{ number, what string }{
 	{"8", "Back up the users and checklists"},
 	{"9", "TLS: the domain name, turning on TLS for terminals and HTTPS"},
 	{"10", "Web terminal: web3270, a TN3270 terminal in the browser"},
+	{"11", "AirNow API key: the air quality measured, for the weather"},
 }
 
 // buildAdmin renders the admin menu, with message below the option field,
@@ -88,6 +89,7 @@ const (
 	adminBackup                          // a backup, made at once
 	adminTLS                             // the TLS domain
 	adminWebTerm                         // the web terminal
+	adminAirNowKey                       // the AirNow API key
 )
 
 // adminChoice is what the admin menu's key asks for, and when it is to stay
@@ -122,6 +124,8 @@ func adminChoice(resp go3270.Response) (action adminAction, message string) {
 		return adminTLS, ""
 	case "10":
 		return adminWebTerm, ""
+	case "11":
+		return adminAirNowKey, ""
 	default:
 		return adminStay, fmt.Sprintf("There is no option %q.", typed)
 	}

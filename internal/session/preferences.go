@@ -4,6 +4,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -14,20 +15,26 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/weather"
 )
 
 // The preferences screen (option 4 on the settings screen): a user's
 // general preferences, one per row, each a field with what it
-// does beside it: a Y or N, or the name of a time zone; then the calendar
-// screen's clocks, a time zone and a name on each row.
+// does beside it: a Y or N, a place, F or C, or the name of a time zone;
+// then the calendar screen's clocks, a time zone and a name on each row.
 const (
-	prefNoFlashField = "prefnoflash"
-	prefZoneField    = "prefzone"
-	prefFirstRow     = 4
-	prefZoneRow      = prefFirstRow + 2
-	prefLabelWidth   = 21 // "Avoid flashing ===>", and the attribute byte after it
-	prefZoneWidth    = 40 // the longest IANA zone name is 32
-	prefPrompt       = "Make your changes, then press Enter to save."
+	prefNoFlashField  = "prefnoflash"
+	prefLocationField = "preflocation"
+	prefUnitsField    = "prefunits"
+	prefZoneField     = "prefzone"
+	prefFirstRow      = 4
+	prefLocationRow   = prefFirstRow + 1
+	prefUnitsRow      = prefFirstRow + 2
+	prefZoneRow       = prefFirstRow + 3
+	prefLocationWidth = 32
+	prefLabelWidth    = 21 // "Avoid flashing ===>", and the attribute byte after it
+	prefZoneWidth     = 40 // the longest IANA zone name is 32
+	prefPrompt        = "Make your changes, then press Enter to save."
 
 	// The clocks: a heading, the columns' headings, then a row for each,
 	// its zone field and then its name field.
@@ -41,7 +48,15 @@ const (
 
 	// zoneListRow is the time zone list's first row.
 	zoneListRow = 4
+
+	// geocodeTimeout bounds looking up a location typed.
+	geocodeTimeout = 15 * time.Second
 )
+
+// Geocoder finds the place a location typed names (see weather.Cache).
+type Geocoder interface {
+	Geocode(ctx context.Context, location string) (weather.Place, error)
+}
 
 // clockField is the name of clock n's field (from 1) whose name starts
 // with prefix.
@@ -112,6 +127,14 @@ func buildPreferences(rows, cols int, now time.Time, name string, prefs users.Pr
 		input(prefFirstRow, prefLabelWidth, prefNoFlashField, 1),
 		go3270.Field{Row: prefFirstRow, Col: prefLabelWidth + 1, Autoskip: true,
 			Color: go3270.Green, Content: "Y: nothing flashes; the timer shows DONE steadily."},
+		go3270.Field{Row: prefLocationRow, Col: 0, Color: go3270.Turquoise, Content: "Weather location =>"},
+		input(prefLocationRow, prefLabelWidth, prefLocationField, prefLocationWidth),
+		go3270.Field{Row: prefLocationRow, Col: prefLabelWidth + prefLocationWidth, Autoskip: true, Color: go3270.Green,
+			Content: truncate("Blank for "+weather.DefaultLocation, cols-prefLabelWidth-prefLocationWidth-1)},
+		go3270.Field{Row: prefUnitsRow, Col: 0, Color: go3270.Turquoise, Content: "Weather units ====>"},
+		input(prefUnitsRow, prefLabelWidth, prefUnitsField, 1),
+		go3270.Field{Row: prefUnitsRow, Col: prefLabelWidth + 1, Autoskip: true, Color: go3270.Green,
+			Content: truncate("F: °F, mph. C: °C, km/h. Blank: F in the US, else C.", cols-prefLabelWidth-2)},
 		go3270.Field{Row: prefZoneRow, Col: 0, Color: go3270.Turquoise, Content: "Time zone ========>"},
 		input(prefZoneRow, prefLabelWidth, prefZoneField, prefZoneWidth),
 		go3270.Field{Row: prefZoneRow, Col: prefLabelWidth + prefZoneWidth, Autoskip: true},
@@ -155,7 +178,7 @@ func buildPreferences(rows, cols int, now time.Time, name string, prefs users.Pr
 // storedPrefs is what prefs puts in the preferences screen's fields: the
 // clocks shown, which are the usual ones until the user chooses others.
 func storedPrefs(prefs users.Preferences) map[string]string {
-	out := map[string]string{prefNoFlashField: yesNo(prefs.NoFlash), prefZoneField: prefs.TimeZone}
+	out := map[string]string{prefNoFlashField: yesNo(prefs.NoFlash), prefZoneField: prefs.TimeZone, prefLocationField: locationText(prefs.Location), prefUnitsField: prefs.Units}
 	for i, c := range clocksOf(prefs) {
 		out[clockField(prefClockZoneField, i+1)] = c.Zone
 		out[clockField(prefClockNameField, i+1)] = c.Name
@@ -240,9 +263,10 @@ func buildZoneList(rows, cols int, now time.Time, zone string, p *preferencesSta
 
 // handle acts on a key on the preferences screen for the user u, returning
 // whether to go back to the settings screen, and what to say there. Enter
-// saves what was typed; PF3 goes back without saving; PF1 on a time zone
-// lists them, keeping what was typed.
-func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *users.User, logf func(string, ...any)) (back bool, said string) {
+// saves what was typed, looking up with geo (nil for none) a location
+// changed; PF3 goes back without saving; PF1 on a time zone lists them,
+// keeping what was typed.
+func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *users.User, geo Geocoder, logf func(string, ...any)) (back bool, said string) {
 	p.message, p.isError = "", false
 	if p.listing {
 		p.handleZoneList(resp)
@@ -271,6 +295,10 @@ func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *u
 		p.message, p.isError = bad, true
 		return false, ""
 	}
+	if bad := findLocation(want.Location, prefsOf(store, u.ID).Location, geo); bad != "" {
+		p.message, p.isError = bad, true
+		return false, ""
+	}
 	var was users.Preferences
 	errGone := errors.New("your user has been removed")
 	err := store.Update(func(list *[]users.User, _ func() int) error {
@@ -280,7 +308,7 @@ func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *u
 		}
 		prefs := &(*list)[i].Preferences
 		was = *prefs
-		prefs.NoFlash, prefs.TimeZone, prefs.Clocks = want.NoFlash, want.TimeZone, want.Clocks
+		prefs.NoFlash, prefs.TimeZone, prefs.Clocks, prefs.Location, prefs.Units = want.NoFlash, want.TimeZone, want.Clocks, want.Location, want.Units
 		return nil
 	})
 	if err != nil {
@@ -289,7 +317,8 @@ func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *u
 	}
 	p.typed = nil
 	sameClocks := slices.Equal(was.Clocks, want.Clocks) && (was.Clocks == nil) == (want.Clocks == nil)
-	if was.NoFlash == want.NoFlash && was.TimeZone == want.TimeZone && sameClocks {
+	sameLocation := (was.Location == nil) == (want.Location == nil) && (was.Location == nil || *was.Location == *want.Location)
+	if was.NoFlash == want.NoFlash && was.TimeZone == want.TimeZone && sameClocks && sameLocation && was.Units == want.Units {
 		return true, "Your preferences are unchanged."
 	}
 	if was.NoFlash != want.NoFlash {
@@ -301,13 +330,21 @@ func (p *preferencesState) handle(resp go3270.Response, store *users.Store, u *u
 	if !sameClocks {
 		logf("%q set calendar clocks to %v", u.Name, clocksOf(want))
 	}
+	if was.Units != want.Units {
+		logf("%q set weather units to %q", u.Name, want.Units)
+	}
+	if !sameLocation {
+		where := placeOf(want)
+		logf("%q set weather location to %q (%s, %v, %v)", u.Name, locationText(want.Location), where.Name, where.Latitude, where.Longitude)
+		return true, "Your preferences are saved; the weather is for " + where.Name + "."
+	}
 	return true, "Your preferences are saved."
 }
 
 // keepTyped keeps what was typed in each of the screen's fields, to draw
 // again.
 func (p *preferencesState) keepTyped(values map[string]string) {
-	p.typed = map[string]string{prefNoFlashField: values[prefNoFlashField], prefZoneField: values[prefZoneField]}
+	p.typed = map[string]string{prefNoFlashField: values[prefNoFlashField], prefZoneField: values[prefZoneField], prefLocationField: values[prefLocationField], prefUnitsField: values[prefUnitsField]}
 	for n := 1; n <= users.MaxClocks; n++ {
 		for _, f := range []string{clockField(prefClockZoneField, n), clockField(prefClockNameField, n)} {
 			p.typed[f] = values[f]
@@ -318,6 +355,8 @@ func (p *preferencesState) keepTyped(values map[string]string) {
 // parsePrefs is the preferences typed in values, or what is wrong with
 // them. Clocks left blank are dropped, the rest kept in order; the usual
 // clocks are kept as none chosen, so that they follow any change to them.
+// The location is as typed, not yet looked up (see findLocation), and none
+// when blank or the usual one.
 func parsePrefs(values map[string]string) (want users.Preferences, bad string) {
 	switch v := strings.ToUpper(strings.TrimSpace(values[prefNoFlashField])); v {
 	case "Y":
@@ -325,6 +364,15 @@ func parsePrefs(values map[string]string) (want users.Preferences, bad string) {
 	case "N", "":
 	default:
 		return want, fmt.Sprintf("Type Y or N to avoid flashing, not %q.", v)
+	}
+	switch v := strings.ToUpper(strings.TrimSpace(values[prefUnitsField])); v {
+	case "F", "C", "":
+		want.Units = v
+	default:
+		return want, fmt.Sprintf("Type F or C for the weather's units, or leave it blank, not %q.", v)
+	}
+	if typed := strings.TrimSpace(values[prefLocationField]); typed != "" && !strings.EqualFold(typed, weather.DefaultLocation) {
+		want.Location = &users.Location{Typed: typed}
 	}
 	want.TimeZone = strings.TrimSpace(values[prefZoneField])
 	if _, err := loadZone(want.TimeZone); err != nil {
@@ -350,6 +398,40 @@ func parsePrefs(values map[string]string) (want users.Preferences, bad string) {
 		want.Clocks = nil
 	}
 	return want, ""
+}
+
+// locationText is the location l, as typed: the usual one for nil.
+func locationText(l *users.Location) string {
+	if l == nil {
+		return weather.DefaultLocation
+	}
+	return l.Typed
+}
+
+// findLocation fills in where the location typed in want is, unless it is
+// nil, the usual one: kept as found before, if stored was typed the same,
+// or else looked up with geo. bad is why it cannot be.
+func findLocation(want, stored *users.Location, geo Geocoder) (bad string) {
+	switch {
+	case want == nil:
+		return ""
+	case stored != nil && strings.EqualFold(stored.Typed, want.Typed):
+		*want = *stored
+		return ""
+	case geo == nil:
+		return "The weather is not available, so no location can be looked up."
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), geocodeTimeout)
+	defer cancel()
+	place, err := geo.Geocode(ctx, want.Typed)
+	switch {
+	case errors.Is(err, weather.ErrNotFound):
+		return fmt.Sprintf("No place %q was found; type a city, its state and its country.", want.Typed)
+	case err != nil:
+		return fmt.Sprintf("Could not look up %q: %v.", want.Typed, err)
+	}
+	*want = users.Location{Typed: want.Typed, Name: place.Name, Latitude: place.Latitude, Longitude: place.Longitude, Country: place.Country}
+	return ""
 }
 
 // handleZoneList acts on a key on the time zone list: PF7 and PF8 page;

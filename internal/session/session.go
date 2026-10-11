@@ -30,6 +30,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/weather"
 )
 
 // negotiateTimeout bounds telnet and TN3270E negotiation.
@@ -127,6 +128,10 @@ type Config struct {
 	// Web3270 is the web terminal, enabled on the admin menu; nil when it
 	// cannot be.
 	Web3270 Web3270Control
+
+	// Weather keeps the forecasts the weather screen shows, and looks up
+	// the locations typed on the preferences screen; nil for no weather.
+	Weather *weather.Cache
 
 	// AgendaRefresh is how long the calendar screen reuses a month it has
 	// read before reading it again.
@@ -294,6 +299,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 	var site siteState
 	var tlsSt tlsState
 	var wt webTermState
+	var an airNowKeyState
 	defer cfg.Chat.unwatch(sessionID)
 	var lights lightWatch // the busy state the dashboard shows, to redraw when it changes
 	defer lights.stop()
@@ -400,6 +406,12 @@ func Handle(rawConn net.Conn, cfg Config) {
 			mode = modeAdmin
 		case "chat":
 			mode, ch = modeChat, chatState{}
+		case "weather":
+			if cfg.Weather == nil {
+				message = "The weather is not available."
+				break
+			}
+			mode = modeWeather
 		case "timer":
 			if user == nil {
 				message = "The timer is for a logged-in user."
@@ -563,6 +575,12 @@ func Handle(rawConn net.Conn, cfg Config) {
 			info := termInfo{Type: devinfo.TerminalType(), Rows: rows, Cols: cols, Codepage: devinfo.Codepage(), LU: neg.LUName}
 			screen, cursorRow, cursorCol = buildTermTest(rows, cols, now, info, &tt)
 			redrawOnTimer = false
+		case modeWeather:
+			// Redrawn on the timer, as the calendar is, showing a forecast
+			// read again in the background once it is old.
+			prefs := prefsOf(cfg.Users, ownerOf(user))
+			place, imperial := placeOf(prefs), imperialFor(prefs)
+			screen, cursorRow, cursorCol = buildWeather(rows, cols, now, place, imperial, cfg.Weather.Snapshot(place, imperial))
 		case modePreferences:
 			screen, cursorRow, cursorCol = buildPreferences(rows, cols, now, user.Name, prefsOf(cfg.Users, user.ID), &pf)
 			redrawOnTimer = false
@@ -583,6 +601,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 			redrawOnTimer = false
 		case modeWebTerm:
 			screen, cursorRow, cursorCol = buildWebTerm(rows, cols, now, cfg.Web3270, &wt)
+			redrawOnTimer = false
+		case modeAirNowKey:
+			key, err := cfg.Users.AirNowKey()
+			screen, cursorRow, cursorCol = buildAirNowKey(rows, cols, now, key, err, &an)
 			redrawOnTimer = false
 		case modeShutdownConfirm:
 			screen, cursorRow, cursorCol = buildShutdownConfirm(rows, cols, now, cfg.Shutdown.Sessions()), rows-1, 0
@@ -609,7 +631,7 @@ func Handle(rawConn net.Conn, cfg Config) {
 		opts := go3270.ScreenOpts{
 			AltScreen: devinfo, Codepage: cp, CursorRow: cursorRow, CursorCol: cursorCol,
 		}
-		if timedOut && !afresh && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity || mode == modeTimer) {
+		if timedOut && !afresh && (mode == modeDashboard || mode == modeCalendar || mode == modeChat || mode == modeActivity || mode == modeTimer || mode == modeWeather) {
 			screen, opts.NoClear = fillScreen(screen, rows, cols), true
 		}
 
@@ -808,6 +830,10 @@ func Handle(rawConn net.Conn, cfg Config) {
 				message = "This server cannot run the web terminal."
 			case action == adminWebTerm:
 				mode, wt = modeWebTerm, webTermState{}
+			case action == adminAirNowKey && cfg.Users == nil:
+				message = "There is no user database to keep an AirNow API key in."
+			case action == adminAirNowKey:
+				mode, an = modeAirNowKey, airNowKeyState{}
 			case action == adminClearChat:
 				mode = modeClearChatConfirm
 			case action == adminActivity:
@@ -885,8 +911,16 @@ func Handle(rawConn net.Conn, cfg Config) {
 				mode = settingsBack
 			}
 		case modePreferences:
-			if back, said := pf.handle(resp, cfg.Users, user, logf); back {
+			var geo Geocoder // nil, not a nil *weather.Cache, for none
+			if cfg.Weather != nil {
+				geo = cfg.Weather
+			}
+			if back, said := pf.handle(resp, cfg.Users, user, geo, logf); back {
 				mode, message, messageOK = settingsBack, said, true
+			}
+		case modeWeather:
+			if resp.AID == go3270.AIDPF3 {
+				mode = modeDashboard
 			}
 		case modeTimer:
 			if back, said := tm.handle(resp, userNow(), cfg.Timers, user.ID, logf); back {
@@ -926,6 +960,14 @@ func Handle(rawConn net.Conn, cfg Config) {
 			}
 		case modeWebTerm:
 			if wt.handle(resp, cfg.Web3270, logf) {
+				mode = modeAdmin
+			}
+		case modeAirNowKey:
+			var check AirNowChecker // nil, not a nil *weather.Cache, for none
+			if cfg.Weather != nil {
+				check = cfg.Weather
+			}
+			if an.handle(resp, cfg.Users, check, logf) {
 				mode = modeAdmin
 			}
 		case modeClearChatConfirm:
@@ -1011,6 +1053,8 @@ const (
 	modeRecurring
 	modeTLS
 	modeWebTerm
+	modeWeather
+	modeAirNowKey
 )
 
 // chatName is who a session is on the chat: its user's name, or with no
@@ -1226,6 +1270,12 @@ type view struct {
 	HasTimer bool
 	TimerErr error
 	NoFlash  bool
+
+	// Weather is the forecast for the hour under way at the user's weather
+	// location, shown in the title row, in imperial units if Imperial (see
+	// imperialFor); nil while there is none to show.
+	Weather  *weather.Hour
+	Imperial bool
 }
 
 // gather reads the current state of every source: the agenda from
@@ -1252,6 +1302,19 @@ func gather(cfg Config, now time.Time, agendaCache *agenda.Cache, taskCache *tas
 	}
 	if cfg.Recurring != nil && owner != 0 {
 		v.Recurring, v.RecurringErr = cfg.Recurring.List(owner)
+	}
+	// From the weather screen's forecast, so that the dashboard costs
+	// Open-Meteo nothing more: a failed read keeps the hours read before.
+	if cfg.Weather != nil {
+		prefs := prefsOf(cfg.Users, owner)
+		v.Imperial = imperialFor(prefs)
+		snap := cfg.Weather.Snapshot(placeOf(prefs), v.Imperial)
+		if hours := snap.Next(now, 1); len(hours) == 1 {
+			// The air quality measured, if there is any, over that forecast.
+			h := hours[0]
+			h.AQI, _, h.HasAQI = snap.AQINow(now)
+			v.Weather = &h
+		}
 	}
 
 	if taskCache != nil {

@@ -37,6 +37,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
 	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/weather"
 	"github.com/jmaslak/go-adhd-dash/internal/web"
 	"github.com/jmaslak/go-adhd-dash/internal/web3270"
 )
@@ -229,6 +230,13 @@ func main() {
 		Viewers:      session.NewViewers(),
 		Activity:     session.NewActivity(),
 		Chat:         session.NewChat(),
+		Weather: weather.NewCache(&weather.Client{}, func() string {
+			key, err := userStore.AirNowKey()
+			if err != nil {
+				log.Printf("AirNow key: %v", err)
+			}
+			return key
+		}),
 	}
 
 	// Each user's Google calendars are read while they are in use; a file

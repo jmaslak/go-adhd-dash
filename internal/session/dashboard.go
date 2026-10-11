@@ -86,6 +86,7 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	pageEntries := entries[start:end]
 
 	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now)
+	screen = append(screen, titleWeather(cols, len("EXECUTIVE FUNCTION DASHBOARD"), v)...)
 	badge, detail := busyState(v)
 	if badge.Content != "" {
 		screen = append(screen, banner(busyRow, cols, badge), banner(bottomBannerRow, cols, badge))
@@ -237,12 +238,18 @@ func lineWidth(l line) int {
 
 // titleFields is the title row: title on the left, the clock on the right.
 func titleFields(cols int, title string, now time.Time) go3270.Screen {
-	clock := now.Format("Mon Jan 2 15:04:05")
-	clockCol := max(cols-len(clock)-2, len(title)+2)
+	clock, clockCol := titleClock(cols, len(title), now)
 	return go3270.Screen{
 		{Row: titleRow, Col: 0, Intense: true, Color: go3270.White, Content: title},
 		{Row: titleRow, Col: clockCol, Intense: true, Color: go3270.White, Content: clock},
 	}
+}
+
+// titleClock is the clock in the title row at now, and the column of its
+// attribute byte, after a title titleWidth long.
+func titleClock(cols, titleWidth int, now time.Time) (clock string, col int) {
+	clock = now.Format("Mon Jan 2 15:04:05")
+	return clock, max(cols-len(clock)-2, titleWidth+2)
 }
 
 // tintTitle turns screen's title row, as made by titleFields, into one

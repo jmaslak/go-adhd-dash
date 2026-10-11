@@ -29,7 +29,7 @@ var settingsOptions = []struct{ number, what, command string }{
 	{"1", "Password: change it", "password"},
 	{"2", "Google calendar: connect, choose calendars", "google"},
 	{"3", "Trello: link, choose your task lists", "trello"},
-	{"4", "Preferences: time zone, clocks, flashing", "preferences"},
+	{"4", "Preferences: time zone, clocks, weather, flashing", "preferences"},
 	{"5", "Terminal test: colors, highlighting, characters, keys", "termtest"},
 }
 

@@ -230,6 +230,8 @@ func TestScreenName(t *testing.T) {
 		{modeChecklist, checklistState{open: 3, openName: "Morning"}, calcState{}, "Checklist: Morning"},
 		{modeActivity, checklistState{}, calcState{}, "Activity viewer"},
 		{modeTerminateConfirm, checklistState{}, calcState{}, "Terminate sessions"},
+		{modeWeather, checklistState{}, calcState{}, "Weather"},
+		{modeAirNowKey, checklistState{}, calcState{}, "AirNow API key"},
 	} {
 		if got := screenName(c.mode, &c.cl, &c.calc); got != c.want {
 			t.Errorf("mode %d: %q, want %q", c.mode, got, c.want)

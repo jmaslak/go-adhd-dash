@@ -18,7 +18,19 @@ screen shows:
   tasks move to later pages;
 - the **tasks**: the cards on the Trello lists the user has linked (see
   [Tasks](#tasks)), then their recurring tasks that are due (see
-  [Recurring tasks](#recurring-tasks)), then their starred checklists.
+  [Recurring tasks](#recurring-tasks)), then their starred checklists;
+- the **weather** now, in the title row, just left of the clock: the temperature, the chance of rain or snow, and the sky,
+  as `72°F 10% Partly cloudy`, at the user's weather location and in their
+  units (see the preferences). It is blue, dimmer than the white title and
+  clock; on a title row colored for the busy state, it is black on that
+  color like the rest of the row. When the US air quality index now (as
+  the weather screen's first air quality row has it: measured by AirNow
+  when it can be, else forecast) is above 50 (worse than Good), it follows, as `AQI 52`, in its category's color (as
+  on the weather screen). It is the forecast for the hour under way,
+  the first row of the weather screen's, so it costs Open-Meteo nothing
+  more (see [Weather](#weather)). It is left off until the forecast is
+  first read. On a screen too narrow for all of it, the sky is cut short
+  first (`Partly clo>`), so that the air quality index stays whole.
 
 The screen redraws itself every second (`-refresh`), keeping its clock
 current, so it can be left up on a spare terminal; each redraw writes over
@@ -195,9 +207,10 @@ The dashboard has a command line (`Command ===>`) above the bottom banner.
 Type a command and press `Enter`; `help` lists them all, with the PF key that
 does the same where there is one, and has a command line of its own. The
 commands are `tasks`, `cal`, `calc`, `dbm` (the calculator in dBm mode),
-`checklist`, `timer`, `chat`, `settings`, `busy`, `green`, `off`, `up`, `down`,
-`refresh`, `admin`, `help` and `exit`, in either case, with a few aliases
-(`task`, `calendar`, `cl`, `next`, `prev`, `quit`, `logoff`, `?`).
+`checklist`, `timer`, `weather`, `chat`, `settings`, `busy`, `green`, `off`,
+`up`, `down`, `refresh`, `admin`, `help` and `exit`, in either case, with a
+few aliases (`task`, `calendar`, `cl`, `wx`, `next`, `prev`, `quit`,
+`logoff`, `?`).
 
 `settings` is the user's own settings, one option per row with how each
 stands, chosen by number as the admin menu's are: `1` changes their
@@ -220,10 +233,24 @@ received (quoted, so that spaces and odd characters show), the key, and
 where the cursor was. `PA1`-`PA3` and `Clear` send neither what was typed
 nor the cursor, and the screen says so. `PF3` goes back.
 
-The preferences screen has three. `Avoid flashing` is `Y` or `N`
+The preferences screen has five. `Avoid flashing` is `Y` or `N`
 (blank is `N`). With `Y`, nothing flashes: the timer shows `DONE`
 steadily, in red, rather than flashing the screen, and the dashboard's
-line about a timer whose time is up is steadily red. `Time zone` is an
+line about a timer whose time is up is steadily red. `Weather location`
+is where the weather screen's forecast is for: a city or town, then,
+after commas, optionally its state, province or region (by name, or a US
+state's two-letter abbreviation) and its country (by name or code), as
+`Denver, CO, USA`, `Portland, ME` or `Paris, France`; it is
+`Denver, CO, USA` until the user types another, and blank is that again.
+A new one is looked up with Open-Meteo when `Enter` is pressed (see
+[Weather](#weather)): of the places matching, the most likely is kept,
+and the message on going back names it, as "Your preferences are saved;
+the weather is for Portland, Maine, United States." One that matches no
+place, or cannot be looked up, is refused, and nothing is saved.
+`Weather units` are the weather screen's: `F` for degrees Fahrenheit and
+miles per hour, `C` for degrees Celsius and kilometers per hour, in either
+case; blank is the usual ones where the weather location is (`F` in the
+United States, `C` anywhere else). Anything else is refused. `Time zone` is an
 IANA zone name, such as `America/Denver`, `Europe/Amsterdam` or `UTC`;
 blank is the server's. Every time the user is shown is in it: the clock
 in each screen's title, the agenda and calendar (an all-day event keeps
@@ -248,7 +275,11 @@ refused. `Enter` saves them (the settings screen then shows "no flashing"
 and the zone beside option `4`); `PF3` goes back without saving. They
 are kept with the user in `-users-file`, as `"preferences": {"no_flash":
 true, "time_zone": "America/Denver", "clocks": [{"zone": "Asia/Tokyo",
-"name": "Japan"}]}` (no `clocks` for the usual ones, `[]` for none), and
+"name": "Japan"}], "location": {"typed": "Portland, ME", "name":
+"Portland, Maine, United States", "latitude": 43.65737, "longitude":
+-70.2589, "country": "US"}, "units": "C"}` (no `clocks` for the usual
+ones, `[]` for none; no `location` for Denver; no `units` for the usual
+ones there), and
 take effect at once, in every session of theirs. The login screen, before anyone is logged in, shows
 the server's time. The commands `google` (or `gcal`), `trello` and `password`
 (or `passwd`) still open them straight from the dashboard, and come back
@@ -315,6 +346,8 @@ The admin menu (`admin`) lists its options by number; type one on the
   each after a confirmation (`PF4`); see [TLS](#tls).
 - `10`: the web terminal: enable or disable web3270 (`Y` / `N`); see
   [Web terminal](#web-terminal).
+- `11`: the AirNow API key the air quality is measured through (see
+  [Weather](#weather)).
 
 ### Users
 
@@ -642,6 +675,42 @@ with a slower `-refresh`. The note
 is cut to the room the rest of the line leaves, so the line never runs
 past the screen's edge and the rest is always whole. It goes
 once the timer is stopped (`PF6`) or dismissed on the timer screen.
+
+The weather screen (`weather`, or `wx`) is the forecast for the next 24
+hours at the user's weather location (see the preferences), one row an
+hour, in two columns of twelve so that it fits on a 24 by 80 screen: the
+first from the hour under way, the second the twelve after. Each row has
+the hour, as the day and time in the user's time zone (`Sun 15:00`), the
+temperature, the chance of rain or snow (`Prec`), the wind speed, and
+what the sky is doing (`Partly cloudy`, `Light snow`, `T-storm, hail`).
+It is in the user's weather units (see the preferences), or without
+them, in degrees Fahrenheit and miles per hour for a place in the United
+States and degrees Celsius and kilometers per hour anywhere else, as the
+column headings say. The heading names the place as found, and when the forecast
+was read (`(as of 09:55)`), or that it is being read. Under it are two
+rows of the air quality, as the US air quality index with the EPA's
+category. The first is now, and where it is from: measured by AirNow's
+monitors, as `Air quality now: 61 Moderate, measured 09:00 by AirNow,
+Denver` (the start of the hour observed, then AirNow's reporting area),
+or, with no AirNow API key set, outside the United States, Puerto Rico,
+Canada and Mexico, with no monitor reporting near enough, or with the last
+measurement three hours old or more, forecast for the hour under way, as
+`Air quality now: 39 Good, forecast by Open-Meteo`. The second is the
+worst forecast of the 24 hours, with when, as `Worst forecast, next 24
+hours: 112 Unhealthy (sens.), Sun 17:00`. Each index is
+in its category's color: green for Good (0 to 50), yellow for Moderate
+(to 100), red for Unhealthy for sensitive groups, `Unhealthy (sens.)`
+(to 150; the EPA's orange, which the 3270 lacks), intensified red for
+Unhealthy (to 200), pink for Very unhealthy (to 300), and intensified
+pink for Hazardous. The forecast index is from Copernicus's atmosphere
+model, on a grid some kilometers wide, not measured, so it can differ
+from AirNow's, most of all in wildfire smoke. If either cannot be read,
+the message row says so, in red, and the index read before is still
+shown; if AirNow refuses its key, it says an admin can change it. If the forecast cannot be
+read, the message row says why, in red, and any forecast read before is
+still shown; the dashboard's title row goes on showing the hour under way
+from it, without saying it is old. The screen redraws itself as the dashboard does, `Enter`
+redraws it now, and `PF3` goes back to the dashboard.
 
 The calculator is RPN. Type numbers and the operators `+ - * / ^`,
 separated by spaces, and press `Enter`: numbers are pushed and operators
@@ -978,6 +1047,45 @@ Google calendars, for trying the dashboard without Google:
 `calendar` is optional; it is shown in brackets as an alias is.
 `others_declined`, optional, marks the meeting with the red `X`.
 
+### Weather
+
+The weather screen's forecasts and air quality, the dashboard's weather
+now, and the places weather locations name,
+come from [Open-Meteo](https://open-meteo.com/), which needs no account or
+API key; the server reaches it over HTTPS at `api.open-meteo.com`,
+`air-quality-api.open-meteo.com` and `geocoding-api.open-meteo.com`. Its
+data is under CC BY 4.0, so the weather screen credits it. A place's
+forecast is read when a dashboard or weather screen first shows it, and
+kept in memory for 30 minutes, shared by every session showing that place
+in the same units; after that, the next redraw reads it again in the
+background, showing the old one until the new arrives. A failed read is
+tried again after a minute. The air quality, forecast and measured, is
+read with the forecast, each time, but its failing does not hold the
+forecast back: the new forecast is kept, with the air quality read
+before. A place no session has shown for an hour is dropped. A location
+is looked up only when a user saves a new one in their preferences; the
+place found is kept with the user, so the forecast does not depend on
+looking it up again.
+
+The air quality measured now comes from [AirNow](https://www.airnow.gov/),
+the EPA's network of air quality monitors, at `www.airnowapi.org`, once
+an admin sets its API key on admin menu option `11`. A key is free, from
+<https://docs.airnowapi.org/>; it is kept in `-users-file`, as
+`"airnow_key"`, shown on that screen, and never logged. Saving one asks
+AirNow for Denver's air quality with it: a key AirNow refuses is not
+kept, and one that cannot be checked, AirNow being out of reach, is kept
+anyway, the screen saying so. Blanking it removes it. AirNow is asked
+only for places in the United States, Puerto Rico, Canada and Mexico,
+through its current-observations-by-location service
+(`observation/current/ziplatLong`, which replaced `observation/latLong/current`
+when that was retired on October 1, 2026). For each pollutant (ozone,
+fine and coarse particles, nitrogen dioxide and others), it gives the
+reading of the nearest monitor within the search radius AirNow sets for
+the place's reporting area (50 miles for some); the index shown is the
+worst of them, by the EPA's NowCast, with the reporting area's name. AirNow
+allows about 500 requests an hour for a key; the server makes one for
+each place shown, each time its forecast is read again.
+
 ### Web site
 
 Google asks an app that reads its users' calendars for a home page, a
@@ -1250,6 +1358,9 @@ whoever reads it. User names may not hold control characters at all.
 - `internal/tasks`: the tasks from Trello, cached, and the task program's
   configuration.
 - `internal/checklist`: the checklist file.
+- `internal/weather`: the hourly forecasts, their air quality, and the
+  places they are for, from Open-Meteo, and the air quality measured, from
+  AirNow, cached.
 
 Telnet/TN3270E negotiation is
 [`github.com/jmaslak/go-3270e`](../go-3270e).

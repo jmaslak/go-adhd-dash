@@ -4,6 +4,8 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -15,6 +17,7 @@ import (
 	"github.com/racingmars/go3270"
 
 	"github.com/jmaslak/go-adhd-dash/internal/users"
+	"github.com/jmaslak/go-adhd-dash/internal/weather"
 )
 
 func TestPreferences(t *testing.T) {
@@ -33,7 +36,7 @@ func TestPreferences(t *testing.T) {
 		return screenText(t, s, 24, 80)
 	}
 	key := func(aid go3270.AID, v string) (bool, string) {
-		return p.handle(go3270.Response{AID: aid, Values: map[string]string{prefNoFlashField: v}}, store, u, noLog)
+		return p.handle(go3270.Response{AID: aid, Values: map[string]string{prefNoFlashField: v}}, store, u, nil, noLog)
 	}
 
 	rows := build()
@@ -78,7 +81,7 @@ func TestPreferences(t *testing.T) {
 	// A time zone is saved by name; one that does not exist is refused,
 	// and blank is the server's.
 	zoneKey := func(v string) (bool, string) {
-		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: map[string]string{prefNoFlashField: "N", prefZoneField: v}}, store, u, noLog)
+		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: map[string]string{prefNoFlashField: "N", prefZoneField: v}}, store, u, nil, noLog)
 	}
 	if back, said := zoneKey(" Asia/Tokyo "); !back || said != "Your preferences are saved." || prefsOf(store, u.ID).TimeZone != "Asia/Tokyo" {
 		t.Errorf("zone: back %v, %q, saved %+v", back, said, prefsOf(store, u.ID))
@@ -144,7 +147,7 @@ func TestSettingsPreferencesStatus(t *testing.T) {
 		t.Errorf("option 4 is %q", command)
 	}
 	s, _, _ := buildSettings(24, 80, now, "admin", map[string]string{"preferences": "no flashing"}, "", false)
-	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "4 Preferences: time zone, clocks, flashing (no flashing)") {
+	if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, "4 Preferences: time zone, clocks, weather, flashing (no flashing)") {
 		t.Errorf("settings screen:\n%s", text)
 	}
 }
@@ -162,7 +165,7 @@ func TestPreferencesZoneList(t *testing.T) {
 		return screenText(t, s, rows, cols), crow
 	}
 	key := func(aid go3270.AID, row, col int, zone string) {
-		if back, _ := p.handle(go3270.Response{AID: aid, Row: row, Col: col, Values: map[string]string{prefNoFlashField: "Y", prefZoneField: zone}}, store, u, noLog); back {
+		if back, _ := p.handle(go3270.Response{AID: aid, Row: row, Col: col, Values: map[string]string{prefNoFlashField: "Y", prefZoneField: zone}}, store, u, nil, noLog); back {
 			t.Fatalf("%v went back", aid)
 		}
 	}
@@ -276,7 +279,7 @@ func TestPreferencesClocks(t *testing.T) {
 		return out
 	}
 	enter := func(v map[string]string) (bool, string) {
-		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: v}, store, u, noLog)
+		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: v}, store, u, nil, noLog)
 	}
 
 	// The usual clocks are filled in until others are chosen, and all ten
@@ -350,22 +353,181 @@ func TestPreferencesClocks(t *testing.T) {
 	// PF1 on a clock's zone lists them, at that clock's zone, and goes
 	// back to it.
 	v = values(clockField(prefClockZoneField, 4), "Europe/Paris")
-	p.handle(go3270.Response{AID: go3270.AIDPF1, Row: prefClockFirstRow + 3, Col: prefLabelWidth + 2, Values: v}, store, u, noLog)
+	p.handle(go3270.Response{AID: go3270.AIDPF1, Row: prefClockFirstRow + 3, Col: prefLabelWidth + 2, Values: v}, store, u, nil, noLog)
 	if !p.listing || p.zoneField != clockField(prefClockZoneField, 4) {
 		t.Fatalf("PF1 on clock 4: listing %v, field %q", p.listing, p.zoneField)
 	}
 	if text := strings.Join(build(), "\n"); !strings.Contains(text, "Europe/Paris") {
 		t.Errorf("list is not at clock 4's zone:\n%s", text)
 	}
-	p.handle(go3270.Response{AID: go3270.AIDPF3}, store, u, noLog)
+	p.handle(go3270.Response{AID: go3270.AIDPF3}, store, u, nil, noLog)
 	s, crow, _ := buildPreferences(24, 80, now, u.Name, prefsOf(store, u.ID), &p)
 	if crow != prefClockFirstRow+3 || !strings.Contains(screenText(t, s, 24, 80)[crow], "Europe/Paris") {
 		t.Errorf("back on row %d", crow)
 	}
 	// PF1 on a clock's name does not.
 	p = preferencesState{}
-	p.handle(go3270.Response{AID: go3270.AIDPF1, Row: prefClockFirstRow, Col: prefClockNameCol + 1, Values: values()}, store, u, noLog)
+	p.handle(go3270.Response{AID: go3270.AIDPF1, Row: prefClockFirstRow, Col: prefClockNameCol + 1, Values: values()}, store, u, nil, noLog)
 	if p.listing {
 		t.Errorf("PF1 on a name listed the zones")
+	}
+}
+
+// fakeGeocoder finds the places it has, counting the lookups.
+type fakeGeocoder struct {
+	places  map[string]weather.Place
+	err     error
+	lookups int
+}
+
+func (g *fakeGeocoder) Geocode(_ context.Context, location string) (weather.Place, error) {
+	g.lookups++
+	if g.err != nil {
+		return weather.Place{}, g.err
+	}
+	if p, ok := g.places[location]; ok {
+		return p, nil
+	}
+	return weather.Place{}, weather.ErrNotFound
+}
+
+func TestPreferencesLocation(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	list, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &list[0]
+	var p preferencesState
+	paris := weather.Place{Name: "Paris, Ile-de-France, France", Latitude: 48.85, Longitude: 2.35, Country: "FR"}
+	geo := &fakeGeocoder{places: map[string]weather.Place{"Paris, France": paris}}
+	var logged []string
+	build := func() []string {
+		s, _, _ := buildPreferences(24, 80, now, u.Name, prefsOf(store, u.ID), &p)
+		return screenText(t, s, 24, 80)
+	}
+	enter := func(location string, g Geocoder) (bool, string) {
+		v := storedPrefs(prefsOf(store, u.ID))
+		v[prefLocationField] = location
+		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: v}, store, u, g, func(f string, a ...any) {
+			logged = append(logged, fmt.Sprintf(f, a...))
+		})
+	}
+
+	// Denver is filled in until another is typed, and is the place.
+	rows := build()
+	if want := " Weather location => Denver, CO, USA"; !strings.HasPrefix(rows[prefLocationRow], want) || !strings.Contains(rows[prefLocationRow], "Blank for Denver, CO, USA") {
+		t.Errorf("location row %q", rows[prefLocationRow])
+	}
+	if placeOf(prefsOf(store, u.ID)) != weather.Denver {
+		t.Errorf("place %+v", placeOf(prefsOf(store, u.ID)))
+	}
+	// Saving it unchanged looks nothing up.
+	if back, said := enter("denver, co, usa", geo); !back || said != "Your preferences are unchanged." || geo.lookups != 0 || prefsOf(store, u.ID).Location != nil {
+		t.Errorf("unchanged: %v %q, %d lookups, %+v", back, said, geo.lookups, prefsOf(store, u.ID).Location)
+	}
+
+	// Another is looked up, and kept as typed and as found.
+	if back, said := enter(" Paris, France ", geo); !back || said != "Your preferences are saved; the weather is for Paris, Ile-de-France, France." {
+		t.Errorf("Paris: %v %q", back, said)
+	}
+	want := users.Location{Typed: "Paris, France", Name: paris.Name, Latitude: 48.85, Longitude: 2.35, Country: "FR"}
+	if got := prefsOf(store, u.ID).Location; got == nil || *got != want {
+		t.Errorf("saved %+v; want %+v", got, want)
+	}
+	if placeOf(prefsOf(store, u.ID)) != paris {
+		t.Errorf("place %+v", placeOf(prefsOf(store, u.ID)))
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], `set weather location to "Paris, France"`) {
+		t.Errorf("logged %q", logged)
+	}
+	if rows := build(); !strings.Contains(rows[prefLocationRow], "=> Paris, France") {
+		t.Errorf("location row %q", rows[prefLocationRow])
+	}
+	// Typed the same again, it is not looked up again.
+	if _, said := enter("PARIS, FRANCE", geo); said != "Your preferences are unchanged." || geo.lookups != 1 {
+		t.Errorf("again: %q, %d lookups", said, geo.lookups)
+	}
+
+	// A place not found, or a failed lookup, is refused and drawn again;
+	// nothing is saved.
+	if back, _ := enter("Atlantis", geo); back || !p.isError || !strings.Contains(p.message, `No place "Atlantis" was found`) {
+		t.Errorf("Atlantis: %v %q", back, p.message)
+	}
+	if rows := build(); !strings.Contains(rows[prefLocationRow], "=> Atlantis") {
+		t.Errorf("not drawn again: %q", rows[prefLocationRow])
+	}
+	if back, _ := enter("Rome, Italy", &fakeGeocoder{err: errors.New("timed out")}); back || !strings.Contains(p.message, `Could not look up "Rome, Italy": timed out.`) {
+		t.Errorf("failed: %v %q", back, p.message)
+	}
+	if back, _ := enter("Rome, Italy", nil); back || !strings.Contains(p.message, "not available") {
+		t.Errorf("no weather: %v %q", back, p.message)
+	}
+	if got := prefsOf(store, u.ID).Location; got == nil || *got != want {
+		t.Errorf("changed to %+v", got)
+	}
+
+	// Blank is Denver again, with nothing to look up.
+	if _, said := enter("  ", nil); said != "Your preferences are saved; the weather is for Denver, Colorado, United States." || prefsOf(store, u.ID).Location != nil {
+		t.Errorf("blank: %q, %+v", said, prefsOf(store, u.ID).Location)
+	}
+}
+
+func TestPreferencesUnits(t *testing.T) {
+	store := users.NewStore(filepath.Join(t.TempDir(), "users.json"))
+	list, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &list[0]
+	var p preferencesState
+	var logged []string
+	build := func() []string {
+		s, _, _ := buildPreferences(24, 80, now, u.Name, prefsOf(store, u.ID), &p)
+		return screenText(t, s, 24, 80)
+	}
+	enter := func(units string) (bool, string) {
+		v := storedPrefs(prefsOf(store, u.ID))
+		v[prefUnitsField] = units
+		return p.handle(go3270.Response{AID: go3270.AIDEnter, Values: v}, store, u, nil, func(f string, a ...any) {
+			logged = append(logged, fmt.Sprintf(f, a...))
+		})
+	}
+
+	// Blank until chosen, under the location and above the time zone.
+	rows := build()
+	if want := " Weather units ====>   F: °F, mph. C: °C, km/h. Blank: F in the US, else C."; rows[prefUnitsRow] != want {
+		t.Errorf("units row\n%q\nwant\n%q", rows[prefUnitsRow], want)
+	}
+	if !strings.HasPrefix(rows[prefZoneRow], " Time zone") || !strings.HasPrefix(rows[prefLocationRow], " Weather location") {
+		t.Errorf("rows around it:\n%s", strings.Join(rows, "\n"))
+	}
+
+	// Either, in either case, is saved; blank goes back to the usual.
+	if back, said := enter(" c "); !back || said != "Your preferences are saved." || prefsOf(store, u.ID).Units != "C" {
+		t.Errorf("C: %v %q, %q", back, said, prefsOf(store, u.ID).Units)
+	}
+	if !strings.Contains(build()[prefUnitsRow], "===> C") {
+		t.Errorf("saved C not shown: %q", build()[prefUnitsRow])
+	}
+	if len(logged) != 1 || logged[0] != `"admin" set weather units to "C"` {
+		t.Errorf("logged %q", logged)
+	}
+	if _, said := enter("C"); said != "Your preferences are unchanged." {
+		t.Errorf("same again: %q", said)
+	}
+	if _, said := enter("F"); said != "Your preferences are saved." || prefsOf(store, u.ID).Units != "F" {
+		t.Errorf("F: %q, %q", said, prefsOf(store, u.ID).Units)
+	}
+	if _, said := enter(""); said != "Your preferences are saved." || prefsOf(store, u.ID).Units != "" {
+		t.Errorf("blank: %q, %q", said, prefsOf(store, u.ID).Units)
+	}
+
+	// Anything else is refused, and drawn again.
+	if back, _ := enter("k"); back || !p.isError || !strings.Contains(p.message, `not "K"`) {
+		t.Errorf("K: %v %q", back, p.message)
+	}
+	if !strings.Contains(build()[prefUnitsRow], "===> k") {
+		t.Errorf("not drawn again: %q", build()[prefUnitsRow])
 	}
 }

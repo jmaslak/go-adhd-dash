@@ -145,7 +145,8 @@ func TestAdminMenu(t *testing.T) {
 		{go3270.AIDEnter, "", adminStay, false},
 		{go3270.AIDEnter, "9", adminTLS, false},
 		{go3270.AIDEnter, "10", adminWebTerm, false},
-		{go3270.AIDEnter, "11", adminStay, true},
+		{go3270.AIDEnter, "11", adminAirNowKey, false},
+		{go3270.AIDEnter, "12", adminStay, true},
 		{go3270.AIDPF4, "1", adminStay, false},
 	} {
 		action, msg := adminChoice(go3270.Response{AID: c.aid, Values: map[string]string{adminOptionField: c.typed}})
