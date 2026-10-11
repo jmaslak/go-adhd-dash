@@ -5,6 +5,8 @@ module github.com/jmaslak/go-adhd-dash
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/jmaslak/go-3270e v0.3.0
@@ -13,7 +15,7 @@ require (
 	github.com/telesma-app/hid v0.12.1
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	modernc.org/sqlite v1.60.1
 )
 

@@ -52,7 +52,7 @@ the way leaves the server running, and the restart comes only once all is
 in place:
 
 ```
-sudo ./install-ubuntu.sh                      # builds it here, with Go 1.27+
+sudo ./install-ubuntu.sh                      # builds it here, with Go 1.27.2+
 sudo ./install-ubuntu.sh --binary adhd-dash   # or one built elsewhere:
                                               # GOOS=linux GOARCH=amd64 go build
 ```

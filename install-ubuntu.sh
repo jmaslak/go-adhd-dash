@@ -105,7 +105,7 @@ if [ -n "$binary" ]; then
 else
     go=$(command -v go || true)
     [ -n "$go" ] || [ ! -x /usr/local/go/bin/go ] || go=/usr/local/go/bin/go
-    [ -n "$go" ] || die "Go is not installed here (it needs Go 1.27 or newer); install it, or build elsewhere and give --binary"
+    [ -n "$go" ] || die "Go is not installed here (it needs Go 1.27.2 or newer); install it, or build elsewhere and give --binary"
     # Built as whoever ran sudo, so that their Go caches stay theirs.
     builder=${SUDO_USER:-root}
     chown "$builder" "$tmp"
