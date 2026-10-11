@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
@@ -112,18 +111,6 @@ func sessionLU(negotiated string, id uint64) (lu string, named bool) {
 		return negotiated, false
 	}
 	return sessionLUName(id), true
-}
-
-// isLocal reports whether addr is this machine's loopback address,
-// 127.0.0.1 or ::1 (or 127.0.0.1 mapped into IPv6).
-func isLocal(addr net.Addr) bool {
-	host := addr.String()
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host, _, _ = strings.Cut(host, "%") // an IPv6 zone
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.Equal(net.IPv4(127, 0, 0, 1)) || ip.Equal(net.IPv6loopback))
 }
 
 // loginState is one session's login screen.

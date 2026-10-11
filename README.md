@@ -153,7 +153,7 @@ sudo systemctl start adhd-dash
 | `-backup` | `false` | back up `-users-file` and `-db` into `-backup-dir`, then exit (see [Backups](#backups)) |
 | `-restore` | (none) | restore `-users-file` and `-db` from a backup, backing up what it replaces first, then exit; the server must be stopped |
 | `-backup-dir` | `~/backup` | where `-backup` writes, and where `-restore` looks for a file named without a directory |
-| `-max-connections` | `64` | most connections open at once, not counting this machine's; `0` for no limit |
+| `-max-connections` | `64` | most connections open at once; `0` for no limit |
 | `-max-connections-per-ip` | `16` | most open at once from one address (an IPv6 one by its /64); `0` for no limit |
 | `-login-timeout` | `60s` | how long the login screen waits for a login |
 | `-audit-log` | `~/adhd-dash-audit.log` | file logins, logouts and disconnections are logged to; empty for none |
@@ -1133,8 +1133,8 @@ web3270 who each browser is (`X-Forwarded-For`, dropping any the browser
 sent), and web3270 trusts that only from `127.0.0.1`, for its limit of 5
 connections from one address. The server, though, sees each web terminal
 session as coming from `127.0.0.1`: in the activity viewer, the log and the
-audit log, and for `-max-connections`, which does not count this
-machine's. web3270's own output goes to the server's log, each line marked
+audit log, and for the connection limits, so that all web terminal sessions
+together are held to `-max-connections-per-ip`. web3270's own output goes to the server's log, each line marked
 `web3270:`. It is stopped when the server is.
 
 ### Tasks
@@ -1209,9 +1209,9 @@ is tried again after a minute.
 
 A connection over `-max-connections` in all, or `-max-connections-per-ip`
 from one address (an IPv6 address counted by its /64), is closed before
-anything is sent to it. Connections from this machine are not counted, so
-that a flood from elsewhere cannot lock out an admin connecting from
-there. Refusals are
+anything is sent to it. Connections from this machine are counted like
+any other, as the web terminal's sessions all come from it: a flood can
+fill every place, locking out an admin too, until it ends. Refusals are
 logged at most once every 10 seconds, with a count of those not logged.
 
 Telnet and TN3270E negotiation must finish within 30 seconds, and the login

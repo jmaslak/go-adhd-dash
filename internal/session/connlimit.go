@@ -16,9 +16,8 @@ import (
 // checked before a connection is negotiated, and is safe for concurrent
 // use. A nil ConnLimiter admits everything.
 //
-// Connections from this machine are not counted: were they, a flood from
-// elsewhere could fill every place and lock out an admin connecting from
-// here.
+// Connections from this machine are counted like any other: the web
+// terminal's sessions come from it, on behalf of browsers anywhere.
 type ConnLimiter struct {
 	total, perAddr int // zero for no limit
 
@@ -44,11 +43,8 @@ func NewConnLimiter(total, perAddr int) *ConnLimiter {
 }
 
 // limitKey is the address addr is counted under: an IPv4 address as it is,
-// an IPv6 one by its /64, and "" for this machine, which is not counted.
+// and an IPv6 one by its /64.
 func limitKey(addr net.Addr) string {
-	if isLocal(addr) {
-		return ""
-	}
 	host := addr.String()
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -71,9 +67,6 @@ func (l *ConnLimiter) admit(addr net.Addr) (release func()) {
 		return func() {}
 	}
 	key := limitKey(addr)
-	if key == "" {
-		return func() {}
-	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var why string

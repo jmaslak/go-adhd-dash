@@ -5,7 +5,6 @@ package session
 
 import (
 	"context"
-	"net"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,25 +15,6 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/bigtext"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 )
-
-func TestIsLocal(t *testing.T) {
-	for addr, want := range map[string]bool{
-		"127.0.0.1:5000":        true,
-		"[::1]:5000":            true,
-		"[::ffff:127.0.0.1]:50": true,
-		"[::1%lo0]:5000":        true,
-		"127.0.0.2:5000":        false,
-		"10.0.0.1:5000":         false,
-		"[fe80::1]:5000":        false,
-		"192.168.1.5:3270":      false,
-	} {
-		host, port, _ := net.SplitHostPort(addr)
-		a := fakeAddr(net.JoinHostPort(host, port))
-		if got := isLocal(a); got != want {
-			t.Errorf("%s: isLocal %v, want %v", addr, got, want)
-		}
-	}
-}
 
 // fakeAddr is an address as a connection reports it.
 type fakeAddr string

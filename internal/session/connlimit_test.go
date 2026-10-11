@@ -19,8 +19,8 @@ func TestLimitKey(t *testing.T) {
 		"[2001:db8:1:2:aaaa::1]:5000": "2001:db8:1:2::/64",
 		"[2001:db8:1:2:bbbb::9]:5000": "2001:db8:1:2::/64",
 		"[2001:db8:1:3::1]:5000":      "2001:db8:1:3::/64",
-		"127.0.0.1:5000":              "",
-		"[::1]:5000":                  "",
+		"127.0.0.1:5000":              "127.0.0.1",
+		"[::1]:5000":                  "::/64",
 	} {
 		if got := limitKey(fakeAddr(addr)); got != want {
 			t.Errorf("%s: %q, want %q", addr, got, want)
@@ -55,11 +55,9 @@ func TestConnLimiter(t *testing.T) {
 	if l.admit(fakeAddr("198.51.100.1:1")) != nil {
 		t.Error("admitted over the total cap")
 	}
-	// This machine is not counted, even over the caps.
-	for range 10 {
-		if l.admit(fakeAddr("127.0.0.1:9")) == nil || l.admit(fakeAddr("[::1]:9")) == nil {
-			t.Fatal("local connection refused")
-		}
+	// This machine is counted like any other, and is over the total cap.
+	if l.admit(fakeAddr("127.0.0.1:9")) != nil || l.admit(fakeAddr("[::1]:9")) != nil {
+		t.Error("local connection admitted over the total cap")
 	}
 	a1()
 	a1() // twice is once
@@ -78,7 +76,7 @@ func TestConnLimiter(t *testing.T) {
 	clock = clock.Add(refusalLogEvery)
 	l.admit(fakeAddr("192.0.2.1:4"))
 	l.admit(fakeAddr("192.0.2.1:5"))
-	if !strings.Contains(logged.String(), "refused 2 more connections over the limits") || strings.Count(logged.String(), "refused connection from") != 2 {
+	if !strings.Contains(logged.String(), "refused 4 more connections over the limits") || strings.Count(logged.String(), "refused connection from") != 2 {
 		t.Errorf("log:\n%s", logged.String())
 	}
 

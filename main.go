@@ -53,7 +53,7 @@ func main() {
 	dbPath := flag.String("db", db.DefaultPath(), "SQLite database the checklists, recurring tasks and each user's timer are kept in")
 	checklistJSON := flag.String("checklist-json", checklist.DefaultJSONPath(), "JSON file checklists were kept in before there was a database, imported into -db at startup, then renamed with .imported added")
 	usersFile := flag.String("users-file", users.DefaultPath(), "JSON file the users are kept in")
-	maxConns := flag.Int("max-connections", 64, "most connections open at once, not counting this machine's (0: no limit)")
+	maxConns := flag.Int("max-connections", 64, "most connections open at once (0: no limit)")
 	maxConnsPerIP := flag.Int("max-connections-per-ip", 16, "most connections open at once from one address, an IPv6 one by its /64 (0: no limit)")
 	loginTimeout := flag.Duration("login-timeout", 60*time.Second, "how long the login screen waits for a login")
 	auditFile := flag.String("audit-log", defaultAuditPath(), "file logins, logouts and disconnections are logged to (empty: none)")
