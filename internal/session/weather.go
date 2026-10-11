@@ -58,9 +58,9 @@ func imperialFor(prefs users.Preferences) bool {
 }
 
 // buildWeather renders the forecast snap for place from the hour under way
-// at now, in imperial units or not (see imperialFor), and where the cursor
-// goes.
-func buildWeather(rows, cols int, now time.Time, place weather.Place, imperial bool, snap weather.Snapshot) (screen go3270.Screen, cursorRow, cursorCol int) {
+// at now, in imperial units or not (see imperialFor), with the user's own
+// PurpleAir sensor's reading pa (nil for none), and where the cursor goes.
+func buildWeather(rows, cols int, now time.Time, place weather.Place, imperial bool, snap weather.Snapshot, pa *weather.PurpleAirSnapshot) (screen go3270.Screen, cursorRow, cursorCol int) {
 	screen = titleFields(cols, "WEATHER", now)
 	heading := line{{Content: "Weather for " + place.Name, Color: go3270.Turquoise, Intense: true}}
 	hours := snap.Next(now, weatherHours)
@@ -80,11 +80,22 @@ func buildWeather(rows, cols int, now time.Time, place weather.Place, imperial b
 		}
 	}
 	screen = append(screen, placeLine(2, cols, heading)...)
-	current, worst := aqiLines(snap, hours, now)
+	current, worst := aqiLines(snap, pa, hours, now)
 	screen = append(screen, placeLine(weatherAQIRow, cols, current)...)
 	screen = append(screen, placeLine(weatherAQIRow+1, cols, worst)...)
+	paStale := false
+	if pa != nil && pa.Reading != nil {
+		_, fresh := pa.Current(now)
+		paStale = !fresh
+	}
 	switch {
 	case problem != "":
+	case pa != nil && errors.Is(pa.Err, weather.ErrBadKey):
+		problem = "PurpleAir refused your API key; change it in SETTINGS, option 6."
+	case pa != nil && pa.Err != nil:
+		problem = "Could not read your PurpleAir sensor: " + pa.Err.Error()
+	case paStale:
+		problem = "Your PurpleAir sensor has not reported since " + pa.Reading.Time.In(now.Location()).Format("Mon 15:04") + "."
 	case errors.Is(snap.ObservedErr, weather.ErrBadKey):
 		problem = "AirNow refused its API key; an admin can change it (ADMIN, option 11)."
 	case snap.ObservedErr != nil:
@@ -210,14 +221,42 @@ func aqiColor(aqi int) (color go3270.Color, intense bool) {
 	return go3270.Pink, true
 }
 
-// aqiLines are the weather page's air quality rows for snap, at now:
-// the index now, with where it is from, as "Air quality now: 39 Good,
-// measured 09:00 by AirNow, Denver" (the area last, to be cut short
-// first) or "..., forecast by Open-Meteo" (see weather.Snapshot.AQINow); then the worst of hours, the hours shown,
+// aqiNow is the air quality index now, at now, and where it is from, in
+// now's zone: the user's own PurpleAir sensor's, pa (nil for none), while
+// it reports, as "measured 10:42 by your PurpleAir, Back yard"; else
+// AirNow's or the forecast's, from snap (see weather.Snapshot.AQINow), as
+// "measured 09:00 by AirNow, Denver" or "forecast by Open-Meteo". Each
+// puts the name last, to be cut short first. ok is false with none.
+func aqiNow(snap weather.Snapshot, pa *weather.PurpleAirSnapshot, now time.Time) (aqi int, source string, ok bool) {
+	if pa != nil {
+		if r, ok := pa.Current(now); ok {
+			where := ""
+			if r.Indoor {
+				where = " indoors"
+			}
+			return r.AQI, "measured " + r.Time.In(now.Location()).Format("15:04") + where + " by your PurpleAir, " + r.Name, true
+		}
+	}
+	aqi, obs, ok := snap.AQINow(now)
+	switch {
+	case !ok:
+		return 0, "", false
+	case obs == nil:
+		return aqi, "forecast by Open-Meteo", true
+	case obs.Time.IsZero():
+		return aqi, "measured by AirNow, " + obs.Area, true
+	}
+	return aqi, "measured " + obs.Time.In(now.Location()).Format("15:04") + " by AirNow, " + obs.Area, true
+}
+
+// aqiLines are the weather page's air quality rows for snap, and the
+// user's PurpleAir sensor's pa (nil for none), at now: the index now, with
+// where it is from (see aqiNow), as "Air quality now: 39 Good, measured
+// 09:00 by AirNow, Denver"; then the worst of hours, the hours shown,
 // with when, as "Worst forecast, next 24 hours: 58 Moderate, Sun 15:00".
 // Each index has its category, in its color, and times are in now's zone.
 // Either is nil with no index.
-func aqiLines(snap weather.Snapshot, hours []weather.Hour, now time.Time) (current, worst line) {
+func aqiLines(snap weather.Snapshot, pa *weather.PurpleAirSnapshot, hours []weather.Hour, now time.Time) (current, worst line) {
 	label := func(s string) go3270.Field { return go3270.Field{Content: s, Color: go3270.Turquoise} }
 	value := func(aqi int, comma bool) go3270.Field {
 		color, intense := aqiColor(aqi)
@@ -227,14 +266,7 @@ func aqiLines(snap weather.Snapshot, hours []weather.Hour, now time.Time) (curre
 		}
 		return go3270.Field{Content: text, Color: color, Intense: intense}
 	}
-	if aqi, obs, ok := snap.AQINow(now); ok {
-		source := "forecast by Open-Meteo"
-		if obs != nil {
-			source = "measured by AirNow, " + obs.Area
-			if !obs.Time.IsZero() {
-				source = "measured " + obs.Time.In(now.Location()).Format("15:04") + " by AirNow, " + obs.Area
-			}
-		}
+	if aqi, source, ok := aqiNow(snap, pa, now); ok {
 		current = line{label("Air quality now:"), value(aqi, true), {Content: source, Color: go3270.Blue}}
 	}
 	if w, ok := weather.Worst(hours); ok {

@@ -37,7 +37,7 @@ func forecast() weather.Snapshot {
 func TestWeatherScreen(t *testing.T) {
 	denver := time.FixedZone("MDT", -6*3600)
 	at := now.Add(30 * time.Minute).In(denver) // 04:30 there
-	s, crow, ccol := buildWeather(24, 80, at, weather.Denver, true, forecast())
+	s, crow, ccol := buildWeather(24, 80, at, weather.Denver, true, forecast(), nil)
 	rows := screenText(t, s, 24, 80)
 	text := strings.Join(rows, "\n")
 	if crow != 23 || ccol != 0 {
@@ -95,7 +95,7 @@ func TestWeatherScreen(t *testing.T) {
 
 	// Metric is in °C and km/h.
 	paris := weather.Place{Name: "Paris, Ile-de-France, France", Country: "FR"}
-	s, _, _ = buildWeather(24, 80, at, paris, false, forecast())
+	s, _, _ = buildWeather(24, 80, at, paris, false, forecast(), nil)
 	if rows := screenText(t, s, 24, 80); !strings.Contains(rows[weatherHeadRow], "°C Prec km/h Sky") || !strings.Contains(rows[2], "Paris") {
 		t.Errorf("Paris:\n%s", strings.Join(rows, "\n"))
 	}
@@ -107,7 +107,7 @@ func TestWeatherScreenAQI(t *testing.T) {
 		snap.Hours[i].AQI, snap.Hours[i].HasAQI = 40+i, true
 	}
 	build := func() []string {
-		s, _, _ := buildWeather(24, 80, now, weather.Denver, true, snap)
+		s, _, _ := buildWeather(24, 80, now, weather.Denver, true, snap, nil)
 		return screenText(t, s, 24, 80)
 	}
 	rows := build()
@@ -159,7 +159,7 @@ func TestWeatherScreenStates(t *testing.T) {
 		{"stale", stale, "Sun 10:00"},
 		{"empty", weather.Snapshot{Fetched: now}, "The forecast has no hours from now."},
 	} {
-		s, _, _ := buildWeather(24, 80, now, weather.Denver, true, c.snap)
+		s, _, _ := buildWeather(24, 80, now, weather.Denver, true, c.snap, nil)
 		if text := strings.Join(screenText(t, s, 24, 80), "\n"); !strings.Contains(text, c.want) {
 			t.Errorf("%s: lacks %q:\n%s", c.name, c.want, text)
 		}
@@ -317,7 +317,7 @@ func TestAQILines(t *testing.T) {
 	at := now.In(denver)
 
 	// Forecast, with no measurement.
-	current, worst := aqiLines(weather.Snapshot{Hours: hours}, hours, at)
+	current, worst := aqiLines(weather.Snapshot{Hours: hours}, nil, hours, at)
 	if got := text(current); got != "Air quality now: 39 Good, forecast by Open-Meteo" {
 		t.Errorf("now %q", got)
 	}
@@ -330,27 +330,27 @@ func TestAQILines(t *testing.T) {
 
 	// Measured, by AirNow, in the user's time zone.
 	obs := &weather.Observation{AQI: 61, Area: "Denver", Time: now.Add(-time.Hour)}
-	current, _ = aqiLines(weather.Snapshot{Hours: hours, Observed: obs}, hours, at)
+	current, _ = aqiLines(weather.Snapshot{Hours: hours, Observed: obs}, nil, hours, at)
 	if got := text(current); got != "Air quality now: 61 Moderate, measured 03:00 by AirNow, Denver" || current[1].Color != go3270.Yellow {
 		t.Errorf("measured %q, %v", got, current[1].Color)
 	}
 	obs.Time = time.Time{}
-	if current, _ = aqiLines(weather.Snapshot{Hours: hours, Observed: obs}, hours, at); text(current) != "Air quality now: 61 Moderate, measured by AirNow, Denver" {
+	if current, _ = aqiLines(weather.Snapshot{Hours: hours, Observed: obs}, nil, hours, at); text(current) != "Air quality now: 61 Moderate, measured by AirNow, Denver" {
 		t.Errorf("time not known %q", text(current))
 	}
 
 	// With none at all, no lines.
-	if current, worst := aqiLines(weather.Snapshot{}, []weather.Hour{{Time: now}}, now); current != nil || worst != nil {
+	if current, worst := aqiLines(weather.Snapshot{}, nil, []weather.Hour{{Time: now}}, now); current != nil || worst != nil {
 		t.Errorf("none: %q, %q", text(current), text(worst))
 	}
 	// The longest worst fits in 80 columns; the measured one is cut at the
 	// area.
 	long := []weather.Hour{{Time: now, AQI: 150, HasAQI: true}}
-	if _, worst := aqiLines(weather.Snapshot{}, long, now); lineWidth(worst) > 79 {
+	if _, worst := aqiLines(weather.Snapshot{}, nil, long, now); lineWidth(worst) > 79 {
 		t.Errorf("%d wide: %q", lineWidth(worst), text(worst))
 	}
 	obs = &weather.Observation{AQI: 150, Area: "Southern Wasatch Front, UT", Time: now}
-	current, _ = aqiLines(weather.Snapshot{Observed: obs}, nil, now)
+	current, _ = aqiLines(weather.Snapshot{Observed: obs}, nil, nil, now)
 	if rows := screenText(t, placeLine(3, 80, current), 24, 80); rows[3] != " Air quality now: 150 Unhealthy (sens.), measured 10:00 by AirNow, Southern Was>" {
 		t.Errorf("long %q", rows[3])
 	}

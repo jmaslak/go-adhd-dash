@@ -83,12 +83,14 @@ type Hour struct {
 
 // Client reads from Open-Meteo.
 type Client struct {
-	// ForecastURL, AirQualityURL, GeocodeURL and AirNowURL are the APIs'
-	// addresses; "" for Open-Meteo's and AirNow's own. Tests replace them.
+	// ForecastURL, AirQualityURL, GeocodeURL, AirNowURL and PurpleAirURL
+	// are the APIs' addresses; "" for Open-Meteo's, AirNow's and
+	// PurpleAir's own. Tests replace them.
 	ForecastURL   string
 	AirQualityURL string
 	GeocodeURL    string
 	AirNowURL     string
+	PurpleAirURL  string
 
 	// HTTP makes the requests; nil for one with a 30 second timeout.
 	HTTP *http.Client
@@ -103,12 +105,23 @@ const forecastHours = 26
 // given.
 var ErrBadKey = errors.New("the API key was refused")
 
+// ErrNoSensor is returned, wrapped, when PurpleAir has no sensor by the
+// index given, or none that the read key given opens; ErrBadReadKey when
+// the read key is not the sensor's.
+var (
+	ErrNoSensor   = errors.New("no such sensor")
+	ErrBadReadKey = errors.New("the read key was refused")
+)
+
 // get reads base with query from service, named in errors, into out, as
-// JSON.
-func (c *Client) get(ctx context.Context, service, base string, query url.Values, out any) error {
+// JSON, sending header too (nil for none).
+func (c *Client) get(ctx context.Context, service, base string, query url.Values, header http.Header, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+query.Encode(), nil)
 	if err != nil {
 		return err
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	client := c.HTTP
 	if client == nil {
@@ -126,22 +139,33 @@ func (c *Client) get(ctx context.Context, service, base string, query url.Values
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		// Open-Meteo says what is wrong as {"error": true, "reason": "..."},
-		// AirNow as {"WebServiceError": [{"Message": "..."}]}.
+		// AirNow as {"WebServiceError": [{"Message": "..."}]}, and PurpleAir
+		// as {"error": "NotFoundError", "description": "..."}.
 		var e struct {
 			Reason          string
 			WebServiceError []struct{ Message string }
+			Error           json.RawMessage
+			Description     string
 		}
-		why := resp.Status
+		why, kind := resp.Status, ""
 		if json.NewDecoder(resp.Body).Decode(&e) == nil {
+			_ = json.Unmarshal(e.Error, &kind) // a string from PurpleAir only
 			switch {
 			case e.Reason != "":
 				why = e.Reason
 			case len(e.WebServiceError) > 0 && e.WebServiceError[0].Message != "":
 				why = e.WebServiceError[0].Message
+			case e.Description != "":
+				why = e.Description
 			}
 		}
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			return fmt.Errorf("%s: %w: %s", service, ErrBadKey, why)
+		case kind == "NotFoundError":
+			return fmt.Errorf("%s: %w: %s", service, ErrNoSensor, why)
+		case kind == "InvalidDataReadKeyError":
+			return fmt.Errorf("%s: %w: %s", service, ErrBadReadKey, why)
 		}
 		return fmt.Errorf("%s: %s", service, why)
 	}
@@ -172,7 +196,7 @@ func (c *Client) Forecast(ctx context.Context, p Place, imperial bool) ([]Hour, 
 			Wind   []*float64 `json:"wind_speed_10m"`
 		} `json:"hourly"`
 	}
-	if err := c.get(ctx, "open-meteo", cmp.Or(c.ForecastURL, ForecastURL), q, &body); err != nil {
+	if err := c.get(ctx, "open-meteo", cmp.Or(c.ForecastURL, ForecastURL), q, nil, &body); err != nil {
 		return nil, err
 	}
 	h := body.Hourly
@@ -209,7 +233,7 @@ func (c *Client) AirQuality(ctx context.Context, p Place) (map[int64]int, error)
 			AQI  []*int  `json:"us_aqi"`
 		} `json:"hourly"`
 	}
-	if err := c.get(ctx, "open-meteo", cmp.Or(c.AirQualityURL, AirQualityURL), q, &body); err != nil {
+	if err := c.get(ctx, "open-meteo", cmp.Or(c.AirQualityURL, AirQualityURL), q, nil, &body); err != nil {
 		return nil, err
 	}
 	if len(body.Hourly.AQI) != len(body.Hourly.Time) {
@@ -269,7 +293,7 @@ func (c *Client) AirNow(ctx context.Context, key string, p Place) (obs Observati
 		ReportingAreaName string `json:"reportingAreaName"`
 		NowcastAQI        *int   `json:"nowcastAQI"`
 	}
-	if err := c.get(ctx, "airnow", cmp.Or(c.AirNowURL, AirNowURL), q, &body); err != nil {
+	if err := c.get(ctx, "airnow", cmp.Or(c.AirNowURL, AirNowURL), q, nil, &body); err != nil {
 		return Observation{}, false, err
 	}
 	for _, b := range body {
@@ -366,7 +390,7 @@ func (c *Client) Geocode(ctx context.Context, location string) (Place, error) {
 	var body struct {
 		Results []geoResult `json:"results"`
 	}
-	if err := c.get(ctx, "open-meteo", cmp.Or(c.GeocodeURL, GeocodeURL), q, &body); err != nil {
+	if err := c.get(ctx, "open-meteo", cmp.Or(c.GeocodeURL, GeocodeURL), q, nil, &body); err != nil {
 		return Place{}, err
 	}
 	for _, r := range body.Results {

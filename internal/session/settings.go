@@ -31,6 +31,7 @@ var settingsOptions = []struct{ number, what, command string }{
 	{"3", "Trello: link, choose your task lists", "trello"},
 	{"4", "Preferences: time zone, clocks, weather, flashing", "preferences"},
 	{"5", "Terminal test: colors, highlighting, characters, keys", "termtest"},
+	{"6", "PurpleAir: your own sensor, for the air quality now", "purpleair"},
 }
 
 // settingsStatus is how each of the user with id's settings stands, by
@@ -76,6 +77,9 @@ func settingsStatus(store *users.Store, id int) map[string]string {
 	}
 	if len(prefs) > 0 {
 		out["preferences"] = strings.Join(prefs, ", ")
+	}
+	if u.PurpleAir != nil {
+		out["purpleair"] = fmt.Sprintf("sensor %d", u.PurpleAir.Sensor)
 	}
 	return out
 }

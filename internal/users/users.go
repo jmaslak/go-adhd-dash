@@ -58,6 +58,10 @@ type User struct {
 	// Trello is the user's linked Trello account; nil for none.
 	Trello *TrelloLink `json:"trello,omitempty"`
 
+	// PurpleAir is the user's own PurpleAir sensor, whose air quality is
+	// shown as now's; nil for none.
+	PurpleAir *PurpleAir `json:"purpleair,omitempty"`
+
 	// Preferences are how the user likes the screens to behave.
 	Preferences Preferences `json:"preferences,omitzero"`
 }
@@ -95,6 +99,13 @@ type Location struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 	Country   string  `json:"country,omitempty"` // its ISO 3166 code, such as US
+}
+
+// PurpleAir is a PurpleAir sensor, and the keys to read it.
+type PurpleAir struct {
+	APIKey  string `json:"api_key"`            // a PurpleAir API read key
+	Sensor  int    `json:"sensor"`             // the sensor's sensor_index
+	ReadKey string `json:"read_key,omitempty"` // the sensor's own, for a private one
 }
 
 // MaxClocks is the most clocks the calendar screen shows.

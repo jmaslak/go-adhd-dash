@@ -24,8 +24,9 @@ screen shows:
   units (see the preferences). It is blue, dimmer than the white title and
   clock; on a title row colored for the busy state, it is black on that
   color like the rest of the row. When the US air quality index now (as
-  the weather screen's first air quality row has it: measured by AirNow
-  when it can be, else forecast) is above 50 (worse than Good), it follows, as `AQI 52`, in its category's color (as
+  the weather screen's first air quality row has it: measured by the
+  user's own PurpleAir sensor, else by AirNow, when either can be, else
+  forecast) is above 50 (worse than Good), it follows, as `AQI 52`, in its category's color (as
   on the weather screen). It is the forecast for the hour under way,
   the first row of the weather screen's, so it costs Open-Meteo nothing
   more (see [Weather](#weather)). It is left off until the forecast is
@@ -216,9 +217,27 @@ few aliases (`task`, `calendar`, `cl`, `wx`, `next`, `prev`, `quit`,
 stands, chosen by number as the admin menu's are: `1` changes their
 password, `2` connects their Google calendar and chooses its calendars
 (showing, e.g., "connected, 2 calendars shown"), `3` links Trello and
-chooses their task lists, `4` sets their general preferences, and `5` tests the
-terminal. Each of those comes back to the settings screen, saying what was
+chooses their task lists, `4` sets their general preferences, `5` tests the
+terminal, and `6` sets their own PurpleAir sensor (showing "sensor 12345").
+Each of those comes back to the settings screen, saying what was
 done.
+
+The PurpleAir screen takes a PurpleAir API key (a read key, from
+<https://develop.purpleair.com/>), the sensor's index (the number in its
+link on PurpleAir's map, `select=12345`), and, for a private sensor, its
+own read key. While one is set, its air quality is the air quality now on
+the weather screen and the dashboard, in place of AirNow's or the
+forecast (see [Weather](#weather)). `Enter` reads the sensor to check
+them before saving: a key PurpleAir refuses, a sensor it does not have
+(or a private one without its read key), or a read key not the sensor's,
+is refused and nothing is saved; one it reads is saved, the screen saying
+its name and air quality now (`Saved: Back yard, now 44 Good.`). One that
+cannot be checked, PurpleAir being out of reach, or whose reading will
+not do (every channel downgraded, or no humidity), is saved anyway, the
+screen saying so. Blanking every field removes it; `PF3` goes back,
+asking first if a change is typed. They are kept with the user in
+`-users-file`, as `"purpleair": {"api_key": "...", "sensor": 12345,
+"read_key": "..."}`; neither key is logged.
 
 The terminal test shows what the terminal reported of itself on
 connecting (its type, size, code page and LU name); every color (and the
@@ -689,9 +708,14 @@ States and degrees Celsius and kilometers per hour anywhere else, as the
 column headings say. The heading names the place as found, and when the forecast
 was read (`(as of 09:55)`), or that it is being read. Under it are two
 rows of the air quality, as the US air quality index with the EPA's
-category. The first is now, and where it is from: measured by AirNow's
-monitors, as `Air quality now: 61 Moderate, measured 09:00 by AirNow,
-Denver` (the start of the hour observed, then AirNow's reporting area),
+category. The first is now, and where it is from: measured by the user's
+own PurpleAir sensor, if they have set one (on the settings screen) and
+it has reported within the hour, as `Air quality now: 72 Moderate,
+measured 09:55 by your PurpleAir, Back yard` (when PurpleAir last heard
+from it, `indoors` for a sensor registered as inside, then its name);
+else by AirNow's monitors, as `Air quality now: 61 Moderate, measured
+09:00 by AirNow, Denver` (the start of the hour observed, then AirNow's
+reporting area),
 or, with no AirNow API key set, outside the United States, Puerto Rico,
 Canada and Mexico, with no monitor reporting near enough, or with the last
 measurement three hours old or more, forecast for the hour under way, as
@@ -706,7 +730,11 @@ pink for Hazardous. The forecast index is from Copernicus's atmosphere
 model, on a grid some kilometers wide, not measured, so it can differ
 from AirNow's, most of all in wildfire smoke. If either cannot be read,
 the message row says so, in red, and the index read before is still
-shown; if AirNow refuses its key, it says an admin can change it. If the forecast cannot be
+shown; if AirNow refuses its key, it says an admin can change it. So too
+for the user's PurpleAir sensor: if it cannot be read, its key is
+refused (saying to change it in `settings`), or it has not reported
+within the hour (saying since when), the message row says so, and the air
+quality now is AirNow's or the forecast's. If the forecast cannot be
 read, the message row says why, in red, and any forecast read before is
 still shown; the dashboard's title row goes on showing the hour under way
 from it, without saying it is old. The screen redraws itself as the dashboard does, `Enter`
@@ -1067,6 +1095,27 @@ is looked up only when a user saves a new one in their preferences; the
 place found is kept with the user, so the forecast does not depend on
 looking it up again.
 
+A user's own PurpleAir sensor is read from PurpleAir, at
+`api.purpleair.com`, with the API key they set, sent in the request's
+`X-API-Key` header. Its reading is kept in memory for 30 minutes, shared
+by the user's sessions (and anyone's using the same sensor and keys), as
+forecasts are, and read again in the background after that; a failed
+read keeps the last reading, and is tried again after a minute. Each read
+asks for seven fields (name, when last seen, inside or outside, humidity,
+both channels' fine particles, and which channels are downgraded):
+PurpleAir charges points for each field read, so with the dashboard up,
+a sensor costs 48 reads a day. A PurpleAir sensor measures fine
+particles (PM2.5), not an air quality index, and reads high; the index
+shown is worked out as the EPA's Fire and Smoke Map does: the fine
+particles (`pm2.5_cf_1`) of the channels not downgraded, averaged, then
+corrected with the sensor's humidity by the EPA's US-wide correction for
+PurpleAir sensors (Barkjohn et al., 2021, with its 2023 extension for
+wildfire smoke), then put on the US air quality index by the EPA's
+breakpoints for fine particles (as revised in 2024). Ozone, which
+PurpleAir does not measure, is left out. The correction is made for
+sensors outside; one registered as inside is corrected the same, and
+shown as `indoors`.
+
 The air quality measured now comes from [AirNow](https://www.airnow.gov/),
 the EPA's network of air quality monitors, at `www.airnowapi.org`, once
 an admin sets its API key on admin menu option `11`. A key is free, from
@@ -1360,7 +1409,7 @@ whoever reads it. User names may not hold control characters at all.
 - `internal/checklist`: the checklist file.
 - `internal/weather`: the hourly forecasts, their air quality, and the
   places they are for, from Open-Meteo, and the air quality measured, from
-  AirNow, cached.
+  AirNow and users' PurpleAir sensors, cached.
 
 Telnet/TN3270E negotiation is
 [`github.com/jmaslak/go-3270e`](../go-3270e).

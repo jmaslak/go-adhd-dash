@@ -230,6 +230,7 @@ func main() {
 		Viewers:      session.NewViewers(),
 		Activity:     session.NewActivity(),
 		Chat:         session.NewChat(),
+		PurpleAir:    weather.NewPurpleAirCache(&weather.Client{}),
 		Weather: weather.NewCache(&weather.Client{}, func() string {
 			key, err := userStore.AirNowKey()
 			if err != nil {
