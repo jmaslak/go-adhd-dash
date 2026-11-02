@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,35 @@ func (v calcValue) decimal() string {
 		return v.i.String()
 	}
 	return strconv.FormatFloat(v.f, 'g', -1, 64)
+}
+
+// grouped is v in decimal with commas between groups of three digits in the
+// whole part, so a long number can be read at a glance. The fraction and
+// any exponent are left as they are.
+func (v calcValue) grouped() string {
+	return groupDigits(v.decimal())
+}
+
+// groupDigits puts commas between groups of three digits in the whole part
+// of a decimal number written as decimal writes it.
+func groupDigits(s string) string {
+	sign, rest := "", s
+	if rest != "" && (rest[0] == '-' || rest[0] == '+') {
+		sign, rest = rest[:1], rest[1:]
+	}
+	end := strings.IndexAny(rest, ".eE")
+	if end < 0 {
+		end = len(rest)
+	}
+	whole, tail := rest[:end], rest[end:]
+	var b strings.Builder
+	for i, d := range whole {
+		if i > 0 && (len(whole)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(d)
+	}
+	return sign + b.String() + tail
 }
 
 // hex is an integer in hex, with a 0x prefix after any sign, and empty for a
@@ -161,8 +191,8 @@ func applyCalcOp(op string, a, b calcValue) (calcValue, error) {
 func calcRun(stack []calcValue, input string) ([]calcValue, error) {
 	out := append([]calcValue(nil), stack...)
 	for _, tok := range strings.Fields(input) {
-		if word := strings.ToLower(tok); word == "sum" || word == "avg" {
-			r, err := calcTotal(out, word == "avg")
+		if stat, ok := calcStats[strings.ToLower(tok)]; ok {
+			r, err := calcStat(out, stat)
 			if err != nil {
 				return stack, err
 			}
@@ -182,19 +212,73 @@ func calcRun(stack []calcValue, input string) ([]calcValue, error) {
 		}
 		v, ok := parseCalcNumber(tok)
 		if !ok {
-			return stack, fmt.Errorf("%q is not a number (decimal, or hex like 0x1F), + - * / ^, sum or avg", tok)
+			return stack, fmt.Errorf("%q is not a number (decimal, or hex like 0x1F), + - * / ^, or %s", tok, calcStatNames)
 		}
 		out = append(out, v)
 	}
 	return out, nil
 }
 
-// calcTotal is the sum of every number on stack, or with avg their mean,
-// kept exact as + and / keep it.
-func calcTotal(stack []calcValue, avg bool) (calcValue, error) {
+// calcStatKind is a statistic that replaces the whole stack with one value.
+type calcStatKind int
+
+const (
+	statSum calcStatKind = iota
+	statMean
+	statMedian
+	statStdev
+)
+
+// calcStats maps the words typed for a statistic to it; mean and avg are the
+// same.
+var calcStats = map[string]calcStatKind{
+	"sum": statSum, "avg": statMean, "mean": statMean, "median": statMedian, "stdev": statStdev,
+}
+
+// calcStatNames lists the statistics for error messages.
+const calcStatNames = "sum, avg (or mean), median, stdev"
+
+// calcStat is a statistic of every number on stack. The sum, mean and median
+// are kept exact as + and / keep them; the standard deviation is the sample
+// standard deviation (dividing by n-1), a float, and needs two numbers.
+func calcStat(stack []calcValue, stat calcStatKind) (calcValue, error) {
 	if len(stack) == 0 {
 		return calcValue{}, errors.New("the stack is empty")
 	}
+	n := calcInt(big.NewInt(int64(len(stack))))
+	switch stat {
+	case statMedian:
+		sorted := append([]calcValue(nil), stack...)
+		slices.SortStableFunc(sorted, calcCompare)
+		mid := len(sorted) / 2
+		if len(sorted)%2 == 1 {
+			return sorted[mid], nil
+		}
+		total, err := applyCalcOp("+", sorted[mid-1], sorted[mid])
+		if err != nil {
+			return calcValue{}, err
+		}
+		return applyCalcOp("/", total, calcInt(big.NewInt(2)))
+	case statStdev:
+		if len(stack) < 2 {
+			return calcValue{}, errors.New("stdev needs at least two numbers")
+		}
+		mean, err := calcStat(stack, statMean)
+		if err != nil {
+			return calcValue{}, err
+		}
+		var squares float64
+		for _, v := range stack {
+			d := v.float() - mean.float()
+			squares += d * d
+		}
+		r := math.Sqrt(squares / float64(len(stack)-1))
+		if math.IsInf(r, 0) || math.IsNaN(r) {
+			return calcValue{}, errors.New("the standard deviation is out of range")
+		}
+		return calcFloat(r), nil
+	}
+
 	total := stack[0]
 	for _, v := range stack[1:] {
 		var err error
@@ -202,10 +286,25 @@ func calcTotal(stack []calcValue, avg bool) (calcValue, error) {
 			return calcValue{}, err
 		}
 	}
-	if avg {
-		return applyCalcOp("/", total, calcInt(big.NewInt(int64(len(stack)))))
+	if stat == statMean {
+		return applyCalcOp("/", total, n)
 	}
 	return total, nil
+}
+
+// calcCompare orders two numbers by value, comparing an integer with a
+// float exactly.
+func calcCompare(a, b calcValue) int {
+	toBig := func(v calcValue) *big.Float {
+		if v.isInt() {
+			return new(big.Float).SetInt(v.i)
+		}
+		return big.NewFloat(v.f)
+	}
+	if a.isInt() && b.isInt() {
+		return a.i.Cmp(b.i)
+	}
+	return toBig(a).Cmp(toBig(b))
 }
 
 // calcState is one session's calculator: its mode, a stack for each mode,
@@ -317,7 +416,7 @@ func (c *calcState) modeFor() calcMode {
 	if c.dbm {
 		m := calcMode{
 			title: "dBm CALCULATOR", heading1: "dBm / dB", heading2: "mW",
-			prompt: "Values with units (10dBm, 3dB, 5mW) and + - * / ^ sum avg, space-separated.",
+			prompt: "Values with units (10dBm, 3dB, 5mW), + - * / ^, sum avg median stdev.",
 			help:   "PF3=Back PF4=Drop PF5=Swap PF6=Clear PF9=Numbers Enter=Run",
 		}
 		for _, v := range c.dbmStack {
@@ -327,11 +426,11 @@ func (c *calcState) modeFor() calcMode {
 	}
 	m := calcMode{
 		title: "CALCULATOR", heading1: "Decimal", heading2: "Hex",
-		prompt: "Numbers (decimal, or hex like 0x1F) and + - * / ^ sum avg, space-separated.",
+		prompt: "Numbers (decimal, or hex like 0x1F), + - * / ^, sum avg median stdev.",
 		help:   "PF3=Back PF4=Drop PF5=Swap PF6=Clear PF9=dBm Enter=Run",
 	}
 	for _, v := range c.stack {
-		m.stack = append(m.stack, [2]string{v.decimal(), v.hex()})
+		m.stack = append(m.stack, [2]string{v.grouped(), v.hex()})
 	}
 	return m
 }

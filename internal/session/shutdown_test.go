@@ -163,7 +163,7 @@ func TestShutdownConfirm(t *testing.T) {
 			t.Errorf("%d sessions: confirmation lacks %q:\n%s", sessions, want, text)
 		}
 	}
-	if text := strings.Join(screenText(t, buildFarewell(80, now, shutdownFarewell), 24, 80), "\n"); !strings.Contains(text, "shutting down") {
+	if text := strings.Join(screenText(t, buildFarewell(80, now, shutdownFarewell), 24, 80), "\n"); !strings.Contains(text, "shutting down") || !strings.HasPrefix(text, " "+dashboardTitle) {
 		t.Errorf("goodbye screen is:\n%s", text)
 	}
 	if c, ok := lookupCommand("ADMIN"); !ok || c.name != "admin" {

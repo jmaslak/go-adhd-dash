@@ -133,15 +133,24 @@ func TestDBMSumAvg(t *testing.T) {
 		"3dB 5dB AVG":        "4 dB|x2.51189",
 		"3dB 5dB sum":        "8 dB|x6.30957",
 		"2 4 avg":            "3|",
+		"2 4 mean":           "3|",
+		"1mW 3mW 2mW median": "3.0103 dBm|2 mW",
+		"1mW 3mW median":     "3.0103 dBm|2 mW",
+		"5dB 1dB 3dB MEDIAN": "3 dB|x1.99526",
+		"0dBm 2dBm stdev":    "1.4142 dB|x1.38491",
+		"1dB 3dB stdev":      "1.4142 dB|x1.38491",
+		"1 3 stdev":          "1.4142135623730951|",
 	} {
 		if got := dbmShow(t, input); got != want {
 			t.Errorf("%q = %q, want %q", input, got, want)
 		}
 	}
 	for input, want := range map[string]string{
-		"sum":         "empty",
-		"1mW 3dB sum": "all of one kind",
-		"1mW 2 avg":   "all of one kind",
+		"sum":          "empty",
+		"1mW 3dB sum":  "all of one kind",
+		"1mW 2 avg":    "all of one kind",
+		"1mW 2 median": "all of one kind",
+		"1mW stdev":    "two values",
 	} {
 		if _, err := dbmRun(nil, input); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: got %v, want %q", input, err, want)

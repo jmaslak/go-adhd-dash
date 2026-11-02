@@ -208,7 +208,7 @@ func TestTitleWeather(t *testing.T) {
 	title := screenText(t, s, 24, 80)[titleRow]
 	// Two spaces before the clock, which, on the 27th, is the longer by a
 	// column.
-	want := " EXECUTIVE FUNCTION DASHBOARD       72°F 10% Partly cloudy  Sun Sep 27 10:00:00"
+	want := " EXEC/3270 DASHBOARD                72°F 10% Partly cloudy  Sun Sep 27 10:00:00"
 	if title != want {
 		t.Errorf("title row\n%q\nwant\n%q", title, want)
 	}
@@ -228,7 +228,9 @@ func TestTitleWeather(t *testing.T) {
 	}
 
 	// Metric, and cut to the room there is.
-	const titleWidth = len("EXECUTIVE FUNCTION DASHBOARD")
+	// A title 28 columns wide, so the layout below does not follow the
+	// dashboard's name.
+	const titleWidth = 28
 	contents := func(fs []go3270.Field) string {
 		var out []string
 		for _, f := range fs {
@@ -254,7 +256,9 @@ func TestTitleWeather(t *testing.T) {
 }
 
 func TestTitleAQI(t *testing.T) {
-	const titleWidth = len("EXECUTIVE FUNCTION DASHBOARD")
+	// A title 28 columns wide, so the layout below does not follow the
+	// dashboard's name.
+	const titleWidth = 28
 	v := sampleView(3)
 	v.Imperial = true
 	at := func(aqi int, has bool) view {
@@ -269,10 +273,9 @@ func TestTitleAQI(t *testing.T) {
 		}
 	}
 
-	// Above 50, it follows the weather, in its category's color, the sky
-	// cut to make room for it.
+	// Above 50, it follows the weather, in its category's color.
 	s, _, _, _ := buildDashboard(24, 80, at(52, true), 0, "")
-	want := " EXECUTIVE FUNCTION DASHBOARD  72°F 10% Partly clo> AQI 52  Sun Sep 27 10:00:00"
+	want := " EXEC/3270 DASHBOARD         72°F 10% Partly cloudy AQI 52  Sun Sep 27 10:00:00"
 	if title := screenText(t, s, 24, 80)[titleRow]; title != want {
 		t.Errorf("title row\n%q\nwant\n%q", title, want)
 	}
@@ -290,11 +293,15 @@ func TestTitleAQI(t *testing.T) {
 		}
 	}
 	// Tinted, it is part of the one field.
-	if title := screenText(t, tintTitle(s, 24, 80, go3270.Red), 24, 80)[titleRow]; !strings.Contains(title, "Partly clo> AQI 52  Sun") {
+	if title := screenText(t, tintTitle(s, 24, 80, go3270.Red), 24, 80)[titleRow]; !strings.Contains(title, "Partly cloudy AQI 52  Sun") {
 		t.Errorf("tinted %q", title)
 	}
 
-	// Short of room, the index is kept whole over the weather.
+	// Short of room, the sky is cut to make room for it.
+	if got := titleWeather(80, titleWidth, at(52, true)); len(got) != 2 || got[0].Content != "72°F 10% Partly clo>" {
+		t.Errorf("80 columns: %+v", got)
+	}
+	// Shorter still, the index is kept whole over the weather.
 	if got := titleWeather(60, titleWidth, at(152, true)); len(got) != 1 || got[0].Content != "AQI 152" || got[0].Col != 30 {
 		t.Errorf("60 columns: %+v", got)
 	}

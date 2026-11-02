@@ -744,10 +744,12 @@ The calculator is RPN. Type numbers and the operators `+ - * / ^`,
 separated by spaces, and press `Enter`: numbers are pushed and operators
 applied in order, so `0x1F 3 ^` pushes 31 and cubes it. Numbers are decimal
 (`42`, `-1.5`, `1e3`) or hex integers (`0x1F`, `-0x10`). Each stack level is
-shown in decimal and, for an integer, hex. Integers are exact at any size,
-and `/` gives an integer when it divides evenly; anything else is a float,
-with no hex. A line with an error changes nothing and is left to fix. The
-stack lasts as long as the connection.
+shown in decimal and, for an integer, hex. The decimal column puts commas
+between groups of three digits (`1,234,567.89`); numbers are still typed
+without them. Integers are exact at any size, and `/` gives an integer when
+it divides evenly; anything else is a float, with no hex. A line with an
+error changes nothing and is left to fix. The stack lasts as long as the
+connection.
 
 - `PF4` / `PF5` / `PF6`: drop the top number / swap the top two / clear,
   after running whatever is typed
@@ -772,10 +774,16 @@ So `0dBm 0dBm +` is 3.01 dBm (1 mW + 1 mW), `10dBm 3dB +` is 13 dBm, and
 `10mW 2 *` is 20 mW. `dB + dBm` is a gain too; anything else not in the table
 is refused. Each mode has its own stack.
 
-`sum` and `avg` replace the whole stack with the total, or the mean, of
-everything on it: `1 2 3 4 avg` leaves 2.5. In dBm mode the values must all
-be of one kind: powers add in mW, so `avg` of powers is the average power
-(`1mW 3mW avg` is 2 mW, 3.01 dBm); dB values add in dB.
+`sum`, `avg` (or `mean`), `median` and `stdev` replace the whole stack with
+the total, the mean, the median or the standard deviation of everything on
+it: `1 2 3 4 avg` leaves 2.5, and `1 2 3 4 median` leaves 2.5 too, the mean
+of the middle two. `stdev` is the sample standard deviation (dividing by one
+less than the count), so it needs at least two numbers, and is always a
+float. In dBm mode the values must all be of one kind: powers add in mW, so
+`avg` of powers is the average power (`1mW 3mW avg` is 2 mW, 3.01 dBm), and
+the median of an even count averages the middle two in mW; dB values add in
+dB. `stdev` of powers is the spread of their dBm readings, in dB
+(`0dBm 2dBm stdev` is 1.41 dB); of dB values, in dB.
 
 The checklists (`checklist` or `cl`) are named lists of items, each
 checked off with an `X`, kept for reuse. Each user has their own: no one

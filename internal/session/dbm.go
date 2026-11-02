@@ -4,10 +4,12 @@
 package session
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -92,7 +94,7 @@ var dbmToken = regexp.MustCompile(`^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(
 func parseDBMValue(tok string) (dbmValue, error) {
 	m := dbmToken.FindStringSubmatch(tok)
 	if m == nil {
-		return dbmValue{}, fmt.Errorf("%q is not a value: use a dBm, dB or mW suffix, or + - * / ^ sum avg", tok)
+		return dbmValue{}, fmt.Errorf("%q is not a value: use a dBm, dB or mW suffix, + - * / ^, or %s", tok, calcStatNames)
 	}
 	x, err := strconv.ParseFloat(m[1], 64)
 	if err != nil || math.IsInf(x, 0) {
@@ -216,27 +218,69 @@ func applyDBMOp(op string, a, b dbmValue) (dbmValue, error) {
 	return r, nil
 }
 
-// dbmTotal is the sum of every value on stack, or with avg their mean. The
-// values must all be of one kind: powers add in mW, so their mean is the
-// average power; gains add in dB; plain numbers as numbers.
-func dbmTotal(stack []dbmValue, avg bool) (dbmValue, error) {
+// dbmStat is a statistic of every value on stack. The values must all be of
+// one kind. Powers add in mW, so their mean is the average power and the
+// median of an even count is the average of the middle two powers; gains add
+// in dB; plain numbers as numbers. The standard deviation is the sample
+// standard deviation (dividing by n-1) and needs two values: of powers it is
+// the spread of their dBm readings, as a gain in dB, since a spread of powers
+// is a ratio rather than a power; of gains, a gain in dB.
+func dbmStat(stack []dbmValue, stat calcStatKind) (dbmValue, error) {
 	if len(stack) == 0 {
 		return dbmValue{}, errors.New("the stack is empty")
 	}
-	total := stack[0]
 	for _, v := range stack[1:] {
-		if v.kind != total.kind {
-			return dbmValue{}, errors.New("sum and avg need values all of one kind: all powers, all dB, or all plain numbers")
+		if v.kind != stack[0].kind {
+			return dbmValue{}, fmt.Errorf("%s needs values all of one kind: all powers, all dB, or all plain numbers", calcStatNames)
 		}
-		total.v += v.v
 	}
-	if avg {
-		total.v /= float64(len(stack))
+	kind := stack[0].kind
+	var r dbmValue
+	switch stat {
+	case statSum, statMean:
+		r.kind = kind
+		for _, v := range stack {
+			r.v += v.v
+		}
+		if stat == statMean {
+			r.v /= float64(len(stack))
+		}
+	case statMedian:
+		sorted := append([]dbmValue(nil), stack...)
+		slices.SortStableFunc(sorted, func(a, b dbmValue) int { return cmp.Compare(a.v, b.v) })
+		mid := len(sorted) / 2
+		r = sorted[mid]
+		if len(sorted)%2 == 0 {
+			r.v = (sorted[mid-1].v + sorted[mid].v) / 2
+		}
+	case statStdev:
+		if len(stack) < 2 {
+			return dbmValue{}, errors.New("stdev needs at least two values")
+		}
+		x := make([]float64, len(stack))
+		for i, v := range stack {
+			x[i] = v.v
+			if kind == dbmPower {
+				x[i] = v.dbm()
+			}
+		}
+		var mean, squares float64
+		for _, v := range x {
+			mean += v
+		}
+		mean /= float64(len(x))
+		for _, v := range x {
+			squares += (v - mean) * (v - mean)
+		}
+		r = dbmValue{kind, math.Sqrt(squares / float64(len(x)-1))}
+		if kind == dbmPower {
+			r.kind = dbmGain
+		}
 	}
-	if math.IsInf(total.v, 0) {
-		return dbmValue{}, errors.New("the total is out of range")
+	if math.IsInf(r.v, 0) || math.IsNaN(r.v) {
+		return dbmValue{}, errors.New("the result is out of range")
 	}
-	return total, nil
+	return r, nil
 }
 
 // dbmRun applies a line of input to stack, as calcRun does for plain
@@ -244,8 +288,8 @@ func dbmTotal(stack []dbmValue, avg bool) (dbmValue, error) {
 func dbmRun(stack []dbmValue, input string) ([]dbmValue, error) {
 	out := append([]dbmValue(nil), stack...)
 	for _, tok := range strings.Fields(input) {
-		if word := strings.ToLower(tok); word == "sum" || word == "avg" {
-			r, err := dbmTotal(out, word == "avg")
+		if stat, ok := calcStats[strings.ToLower(tok)]; ok {
+			r, err := dbmStat(out, stat)
 			if err != nil {
 				return stack, err
 			}

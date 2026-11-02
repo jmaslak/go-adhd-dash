@@ -232,6 +232,6 @@ func (l *loginState) handle(resp go3270.Response, store *users.Store, logf func(
 // buildFarewell is the screen left on a terminal as it is disconnected,
 // saying why.
 func buildFarewell(cols int, now time.Time, text string) go3270.Screen {
-	screen := titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", now)
+	screen := titleFields(cols, dashboardTitle, now)
 	return append(screen, placeLine(2, cols, line{{Content: text, Color: go3270.Yellow, Intense: true}})...)
 }

@@ -175,12 +175,40 @@ func TestCalcScreen(t *testing.T) {
 		t.Errorf("input row %q, cursor %d,%d", rows[21], crow, ccol)
 	}
 
+	// The decimal column groups digits in threes; the stack itself does not.
+	c.stack, _ = calcRun(nil, "1234567")
+	s, _, _ = buildCalc(24, 80, now, c)
+	rows = screenText(t, s, 24, 80)
+	if !strings.HasSuffix(rows[19], " 1,234,567  0x12D687") {
+		t.Errorf("grouped level 1 row is %q", rows[19])
+	}
+
 	// Deeper than the screen: the first stack row counts what is not shown.
 	c.stack, _ = calcRun(nil, strings.Repeat("1 ", 30))
 	s, _, _ = buildCalc(24, 80, now, c)
 	rows = screenText(t, s, 24, 80)
 	if !strings.Contains(rows[calcFirstRow], "(14 more)") || !strings.HasPrefix(rows[calcFirstRow+1], "  16:") {
 		t.Errorf("deep stack: first rows %q, %q", rows[calcFirstRow], rows[calcFirstRow+1])
+	}
+}
+
+func TestGroupDigits(t *testing.T) {
+	for in, want := range map[string]string{
+		"0":                     "0",
+		"999":                   "999",
+		"1000":                  "1,000",
+		"-1234567":              "-1,234,567",
+		"123456":                "123,456",
+		"1234.5678":             "1,234.5678",
+		"-0.00012345":           "-0.00012345",
+		"1.2345e+21":            "1.2345e+21",
+		"123456789012345680000": "123,456,789,012,345,680,000",
+		"+Inf":                  "+Inf",
+		"NaN":                   "NaN",
+	} {
+		if got := groupDigits(in); got != want {
+			t.Errorf("groupDigits(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -205,6 +233,37 @@ func TestCalcSumAvg(t *testing.T) {
 	for _, input := range []string{"sum", "avg", "1 2 avg avg 3 - sum sum x"} {
 		if _, err := calcRun(nil, input); err == nil {
 			t.Errorf("%q: no error", input)
+		}
+	}
+}
+
+func TestCalcMedianStdev(t *testing.T) {
+	for input, want := range map[string]string{
+		"1 2 3 4 mean":          "2.5",
+		"3 1 2 median":          "2",
+		"4 1 3 2 median":        "2.5",
+		"4 2 median":            "3",
+		"1.5 0x10 -3 median":    "1.5",
+		"7 median":              "7",
+		"2 4 4 4 5 5 7 9 stdev": "2.138089935299395",
+		"5 5 5 stdev":           "0",
+		"1 2 stdev 10":          "0.7071067811865476 10",
+	} {
+		if got := run(t, input); got != want {
+			t.Errorf("%q = %q, want %q", input, got, want)
+		}
+	}
+	// The median of integers stays an integer, exact at any size.
+	if stack, _ := calcRun(nil, "100000000000000000000001 3 100000000000000000000003 median"); stack[0].decimal() != "100000000000000000000001" || stack[0].hex() == "" {
+		t.Errorf("median of large integers is %v", stack[0])
+	}
+	for input, want := range map[string]string{
+		"median":  "empty",
+		"stdev":   "empty",
+		"5 stdev": "two numbers",
+	} {
+		if _, err := calcRun(nil, input); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", input, err, want)
 		}
 	}
 }

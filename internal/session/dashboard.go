@@ -29,6 +29,9 @@ const (
 	firstBodyRow = 4
 )
 
+// dashboardTitle is the name at the left of the dashboard's title row.
+const dashboardTitle = "EXEC/3270 DASHBOARD"
+
 // soonThreshold is how close a meeting's start must be for it to be called
 // out as coming up.
 const soonThreshold = 15 * time.Minute
@@ -85,8 +88,8 @@ func buildDashboard(rows, cols int, v view, page int, luName string) (screen go3
 	end := min(start+taskRows, len(entries))
 	pageEntries := entries[start:end]
 
-	screen = titleFields(cols, "EXECUTIVE FUNCTION DASHBOARD", v.Now)
-	screen = append(screen, titleWeather(cols, len("EXECUTIVE FUNCTION DASHBOARD"), v)...)
+	screen = titleFields(cols, dashboardTitle, v.Now)
+	screen = append(screen, titleWeather(cols, len(dashboardTitle), v)...)
 	badge, detail := busyState(v)
 	if badge.Content != "" {
 		screen = append(screen, banner(busyRow, cols, badge), banner(bottomBannerRow, cols, badge))

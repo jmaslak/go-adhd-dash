@@ -568,7 +568,7 @@ func TestTintTitle(t *testing.T) {
 	screen, _, _, _ = buildDashboard(24, 80, v, 0, "")
 	tinted = tintTitle(screen, 24, 80, go3270.Red)
 	rows = screenText(t, tinted, 24, 80)
-	if title := tinted[len(tinted)-1]; len(title.Content) != 160 || !strings.HasPrefix(rows[0], " EXECUTIVE FUNCTION DASHBOARD") {
+	if title := tinted[len(tinted)-1]; len(title.Content) != 160 || !strings.HasPrefix(rows[0], " "+dashboardTitle) {
 		t.Errorf("dashboard title %q, row %q", title.Content, rows[0])
 	}
 	if !strings.Contains(rows[1], "IN MEETING") {
