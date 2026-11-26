@@ -1383,6 +1383,16 @@ Telnet and TN3270E negotiation must finish within 30 seconds, and the login
 screen waits `-login-timeout`; with the caps, that bounds how many
 connections a client can hold and for how long.
 
+A client that goes away without closing its connection (a laptop shut, a
+network dropped, a firewall discarding what is sent to it) is disconnected
+after about a minute without acknowledging anything, on the TN3270 port and
+the web terminal's proxy alike, and its session ends as a lost connection.
+A connection doing nothing is probed every 10 seconds after 20 seconds idle;
+one being sent redraws must acknowledge them within a minute. Without this
+the kernel goes on retransmitting for a quarter of an hour or more, and the
+session stays meanwhile in the activity viewer and the connection limits.
+On systems other than Linux and macOS only the probes apply.
+
 At most 4 passwords are checked (or hashed, in the user editor) at once:
 each check uses 64 MiB, on purpose, so many logins at once could otherwise
 exhaust the server's memory. A login waits up to 10 seconds for its turn;
@@ -1415,6 +1425,8 @@ whoever reads it. User names may not hold control characters at all.
 - `internal/tasks`: the tasks from Trello, cached, and the task program's
   configuration.
 - `internal/checklist`: the checklist file.
+- `internal/tcpconn`: the keepalives and retransmission limit that drop a
+  connection whose client has gone away without closing it.
 - `internal/weather`: the hourly forecasts, their air quality, and the
   places they are for, from Open-Meteo, and the air quality measured, from
   AirNow and users' PurpleAir sensors, cached.

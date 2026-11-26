@@ -56,7 +56,8 @@ file and checklist JSON are also moved from their old dotted names
   (calendars), `tasks` (Trello), `busy`, `luxafor`, `streamdeck`, `db`
   (SQLite), `checklist`, `recurring`, `timers`, `users`, `certs`
   (TLS/ACME), `web`, `web3270`, `backup`, `audit`, `bigtext`,
-  `weather` (Open-Meteo forecasts).
+  `weather` (Open-Meteo forecasts), `tcpconn` (dropping connections
+  whose client vanished).
 
 ## Style
 

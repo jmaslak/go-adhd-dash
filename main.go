@@ -35,6 +35,7 @@ import (
 	"github.com/jmaslak/go-adhd-dash/internal/session"
 	"github.com/jmaslak/go-adhd-dash/internal/streamdeck"
 	"github.com/jmaslak/go-adhd-dash/internal/tasks"
+	"github.com/jmaslak/go-adhd-dash/internal/tcpconn"
 	"github.com/jmaslak/go-adhd-dash/internal/timers"
 	"github.com/jmaslak/go-adhd-dash/internal/users"
 	"github.com/jmaslak/go-adhd-dash/internal/weather"
@@ -365,6 +366,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen on %s: %v", addr, err)
 	}
+	// A client that vanishes without closing its connection, its network
+	// dropping what is sent to it, is disconnected in about a minute
+	// rather than the kernel's quarter of an hour or more.
+	ln = tcpconn.NewListener(ln, log.Printf)
 	if d := tlsService.Domain(); d != "" {
 		log.Printf("adhd-dash listening on %s, over TLS for %s", addr, d)
 	} else {

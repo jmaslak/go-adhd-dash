@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmaslak/go-adhd-dash/internal/tcpconn"
 )
 
 // DefaultFile is where whether web3270 is enabled is kept unless told
@@ -337,8 +339,10 @@ func (s *Supervisor) start(domain, bin string) (*instance, error) {
 	go s.wait(inst)
 	go func() {
 		// The proxy has no read or write timeouts, which would cut off
-		// the long-lived WebSockets the terminals run over.
-		if err := inst.proxy.Serve(tls.NewListener(pl, s.c.TLS)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// the long-lived WebSockets the terminals run over; a browser that
+		// vanishes without closing its connection is dropped by TCP
+		// instead (see tcpconn).
+		if err := inst.proxy.Serve(tls.NewListener(tcpconn.NewListener(pl, s.c.Logf), s.c.TLS)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.c.Logf("web3270 proxy: %v", err)
 		}
 	}()
